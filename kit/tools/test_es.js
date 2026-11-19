@@ -51,7 +51,7 @@ for (const family of ['label', 'bold', 'light', 'num']) {
 }
 assert.strictEqual(fonts.get('num', 96, '1234').family, 'num');
 
-const source = fs.readFileSync(path.join(root, 'apps/service/main.js'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'apps/cn_service/main.js'), 'utf8');
 const context = { translate: t, getLanguage: () => 'es', plural, fonts };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const MONTHS ='), source.indexOf('\nconst W =')) + '\nthis.parse = parseDue;', context);

@@ -1,5 +1,5 @@
 'use strict';
-/* apps/ambient_config/lever.js: three quick flasher pulls count once; one or two do not, nor the high beam held, a set
+/* apps/cn_ambient_config/lever.js: three quick flasher pulls count once; one or two do not, nor the high beam held, a set
  * that starts too soon after the beam was on, pulls too far apart, or a set in the pause after one. */
 const assert = require('assert');
 const path = require('path');

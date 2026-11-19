@@ -1,5 +1,5 @@
 'use strict';
-// Redline's own HUD directions, the data side (apps/redline/nav.js): the decoder, run on the replies a G21 sent with
+// Redline's own HUD directions, the data side (apps/cn_redline/nav.js): the decoder, run on the replies a G21 sent with
 // CarPlay / Apple Maps (2026-11-09, Redline 1.16.5's probe; street names already replaced by their length), then the
 // tracker's freshness and give-way rules on a driven clock, then the probe's tap. Node 8 compatible.
 //   node kit/tools/test_redline_nav.js

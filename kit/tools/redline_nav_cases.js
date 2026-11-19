@@ -1,6 +1,6 @@
 'use strict';
 // Every arrow Redline's HUD directions can be asked for, and sample turns: for the tests and the preview renders,
-// not shipped in the app (apps/redline/hud-nav.js draws them). The lists are the car's catalog's values
+// not shipped in the app (apps/cn_redline/hud-nav.js draws them). The lists are the car's catalog's values
 // (someip-interfaces.json, navigation.GuidingTypes); test_redline_hud_nav.js checks them against it when it's here.
 const path = require('path');
 const { TURN_DIRECTIONS } = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'hud-nav'));

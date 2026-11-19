@@ -41,7 +41,7 @@ assert.strictEqual(fonts.get('num', 96, '1234').family, 'num');
 const f = fonts.get('label', 30, '2027년 9월');
 assert(Array.from('2027년 9월').every((ch) => f.glyphs[ch.codePointAt(0)]));
 
-const source = fs.readFileSync(path.join(root, 'apps/service/main.js'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'apps/cn_service/main.js'), 'utf8');
 const context = { translate: t, getLanguage: () => 'ko', plural, fonts };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const MONTHS ='), source.indexOf('\nconst W =')) + '\nthis.parse = parseDue;', context);

@@ -1,5 +1,5 @@
 'use strict';
-// Redline's power log (apps/redline/powerlog.js): the car's own power / fuel displays logged raw while the readouts
+// Redline's power log (apps/cn_redline/powerlog.js): the car's own power / fuel displays logged raw while the readouts
 // that would use them are on, each field at most every GAP_MS, at most MAX_RUN_MS per start. Node 8 compatible.
 const fs = require('fs'), os = require('os'), path = require('path');
 const TH = require('./redline_test_harness');

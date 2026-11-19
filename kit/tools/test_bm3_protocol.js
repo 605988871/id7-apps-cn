@@ -1,8 +1,8 @@
 'use strict';
 
 const assert = require('assert');
-const { Bm3Protocol, markerRom, addressBytes } = require('../../apps/live_adjustments/bm3_protocol');
-const bundled = require('../../apps/live_adjustments/bm3_profiles');
+const { Bm3Protocol, markerRom, addressBytes } = require('../../apps/cn_live_adjustments/bm3_protocol');
+const bundled = require('../../apps/cn_live_adjustments/bm3_profiles');
 
 function fixture(command) {
     const rom = 'TEST_ROM';

@@ -1,5 +1,5 @@
 'use strict';
-// Ambient config (apps/ambient_config/ambient.js): the colour by driving mode, the driver's own colour back on
+// Ambient config (apps/cn_ambient_config/ambient.js): the colour by driving mode, the driver's own colour back on
 // "Leave as is", a colour chosen in BMW's menu kept as the driver's own, one write at a time with a gap, nothing
 // written for a colour the car shows already, and the set struct naming only the slot.
 //   node kit/tools/test_ambient_config.js

@@ -1,6 +1,6 @@
 'use strict';
 
-// Redline's Logs page reading (apps/redline/logview.js):
+// Redline's Logs page reading (apps/cn_redline/logview.js):
 //   node kit/tools/test_redline_logview.js
 // - the important lines only, newest first, from the end of the file (and of the older .1 when the newer is short);
 // - a cut at the start of the tail never shows half a line;

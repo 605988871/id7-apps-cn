@@ -1,5 +1,5 @@
 {
-  "id": "doom",
+  "id": "cn_doom",
   "title": "Doom",
   "description": "在 iDrive 上运行 Doom（Freedoom: Phase 1）。主菜单含全部设置；游戏以全分辨率铺满整屏，用 iDrive 旋钮操作；按 BACK 返回菜单并自动存档",
   "version": "1.7.22",

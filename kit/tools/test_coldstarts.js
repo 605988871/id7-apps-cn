@@ -1,5 +1,5 @@
 'use strict';
-/* apps/warmup/coldstarts.js: starts counted, with cold oil, revved cold; a short stop is the same start; kept. */
+/* apps/cn_warmup/coldstarts.js: starts counted, with cold oil, revved cold; a short stop is the same start; kept. */
 const assert = require('assert');
 const path = require('path');
 const { ColdStarts, OFF_MS } = require(path.join(__dirname, '..', '..', 'apps', 'warmup', 'coldstarts.js'));

@@ -1,11 +1,11 @@
 {
-  "id": "brake_test",
-  "title": "Brake Test",
-  "description": "100-0 与 200-0 制动距离、峰值减速度与热衰减追踪",
-  "version": "1.5.21",
+  "id": "cn_draggy",
+  "title": "Drag Timer",
+  "description": "0-100、100-200 及 1/4 英里计时，记录最佳成绩",
+  "version": "2.6.0",
   "vendor": "custom",
-  "loggingId": "OA99",
-  "iconGlyph": "brake",
+  "loggingId": "OA94",
+  "iconGlyph": "flag",
   "mguHmi": [
     "ID7",
     "ID8"
@@ -20,17 +20,20 @@
     },
     "de.bmw.infotainment.vehicle.CDS2": {
       "statusLongitudinalAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineSpeed2": "rs"
     }
   },
   "screens": [
     {
       "name": "MAIN",
       "kind": "canvas",
-      "title": "Brake Test",
+      "title": "Drag Timer",
       "buttons": [
         [
           "BTN_ACTION",
-          "Cancel run"
+          "Reset run"
         ],
         [
           "BTN_PAGE",
@@ -56,43 +59,45 @@
       "options": [
         [
           "kmh",
-          "100-0 / 200-0 km/h"
+          "km/h"
         ],
         [
           "mph",
-          "60-0 / 100-0 mph"
+          "mph"
         ]
       ]
     },
     {
-      "key": "trigger",
-      "label": "Counts as hard braking above",
-      "type": "number",
-      "unit": "g",
-      "default": 0.4,
-      "steps": [
-        0.2,
-        0.3,
-        0.4,
-        0.5,
-        0.6
-      ]
-    },
-    {
-      "key": "distUnit",
-      "label": "Distance unit",
+      "key": "distance",
+      "label": "Distance split",
       "type": "choice",
-      "default": "m",
+      "default": "qm",
       "options": [
         [
-          "m",
-          "metres"
+          "qm",
+          "1/4 mile"
         ],
         [
-          "ft",
-          "feet"
+          "em",
+          "1/8 mile"
+        ],
+        [
+          "m1000",
+          "1000 m"
         ]
       ]
+    },
+    {
+      "key": "rollout",
+      "label": "One-foot rollout",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "advanced",
+      "label": "Advanced settings",
+      "type": "bool",
+      "default": false
     },
     {
       "key": "theme",
@@ -117,6 +122,25 @@
           "Night Amber"
         ]
       ]
+    },
+    {
+      "key": "speedRate",
+      "label": "Speed display rate",
+      "type": "number",
+      "unit": "fps",
+      "default": 10,
+      "reset": 1,
+      "markDefault": true,
+      "steps": [
+        5,
+        10,
+        15,
+        30,
+        60
+      ],
+      "when": {
+        "advanced": true
+      }
     },
     {
       "key": "layout",
@@ -170,5 +194,25 @@
         ]
       ]
     }
-  ]
+  ],
+  "config": {
+    "comment": "BMW's own scalings (M Laptimer TypeConverters)",
+    "scaling": {
+      "speed": {
+        "factor": 0.015625,
+        "offset": 0,
+        "invalid": 65535
+      },
+      "accel": {
+        "factor": 0.002,
+        "offset": -65,
+        "invalid": 65535
+      },
+      "rpm": {
+        "factor": 0.25,
+        "offset": 0,
+        "invalid": 65535
+      }
+    }
+  }
 }

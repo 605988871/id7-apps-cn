@@ -653,7 +653,7 @@ def build(app_id, language='en', preview_only=False):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', f))
             print('  %s (committed)' % f)
     # kit runtime
-    if app_id == 'dtc_scanner' and language in ('zh-CN', 'ru'):
+    if app_id.endswith('dtc_scanner') and language in ('zh-CN', 'ru'):
         module = 'build_diagnostic_zh' if language == 'zh-CN' else 'build_diagnostic_ru'
         catalog = __import__(module).catalog
         with tempfile.TemporaryDirectory(prefix='mgu-diagnostic-') as temporary:
@@ -671,7 +671,7 @@ def build(app_id, language='en', preview_only=False):
     if missing:
         # what fit_to_unit took out: the app logs it at each start (kit/runtime/mgu.js)
         json.dump(missing, open(os.path.join(src, 'javascript', 'kit', 'missing-interfaces.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
-    if app_id != 'redline':
+    if not app_id.endswith('redline'):
         # Barlow is only the gear on Redline's HUD layouts: other apps don't carry its atlas
         for name in ('gear_barlow.json', 'OFL-Barlow.txt'):
             p = os.path.join(src, 'javascript', 'kit', 'fonts', name)
@@ -706,7 +706,7 @@ def build(app_id, language='en', preview_only=False):
                         os.path.join(src, 'javascript', 'kit', 'fonts', name))
     if language == 'zh-CN':
         # Diagnostic glyphs are Chinese-only; keep the English runtime atlas intact.
-        if app_id == 'dtc_scanner':
+        if app_id.endswith('dtc_scanner'):
             shutil.copy(os.path.join(KIT, 'localization', 'fonts', 'diagnostic-zh-CN.json'),
                         os.path.join(src, 'javascript', 'kit', 'fonts', 'cjk.json'))
     if credit(language):

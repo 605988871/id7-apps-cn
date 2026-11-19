@@ -271,7 +271,7 @@ const SCALE = {
     rpm: { factor: 0.25, offset: 0 }, speed: { factor: 0.015625, offset: 0 }, accel: { factor: 0.002, offset: -65 },
     temp: { factor: 1, offset: -48 }, torque: { factor: 0.5, offset: -1023.5 },
 };
-// FrontCCU enum names (a copy: must match PUSH / DEFL in apps/doom/controls.js and TILT in kit/runtime/display.js)
+// FrontCCU enum names (a copy: must match PUSH / DEFL in apps/cn_doom/controls.js and TILT in kit/runtime/display.js)
 const PUSH = ['KEINE_BETAETIGUNG', 'DREHGEBER_KURZ_GEDRUECKT', 'DREHGEBER_LANG_GEDRUECKT'];
 const DEFL = { 0: 'MITTELSTELLUNG', 1: 'NORD_KURZ_GEDRUECKT', 4: 'OST_KURZ_GEDRUECKT', 7: 'SUED_KURZ_GEDRUECKT', 10: 'WEST_KURZ_GEDRUECKT' };
 

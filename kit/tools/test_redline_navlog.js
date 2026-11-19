@@ -1,5 +1,5 @@
 'use strict';
-// Redline's navigation probe (apps/redline/navlog.js): what it writes to redline-nav.log for the guidance
+// Redline's navigation probe (apps/cn_redline/navlog.js): what it writes to redline-nav.log for the guidance
 // service's values, with stand-in signals. Node 8 compatible.
 const fs = require('fs'), os = require('os'), path = require('path');
 const NavLog = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'navlog'));

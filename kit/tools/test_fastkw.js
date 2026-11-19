@@ -1,5 +1,5 @@
 'use strict';
-// eDrive's fast power (apps/edrive/fastkw.js): learned from slow, late battery readings against the car's eDRIVE needle,
+// eDrive's fast power (apps/cn_edrive/fastkw.js): learned from slow, late battery readings against the car's eDRIVE needle,
 // it follows the pedal at once, the AC compressor and the rest of the car's draw included.
 //   node kit/tools/test_fastkw.js
 const path = require('path');

@@ -1,20 +1,26 @@
 {
-  "id": "dtc_scanner",
-  "title": "Fault Scanner",
-  "description": "读取并清除各控制单元的故障记忆，以及当前 Check Control 提示信息",
-  "version": "2.9.8",
+  "id": "cn_service",
+  "title": "Service",
+  "description": "来自仪表盘（KOMBI）的保养需求：机油、刹车、刹车油、车辆检查、年检——里程、日期与详情；支持刹车油与车辆检查复位",
+  "version": "1.6.3",
   "vendor": "custom",
-  "loggingId": "OA95",
-  "iconGlyph": "engine",
+  "loggingId": "OA96",
+  "iconGlyph": "wrench",
   "mguHmi": [
     "ID7",
     "ID8"
   ],
   "requires": {
-    "idrive7-renderd": "2.1.18",
-    "mgu-inputgate": "1.1.0"
+    "idrive7-renderd": "2.1.15"
   },
   "signals": {
+    "de.bmw.infotainment.KombiInterface_2": {
+      "cbsDataServiceList": "rs",
+      "cbsDataSBA": "rs",
+      "_methods": [
+        "requestCBSServiceHint"
+      ]
+    },
     "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
       "_instances": "SystemFunctionsInternalTasuInst1",
       "_methods": [
@@ -23,32 +29,25 @@
       "_broadcasts": [
         "sendTasuResponse"
       ]
-    },
-    "de.bmw.infotainment.checkcontrol.CheckControlMaster": {
-      "basicList": "rs"
-    },
-    "de.bmw.infotainment.KombiInterface_2": {
-      "ccList": "rs",
-      "newCCMessage": "rs"
     }
   },
   "screens": [
     {
       "name": "MAIN",
       "kind": "canvas",
-      "title": "Fault Scanner",
+      "title": "Service",
       "buttons": [
         [
-          "BTN_SCAN",
-          "Scan now"
+          "BTN_SELECT",
+          "Next item"
         ],
         [
-          "BTN_CLEAR",
-          "Clear all"
+          "BTN_DETAILS",
+          "Details"
         ],
         [
-          "BTN_PAGE",
-          "Next page"
+          "BTN_RESET",
+          "Reset service"
         ],
         [
           "BTN_SETTINGS",
@@ -59,32 +58,16 @@
   ],
   "settings": [
     {
-      "key": "scope",
-      "label": "Faults to read",
-      "type": "choice",
-      "default": "current",
-      "options": [
-        [
-          "current",
-          "Current"
-        ],
-        [
-          "all",
-          "Incl. history"
-        ]
-      ]
-    },
-    {
-      "key": "info",
-      "label": "Also read info memory",
+      "key": "resetOn",
+      "label": "Service reset (brake fluid, vehicle check)",
       "type": "bool",
       "default": false
     },
     {
-      "key": "autoScan",
-      "label": "Scan when opened",
+      "key": "diagPage",
+      "label": "Diagnostics page",
       "type": "bool",
-      "default": true
+      "default": false
     },
     {
       "key": "theme",

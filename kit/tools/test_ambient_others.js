@@ -1,5 +1,5 @@
 'use strict';
-// Ambient config (apps/ambient_config/others.js): IterioDev's Comfort tool counts as writing the lights only while its
+// Ambient config (apps/cn_ambient_config/others.js): IterioDev's Comfort tool counts as writing the lights only while its
 // control socket is there (a socket, not any file) AND its own ambient colour or drive-mode colours are on in its
 // data.json (unreadable settings: stand aside, as before). Comfort for the Seats app alone leaves the lights to us.
 // Said once each way in the log, with a change event each time.

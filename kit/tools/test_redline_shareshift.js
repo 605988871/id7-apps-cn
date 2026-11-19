@@ -1,5 +1,5 @@
 'use strict';
-// Redline's shift.json for other apps (apps/redline/shareshift.js; bimmer-lab/apps#4): written whole, readable by
+// Redline's shift.json for other apps (apps/cn_redline/shareshift.js; bimmer-lab/apps#4): written whole, readable by
 // every user, at most once a second unless forced (a shift), never throwing; main.js writes it from live data only.
 //   node kit/tools/test_redline_shareshift.js
 const fs = require('fs');

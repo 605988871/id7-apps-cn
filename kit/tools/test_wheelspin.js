@@ -1,5 +1,5 @@
 'use strict';
-/* apps/draggy/wheelspin.js: no spin when the wheels follow the body, spin when they run ahead, the slope's offset off. */
+/* apps/cn_draggy/wheelspin.js: no spin when the wheels follow the body, spin when they run ahead, the slope's offset off. */
 const assert = require('assert');
 const path = require('path');
 const { Wheelspin } = require(path.join(__dirname, '..', '..', 'apps', 'draggy', 'wheelspin.js'));

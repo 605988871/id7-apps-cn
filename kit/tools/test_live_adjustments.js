@@ -5,8 +5,8 @@
 //   node kit/tools/test_live_adjustments.js
 
 const assert = require('assert');
-const { TuneControl } = require('../../apps/live_adjustments/tune');
-const { XDriveControl } = require('../../apps/live_adjustments/xdrive');
+const { TuneControl } = require('../../apps/cn_live_adjustments/tune');
+const { XDriveControl } = require('../../apps/cn_live_adjustments/xdrive');
 
 function dme(kind) {
     const calls = [];
@@ -113,7 +113,7 @@ function dsc(kind) {
 
 /** The PIN in front of the Engine Map tab (pin.js): choose, confirm, unlock, wrong tries, off only with the PIN. */
 function pinChecks() {
-    const { PinLock, WAIT_MS } = require('../../apps/live_adjustments/pin');
+    const { PinLock, WAIT_MS } = require('../../apps/cn_live_adjustments/pin');
     const vals = { mapPin: false, mapPinCode: {} };
     let clock = 1000;
     let pin = null;

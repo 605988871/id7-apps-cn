@@ -12,7 +12,7 @@
       "sdk": "oap-sdk",
       "output": "dist/{id}@{version}.tgz",
       "network": [
-        "doom"
+        "cn_doom"
       ],
       "shared": [
         "kit/runtime",

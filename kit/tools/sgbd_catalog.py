@@ -9,7 +9,7 @@
 
 <sgbd> (e.g. dme8ff_r) is read from the public EdiabasX SGBD reference,
 https://emdzej.github.io/ediabasx-docs-sgbd/sgbd/<sgbd>/ (a saved copy of that page works too).
-out_dir defaults to apps/live_data/catalog (not in git: the tables are BMW's); build.py packs it
+out_dir defaults to apps/cn_live_data/catalog (not in git: the tables are BMW's); build.py packs it
 into the app (catalog.pack).
 
 Only what can be READ goes in: the rows of SG_FUNKTIONEN whose SERVICE includes 22
@@ -27,10 +27,10 @@ reply in byte order, BF_ tables split a byte into bits, and the tables a field's
 value = raw * k + o; the texts are German, the app shows the English one when there is one.
 
 --index copies sgbd_index.json ("<address> <SGBD index>" -> unit type) from the Fault Scanner's
-database (apps/dtc_scanner/dtc_db.pack or dtc_db/), so the app knows which catalog a unit uses.
+database (apps/cn_dtc_scanner/dtc_db.pack or dtc_db/), so the app knows which catalog a unit uses.
 
---builtin writes apps/live_data/builtin/ (in git): from a full catalog, only the identifiers the
-app's Useful list (apps/live_data/useful.js) names, their value tables and English texts, and the
+--builtin writes apps/cn_live_data/builtin/ (in git): from a full catalog, only the identifiers the
+app's Useful list (apps/cn_live_data/useful.js) names, their value tables and English texts, and the
 SGBD index. The app uses it when it has no full catalog for a unit type.
 """
 import html, json, os, re, struct, sys, urllib.request, zlib

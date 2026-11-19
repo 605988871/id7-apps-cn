@@ -1,5 +1,5 @@
 'use strict';
-/* apps/live_adjustments/rescan.js (#147): the engine unit or the DSC asleep at start-up are looked for again once the
+/* apps/cn_live_adjustments/rescan.js (#147): the engine unit or the DSC asleep at start-up are looked for again once the
  * ignition is on, not only when a setting changes; nothing while the ignition is off, in demo, or once found. */
 const assert = require('assert');
 const path = require('path');

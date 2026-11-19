@@ -1,15 +1,15 @@
 # English<TAB>简体中文。只用于显示文本，不改协议字段或设置值。
-M Vitals	M 车辆仪表
-Redline	换挡转速
-Virtual Dyno	虚拟马力机
-Brake Test	制动测试
-Drag Timer	加速计时
-G-Force	G 值仪表
-Warm-Up	暖机助手
-Fault Scanner	故障检测
-eDrive	EDrive助手
-Service	保养信息
-Doom	毁灭战士
+M Vitals	M 车辆仪表·中文版
+Redline	换挡转速·中文版
+Virtual Dyno	虚拟马力机·中文版
+Brake Test	制动测试·中文版
+Drag Timer	加速计时·中文版
+G-Force	G 值仪表·中文版
+Warm-Up	暖机助手·中文版
+Fault Scanner	故障检测·中文版
+eDrive	EDrive助手·中文版
+Service	保养信息·中文版
+Doom	毁灭战士·中文版
 Settings	设置
 Next page	下一页
 Previous page	上一页
@@ -637,7 +637,7 @@ in	剩余
 by	到期
 or	或
 of	共
-Fault Scanner	故障检测
+Fault Scanner	故障检测·中文版
 Scan	扫描
 Reading	读取中
 Fault	故障
@@ -840,8 +840,8 @@ peak	峰值
 ambient	环境温度
 power distribution	功率分配
 s (cell core), else the car	秒（电芯核心温度），否则使用车辆读数
-Engine Config	发动机配置
-Transmission Config	变速箱配置
+Engine Config	发动机配置·中文版
+Transmission Config	变速箱配置·中文版
 Open	打开
 Close	关闭
 OEM	原厂控制
@@ -1287,7 +1287,7 @@ On · xDrive tab, xDrive off until ignition off	开启 · 显示 xDrive 页，�
 xDrive (experimental)	xDrive（实验）
 Reset is off - turn on "Service reset" in Settings	保养重置已关闭，请在设置中打开“保养重置”
 # Live Data: trip computer, Gauges, signal names and prompts.
-Live Data	实时数据
+Live Data	实时数据·中文版
 Gauges	仪表
 Trips	行程
 Trip computer	行车电脑
@@ -1663,7 +1663,7 @@ Eco Pro Individual	节能个性化
 ENGINE	发动机
 VOLTAGE FROM	电压来源
 running	运行中
-Ambient config	氛围灯设置
+Ambient config	氛围灯设置·中文版
 Colour by driving mode	按驾驶模式设颜色
 Leave as is	保持不变
 Leave as is gives my own colour back	保持不变时恢复我的颜色

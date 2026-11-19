@@ -6,7 +6,7 @@
  * keeps for its own bank (ignition angle, knock retard, fuel flow 5656 "LOKAL") is then only half the engine.
  *
  * Which engines: the master's SGBD index (UDS 22 F1 50, 3 bytes) is one of TWIN_INDEXES, the 0x12 indexes
- * for which BMW's index (apps/live_data/builtin/sgbd_index.json) also lists a unit at 0x13 ("13 <index>").
+ * for which BMW's index (apps/cn_live_data/builtin/sgbd_index.json) also lists a unit at 0x13 ("13 <index>").
  * Any other index (B38 / B48 / B58 / S58, the diesels) = one engine unit, and 0x13 is never asked.
  *
  *   const twin = new TwinDme(link, { dataDir, log });   // link: kit/diag.js or kit/readonly-diag.js (physical())

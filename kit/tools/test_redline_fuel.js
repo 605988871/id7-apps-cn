@@ -1,5 +1,5 @@
 'use strict';
-// Redline's fuel reader (apps/redline/fuel.js): each source's scaling, the fallback order, staleness, the
+// Redline's fuel reader (apps/cn_redline/fuel.js): each source's scaling, the fallback order, staleness, the
 // retry after failures, and the HUD item for every unit. A stand-in link with crafted replies. Node 8 compatible.
 const path = require('path');
 const TH = require('./redline_test_harness');

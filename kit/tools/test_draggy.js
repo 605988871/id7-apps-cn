@@ -98,7 +98,7 @@ Module._load = function (req, parent, isMain) {
 Date.now = () => now;
 const realInterval = global.setInterval;
 global.setInterval = (fn) => { ticks.push(fn); return 0; };
-require(path.join(ROOT, 'apps/draggy/main'));
+require(path.join(ROOT, 'apps/cn_draggy/main'));
 global.setInterval = realInterval;
 Module._load = load;
 

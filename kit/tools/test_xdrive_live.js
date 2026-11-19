@@ -1,5 +1,5 @@
 'use strict';
-// Engine Config's xDrive live (apps/live_adjustments/xdrive_live.js): the split taken only when valid, an xDrive
+// Engine Config's xDrive live (apps/cn_live_adjustments/xdrive_live.js): the split taken only when valid, an xDrive
 // car remembered, wheel slip against the four's average and front against rear above 5 km/h, steering and yaw.
 //   node kit/tools/test_xdrive_live.js
 const fs = require('fs');

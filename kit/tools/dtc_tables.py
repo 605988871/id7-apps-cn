@@ -4,7 +4,7 @@ what it needs.
 
     python kit/tools/dtc_tables.py <folder or .zip with the dtc_scanner_*.json tables> [out_dir]
 
-out_dir defaults to apps/dtc_scanner/dtc_db/tables (not in git: the texts are BMW's). Input tables:
+out_dir defaults to apps/cn_dtc_scanner/dtc_db/tables (not in git: the texts are BMW's). Input tables:
     dtc_scanner_variant_exact.json  "<sgbd>:<code>"    the text for exactly that control unit type
     dtc_scanner_addr_exact.json     "<address>:<code>" the text every type at that address agrees on
     dtc_scanner_ecu_matches.json    "<address>:<code>" matched by unit name in the text

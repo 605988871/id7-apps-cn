@@ -1,25 +1,25 @@
 {
-  "id": "draggy",
-  "title": "Drag Timer",
-  "description": "0-100、100-200 及 1/4 英里计时，记录最佳成绩",
-  "version": "2.6.0",
+  "id": "cn_gforce",
+  "title": "G-Force",
+  "description": "摩擦圆与抓地力包络、各方向峰值 G 值及本次会话记录",
+  "version": "1.6.22",
   "vendor": "custom",
-  "loggingId": "OA94",
-  "iconGlyph": "flag",
+  "loggingId": "OA9B",
+  "iconGlyph": "gforce",
   "mguHmi": [
     "ID7",
     "ID8"
   ],
   "requires": {
-    "idrive7-renderd": "2.1.18",
-    "mgu-inputgate": "1.1.0"
+    "idrive7-renderd": "2.1.15"
   },
   "signals": {
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "statusLongitudinalAccelerationMassCenter": "rs",
+      "statusLateralAccelerationMassCenter": "rs"
+    },
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs"
-    },
-    "de.bmw.infotainment.vehicle.CDS2": {
-      "statusLongitudinalAccelerationMassCenter": "rs"
     },
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineSpeed2": "rs"
@@ -29,11 +29,11 @@
     {
       "name": "MAIN",
       "kind": "canvas",
-      "title": "Drag Timer",
+      "title": "G-Force",
       "buttons": [
         [
           "BTN_ACTION",
-          "Reset run"
+          "Reset max"
         ],
         [
           "BTN_PAGE",
@@ -52,6 +52,43 @@
   ],
   "settings": [
     {
+      "key": "scale",
+      "label": "Circle size",
+      "type": "number",
+      "unit": "g",
+      "default": 1.5,
+      "steps": [
+        1.0,
+        1.5,
+        2.0
+      ]
+    },
+    {
+      "key": "trail",
+      "label": "Trail length",
+      "type": "number",
+      "unit": "s",
+      "default": 4,
+      "steps": [
+        2,
+        4,
+        8,
+        15
+      ]
+    },
+    {
+      "key": "flipLat",
+      "label": "Swap left / right",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "flipLong",
+      "label": "Swap accel / brake (brake on top)",
+      "type": "bool",
+      "default": false
+    },
+    {
       "key": "speedUnit",
       "label": "Speed unit",
       "type": "choice",
@@ -66,32 +103,6 @@
           "mph"
         ]
       ]
-    },
-    {
-      "key": "distance",
-      "label": "Distance split",
-      "type": "choice",
-      "default": "qm",
-      "options": [
-        [
-          "qm",
-          "1/4 mile"
-        ],
-        [
-          "em",
-          "1/8 mile"
-        ],
-        [
-          "m1000",
-          "1000 m"
-        ]
-      ]
-    },
-    {
-      "key": "rollout",
-      "label": "One-foot rollout",
-      "type": "bool",
-      "default": false
     },
     {
       "key": "advanced",
@@ -124,12 +135,11 @@
       ]
     },
     {
-      "key": "speedRate",
-      "label": "Speed display rate",
+      "key": "gRate",
+      "label": "G-force display rate",
       "type": "number",
       "unit": "fps",
       "default": 10,
-      "reset": 1,
       "markDefault": true,
       "steps": [
         5,
@@ -194,25 +204,5 @@
         ]
       ]
     }
-  ],
-  "config": {
-    "comment": "BMW's own scalings (M Laptimer TypeConverters)",
-    "scaling": {
-      "speed": {
-        "factor": 0.015625,
-        "offset": 0,
-        "invalid": 65535
-      },
-      "accel": {
-        "factor": 0.002,
-        "offset": -65,
-        "invalid": 65535
-      },
-      "rpm": {
-        "factor": 0.25,
-        "offset": 0,
-        "invalid": 65535
-      }
-    }
-  }
+  ]
 }
