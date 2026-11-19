@@ -206,7 +206,7 @@ Windows PowerShell 也可执行这些命令，内置 scp 和 tar；请将 `x_cal
 ### 3.2 构建
 
 ```sh
-python3 kit/tools/build.py            # 全部应用，默认简体中文 -> dist/<id>@<ver>-zh.cn.<rev>.mgu
+python3 kit/tools/build.py            # 全部应用，默认简体中文 -> dist/<id>@<ver>.mgu / .tgz
 python3 kit/tools/build.py redline    # 仅一个应用，默认简体中文
 python3 kit/tools/build.py --language en    # 英文 -> dist/<id>@<ver>.mgu
 node kit/tools/preview.js dist/redline preview wait=10   # 在电脑上预览 -> preview/*.png
@@ -230,7 +230,7 @@ python3 kit/tools/make_kit.py redline  # 任意系统，仅部分应用
 python3 kit/tools/make_kit.py --language en      # 英文套件 -> dist/mgu-custom-apps-en(.tar.gz)
 ```
 
-默认构建的中文套件输出为 `dist/mgu-custom-apps(.tar.gz)`，可直接被推送脚本使用；英文等其他语言带后缀。
+本仓库默认语言为简体中文，版本号不加语言后缀，`mgu-repo.json` 的构建模板可直接匹配产物——因此把本仓库作为源添加到 MGU Store 后即可直接构建安装中文应用。中文套件输出为 `dist/mgu-custom-apps(.tar.gz)`，可被推送脚本直接使用；其他语言（ru/es/ko）带后缀。
 
 中文套件的 shell 部署需指定 `KIT=dist/mgu-custom-apps-zh-CN`，PowerShell 部署指定 `-Kit dist\mgu-custom-apps-zh-CN.tar.gz`。
 

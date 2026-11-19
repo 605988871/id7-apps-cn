@@ -47,7 +47,13 @@ def text(value, words):
 
 def package_version(version, language):
     revisions = json.loads((Path(__file__).parent / 'locale-revisions.json').read_text(encoding='utf-8'))
-    return version if language == 'en' else version + '-' + language.lower().replace('-', '.') + '.' + str(revisions.get(language, 1))
+    # This fork ships Simplified Chinese as its default language. Like English, the
+    # default language keeps the plain version so that mgu-repo.json's
+    # "output": "dist/{id}@{version}.tgz" matches what the head-unit build produces.
+    # Other fixed languages (ru/es/ko) keep the suffixed version to avoid clashing.
+    if language in ('en', 'zh-CN'):
+        return version
+    return version + '-' + language.lower().replace('-', '.') + '.' + str(revisions.get(language, 1))
 
 
 def localize_spec(spec, language):
