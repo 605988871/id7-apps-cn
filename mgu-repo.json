@@ -32,7 +32,7 @@
       "id": "idrive7-renderd",
       "path": "kit/renderd/prebuilt",
       "title": "GPU 渲染器",
-      "description": "应用自带的 GPU 渲染器（mgu-render）：以 60 fps 绘制应用，与 MGU Store 的渲染器并存；随应用一同安装（iDrive 7 与 iDrive 8）",
+      "description": "应用自带的 GPU 渲染器（mgu-render）：以 60 fps 渲染应用，与 MGU Store 的渲染器并存；随应用一同安装（iDrive 7 与 iDrive 8）",
       "mguHmi": [
         "ID7",
         "ID8"
@@ -42,7 +42,7 @@
       "id": "mgu-inputgate",
       "path": "kit/renderd/inputgate/tool",
       "title": "控制器门控",
-      "description": "让应用获得 iDrive 控制器（标签页、翻页按钮、设置、Doom）；下次启动时载入 HMI（iDrive 7 与 iDrive 8）",
+      "description": "使应用取得 iDrive 控制器（标记页、翻页按钮、设置、Doom）；下次启动时载入 HMI（iDrive 7 与 iDrive 8）",
       "needs": [
         "renderer"
       ],

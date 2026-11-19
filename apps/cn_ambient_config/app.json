@@ -1,7 +1,7 @@
 {
   "id": "cn_ambient_config",
   "title": "Ambient config",
-  "description": "氛围灯任意颜色、动画效果，以及每种驾驶模式的独立配色",
+  "description": "氛围灯任意颜色、动画表现，以及各类驾驶模式的独立配色",
   "version": "2.7.13",
   "vendor": "custom",
   "loggingId": "OAA4",

@@ -1,7 +1,7 @@
 {
   "id": "cn_zf8hp",
   "title": "Transmission Config",
-  "description": "变速箱配置，实验性 ZF 8HP 监控：实时数据、离合器充油自适应、换挡曲线与温度历史",
+  "description": "变速箱配置，实验性 ZF 8HP 诊断：实时数据、离合器充油自适应、换挡曲线与温度历史",
   "version": "1.5.8",
   "vendor": "custom",
   "loggingId": "OAA2",

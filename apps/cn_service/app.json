@@ -1,7 +1,7 @@
 {
   "id": "cn_service",
   "title": "Service",
-  "description": "来自仪表盘（KOMBI）的保养需求：机油、刹车、刹车油、车辆检查、年检——里程、日期与详情；支持刹车油与车辆检查复位",
+  "description": "来自仪表盘（KOMBI）的保养需求：机油、刹车、刹车油、车辆检查、定期检验——里程、日期与详情；支持刹车油与车辆检查复位",
   "version": "1.6.3",
   "vendor": "custom",
   "loggingId": "OA96",
