@@ -17,11 +17,12 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
-const { createSource, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO } = require('./carlife_source');
+const { createSource, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
 const { MAP_W, MAP_H, cropAtlas } = require('./atlas');
 
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudWidth', 'hudX', 'hudY', 'hudKeep'];
+const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 
 async function run(ctx) {
     const { ui, settings, log } = ctx;
@@ -155,11 +156,17 @@ async function run(ctx) {
     const setSource = safe('source', () => {
         const kind = settings.get('source') || 'demo';
         const fps = Number(settings.get('fps')) || 15;
+        const live = kind === 'carlife';
         if (source) { source.removeAllListeners(); source.stop(); source = null; }
         source = createSource({
             kind: kind, w: MAP_W, h: MAP_H, fps: fps,
-            host: override.host || DEFAULT_HOST,
-            port: Number(override.port) || DEFAULT_PORT,
+            /* CarLife's own picture is local: the app listens on a socket and
+             * the capture side connects. Only an override file makes it dial
+             * out (a phone or another box feeding frames). */
+            host: live ? (override.carlifeHost || null) : (override.host || DEFAULT_HOST),
+            port: live ? (Number(override.carlifePort) || CARLIFE_PORT)
+                       : (Number(override.port) || DEFAULT_PORT),
+            sockPath: override.sockPath || DEFAULT_SOCK,
             path: override.path || DEFAULT_FIFO,
             tcpListen: override.tcpListen === true
         });
@@ -213,18 +220,51 @@ async function run(ctx) {
         apply();
     }));
 
+    /* ---------- the capture side's own report ----------
+     * The picture comes from a preload library inside carlife, which writes a
+     * one-page report to /dev/shm. Reading it here is what separates the three
+     * failures that all look the same on the cluster: nothing installed,
+     * installed but not loaded into carlife, loaded and reading nothing (phone
+     * not connected), loaded and reading the stream. */
+    let tapInfo = 'not read yet';
+    let tapAt = 0;
+    function readTap() {
+        const now = Date.now();
+        if (now - tapAt < 2000) return tapInfo;
+        tapAt = now;
+        let s;
+        try { s = fs.readFileSync(TAP_REPORT, 'utf8'); }
+        catch (e) {
+            tapInfo = e.code === 'ENOENT' ? 'not installed (no report)' : e.message;
+            return tapInfo;
+        }
+        const u = /^urbs: in=(\d+) \(([\d.]+)MB\).*out=(\d+) \(([\d.]+)MB\).*submits=(\d+)/m.exec(s);
+        if (!u) { tapInfo = 'report has no traffic yet'; return tapInfo; }
+        let h = '';
+        const a = /^annexb: (\w+).*idr=(\d+) slice=(\d+)/m.exec(s);
+        if (a) h = ', ' + (a[1] === 'yes' ? 'H.264' : 'no H.264') + ', IDR ' + a[2] + ', slice ' + a[3];
+        tapInfo = 'in ' + u[2] + 'MB out ' + u[4] + 'MB' + h;
+        return tapInfo;
+    }
+
     /* ---------- status page ---------- */
     ctx.loop('MAIN', 5, safe('ui', () => {
         const cv = ctx.canvas(1600, 520).clear('#0b1016');
+        const kind = settings.get('source') || 'demo';
+        const detail = (() => {
+            try { return source && source.detail ? source.detail() : ''; } catch (e) { return ''; }
+        })();
         cv.text('CarLife Map on Cluster', 40, 68, 42, '#ffffff');
-        cv.text('Source  : ' + (settings.get('source') || 'demo') + '  -  ' + srcStatus, 40, 140, 28, '#a8d8c0');
-        cv.text('Render  : ' + renderStatus, 40, 184, 28, '#a8d8c0');
-        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 228, 28, '#a8d8c0');
-        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 272, 28, '#a8d8c0');
+        cv.text('Source  : ' + kind + '  -  ' + srcStatus, 40, 128, 26, '#a8d8c0');
+        cv.text('          ' + (detail || '-'), 40, 164, 24, '#7fbf9f');
+        cv.text('Render  : ' + renderStatus, 40, 208, 26, '#a8d8c0');
+        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 248, 26, '#a8d8c0');
+        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 288, 26, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
-            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 316, 28, '#a8d8c0');
-        cv.text('Install Cluster renderer from the MGU Store if Render stays empty.', 40, 398, 26, '#8fa3b4');
-        cv.text('Settings: source, target, frame rate and HUD size/position.', 40, 442, 26, '#8fa3b4');
+            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 328, 26, '#a8d8c0');
+        cv.text('USB tap : ' + readTap(), 40, 368, 24, '#e0c88a');
+        cv.text('CarLife needs the USB tap tool and a decoder; see the app README.', 40, 424, 24, '#8fa3b4');
+        cv.text('Settings: picture source, target, frame rate, HUD size and position.', 40, 464, 24, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 

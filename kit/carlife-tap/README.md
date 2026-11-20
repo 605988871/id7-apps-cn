@@ -48,14 +48,61 @@ Report: `/dev/shm/carlife-tap.txt`, rewritten at most every 2 s —
 usb fd: 27 -> /dev/bus/usb/001/009
 claim: interface 1
 urbs: in=1234 (88.1MB) out=56 (1.5MB) submits=1290
+sink: connected sent=88.1MB drops=0
 in#1 len=24576 0000000...
 annexb: yes  starts=88412 sps=41 pps=41 idr=41 slice=88300
 ```
+
+Sink: `/dev/shm/carlife-map/live.sock`. Every inbound chunk is also written
+there, unchanged, for the CarLife Map app. The socket is optional in every
+sense — non-blocking, `MSG_NOSIGNAL` (a closed reader must never raise
+`SIGPIPE` inside carlife and kill it), a full buffer drops the chunk instead of
+buffering it in carlife's memory, and a missing reader costs one connect
+attempt a second. Capture must not be able to hurt the thing it observes.
 
 Marker: `/dev/shm/carlife-tap.loaded`, written by *any* process that loads the
 library. The installing tool runs `LD_PRELOAD=… /bin/sh -c ':'` and reads it,
 which proves on the unit itself that the library resolves and its constructor
 runs — without touching CarLife.
+
+## Installing it into CarLife
+
+`install.sh` runs as root after every install (component.json `activate`) and
+does three things:
+
+1. **Proves the library loads** on this unit before anything else happens. A
+   library that cannot resolve shows up as a carlife process that starts and
+   dies, which is a very bad way to find out.
+2. **Finds the unit that starts carlife** by reading `ExecStart` lines, not by
+   guessing a name.
+3. **Appends to the unit's own `LD_PRELOAD`**, never replaces it: the unit
+   already preloads `/usr/lib/libschedeconfig.so.1` into carlife, and
+   overwriting that value would silently take it away. The drop-in is
+   `/etc/systemd/system/<unit>.d/50-carlife-tap.conf`.
+
+It does **not** restart anything. CarLife picks the library up at the unit's
+next start, so a head-unit restart is what makes it live; restarting just
+carlife while the rest of the Cinemo stack keeps running is the less predictable
+option for no gain.
+
+`remove.sh` (component.json `deactivate`) deletes only the drop-in, the report
+and the marker — nothing else, and no unit or payload of the Store's.
+
+Undo by hand, if ever needed:
+
+```sh
+rm -f /etc/systemd/system/*.service.d/50-carlife-tap.conf
+systemctl daemon-reload
+```
+
+## The decoder is still missing
+
+The sink carries **raw H.264**, because that is what leaves the phone. Nothing
+on the unit decodes it for us, so the app shows the bytes and keyframes it has
+received rather than a map — proof the capture path works, not the finished
+feature. The next step is `decoder_msdk.cpp` from Maps on cluster (MSDK over
+`/dev/dri/renderD128`, which is present on this unit) writing `CLMF` frames into
+the same socket. Nothing in the app has to change for that.
 
 ## Build
 
@@ -86,7 +133,7 @@ library can only be built, not exercised.
 
 ## State
 
-0.1.0 — reports only; nothing is installed into CarLife yet. The next version
-adds the drop-in for `carlife.service` (appending to the existing `LD_PRELOAD`,
-never replacing it), the install-time smoke test above, and a guard that
-removes the drop-in if CarLife does not come back up.
+0.2.0 — captures, reports, and delivers the stream to the app. `install.sh`
+finds the unit, keeps its own `LD_PRELOAD`, and adds this library; `remove.sh`
+takes it back out. What it does **not** do yet is decode: the app receives
+H.264 and says so instead of showing a picture.

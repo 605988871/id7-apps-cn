@@ -57,22 +57,60 @@ python3 kit/tools/build.py cn_carlife_map
 | 设置 | 说明 |
 |---|---|
 | Show map on | Off / 仅仪表 / 仅 HUD / 仪表和 HUD |
-| Picture source | Demo 测试画面 / TCP 网络 / 本地管道 FIFO |
+| Picture source | Test picture 测试画面 / CarLife 实时画面 / TCP 网络 / 本地管道 |
 | Frame rate | 5–30 fps。地图变化慢，15 fps 通常够，也能减轻簇的上传负担 |
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
 
-应用状态页会显示：当前帧源、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号，
-以及 HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`）。HUD 帧数一直是 0，说明帧没送到
-（层被拒或尺寸不符）；帧数在涨但玻璃上没有东西，那就是槽位被锁或让位，看同一行的状态。
-`waiting` 表示层已建好但在等槽位或等第一帧；`shown` 表示已上屏。
+应用状态页会显示：当前帧源及其细节、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号、
+HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB tap` 一行——取流件写在
+`/dev/shm/carlife-tap.txt` 里的读数。
+
+`HUD 37` 一直是 0，说明帧没送到（层被拒或尺寸不符）；帧数在涨但玻璃上没有东西，那就是槽位被锁或让位，
+看同一行的状态。`waiting` 表示层已建好但在等槽位或等第一帧；`shown` 表示已上屏。
+
+`USB tap` 一行是判断 CarLife 环节卡在哪的唯一入口，四种读法：
+
+| 显示 | 含义 |
+|---|---|
+| `not installed (no report)` | 取流工具没装，或装了但还没重启车机（库只在 carlife 启动时加载） |
+| `in 0.0MB ...` | 库已加载但没读到 USB 数据：手机没连、或 CarLife 没在前台跑导航 |
+| `in 12.4MB ..., H.264, IDR 240` | **取流通了**：画面正从手机经 USB 到车机，只是还没有解码器 |
+| `out 3.2MB` 也在涨 | 反向（触摸）数据在走，说明链路是双向正常的 |
 
 ## 帧源
 
-### Demo（默认）
+### Test picture（默认）
 
 应用在车机上直接生成滚动的测试地图图案（写 YUV atlas，不做 RGB 转换）。用于确认
 cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
+
+### CarLife（实时画面）
+
+选这一项时，应用在 `/dev/shm/carlife-map/live.sock` 上等取流件连进来，收到的是 CarLife
+自己的画面。前提是车机上装了 **MGU Store → 车机工具 → CarLife 画面取流**（tool id
+`carlife-tap`），并且**装完后重启过一次车机**：那个库由 systemd drop-in 挂到 carlife 的
+`LD_PRELOAD` 上，只在 carlife 启动时加载。
+
+装之前，仪表盘会显示 `WAITING FOR CARLIFE`——不是黑屏，所以"在等"和"坏了"不是同一个画面。
+
+链路分三种状态，仪表盘各有一张对应的画面，不会都用黑色糊过去：
+
+| 状态 | 仪表盘 | 中控状态页 |
+|---|---|---|
+| 取流件没连上 | `WAITING FOR CARLIFE` + 呼吸点 | `waiting for capture (...)` |
+| 流到了但没有解码器 | `CARLIFE LIVE` + 已收到的 MB / IDR 数 / 速率 | `H.264 ..., no decoder` |
+| 有解码后的帧 | 真实画面 | `decoded frames from ...` |
+
+**当前限制：中间那条就是现状。** CarLife 发的是 H.264，车机上没有现成的解码器，应用收到的
+是裸流，所以看到的是"流已到达"的数据画面而不是导航画面。这证明的是取流链路（USB → carlife
+进程 → 应用 → cluster-render → 仪表盘）已经全通，缺的只是解码这一步。
+
+帧格式与下文的 TCP/FIFO 相同（`CLMF` 头 + 一块 1088×480 的 YUV 4:2:0 atlas），没有第二个格式：
+将来把解码器接上，把解码结果按这个格式写进同一个 socket 就行，应用这一侧不用再改。
+
+`carlife.json` 里可以用 `carlifeHost` / `carlifePort` 让应用主动去连（手机上跑取流件时用），
+`sockPath` 改本地路径。
 
 ### TCP
 

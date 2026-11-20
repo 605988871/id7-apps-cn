@@ -108,4 +108,139 @@ function demoAtlas(out, w, h, tick) {
     return a;
 }
 
-module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas };
+/* 5x7 dot-matrix glyphs. The KOMBI's GPU converts YUV to RGB but there is no
+ * text drawing on a video layer, and the atlas is the only thing we can write:
+ * so numbers are drawn as dots here. Only what the activity picture says. */
+const GLYPH = {
+    '0': ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+    '1': ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+    '2': ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+    '3': ['11111', '00010', '00100', '00010', '00001', '10001', '01110'],
+    '4': ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+    '5': ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+    '6': ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+    '7': ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+    '8': ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+    '9': ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
+    '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
+    '/': ['00001', '00001', '00010', '00100', '01000', '10000', '10000'],
+    'A': ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+    'B': ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+    'C': ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+    'D': ['11100', '10010', '10001', '10001', '10001', '10010', '11100'],
+    'E': ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+    'F': ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
+    'G': ['01110', '10001', '10000', '10111', '10001', '10001', '01111'],
+    'H': ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+    'I': ['01110', '00100', '00100', '00100', '00100', '00100', '01110'],
+    'J': ['00111', '00010', '00010', '00010', '00010', '10010', '01100'],
+    'K': ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+    'L': ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+    'M': ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+    'N': ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
+    'O': ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+    'P': ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+    'Q': ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+    'R': ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+    'S': ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+    'T': ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+    'U': ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
+    'V': ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+    'W': ['10001', '10001', '10001', '10101', '10101', '11011', '10001'],
+    'X': ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+    'Y': ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+    'Z': ['11111', '00001', '00010', '00100', '01000', '10000', '11111'],
+    ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000']
+};
+
+function charWidth(s, scale) { return s.length * 6 * scale - scale; }
+
+function drawText(a, w, h, x, y, s, scale, value, chroma) {
+    let cx = x;
+    for (let i = 0; i < s.length; i++) {
+        const g = GLYPH[s[i]] || GLYPH[' '];
+        for (let r = 0; r < 7; r++) {
+            const row = g[r];
+            for (let c = 0; c < 5; c++) {
+                if (row[c] !== '1') continue;
+                fillY(a, w, h, cx + c * scale, y + r * scale, scale, scale, value);
+            }
+        }
+        if (chroma) fillUV(a, w, h, cx, y, 5 * scale, 7 * scale, chroma[0], chroma[1]);
+        cx += 6 * scale;
+    }
+    return cx;
+}
+
+/**
+ * What is shown while CarLife's stream arrives but cannot be decoded yet.
+ *
+ * CarLife sends H.264 and the head unit has no decoder in this build, so the
+ * real picture is not available. Drawing nothing would look exactly like a
+ * broken pipeline, and that is the one thing this picture must not look like:
+ * it prints the bytes and frames the capture side has already delivered, and a
+ * marker that moves only when data is still coming. If the numbers climb, the
+ * whole path from USB to the cluster works and only the decoder is missing.
+ *
+ * `mb` megabytes seen, `idr` keyframes seen, `mbps` recent rate, `tick` frame
+ * counter (the marker's position).
+ */
+function activityAtlas(out, w, h, tick, mb, idr, mbps) {
+    const need = atlasSize(w, h);
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    a.fill(20, 0, w * h);
+    a.fill(128, w * h);
+    fillUV(a, w, h, 0, 0, w, 10, 128, 128);
+
+    /* A moving marker on the very top: motion is the proof of live data. */
+    const mx = (tick * 11) % (w - 40);
+    fillY(a, w, h, mx, 6, 40, 6, 235);
+
+    drawText(a, w, h, 40, 44, 'CARLIFE LIVE', 4, 210);
+    drawText(a, w, h, 40, 110, 'H.264 STREAM', 3, 150);
+
+    const mbs = mb.toFixed(1);
+    let x = drawText(a, w, h, 40, 190, mbs, 11, 236);
+    drawText(a, w, h, x + 24, 190 + 44, 'MB', 4, 180);
+
+    x = drawText(a, w, h, 40, 340, String(idr), 8, 236);
+    drawText(a, w, h, x + 20, 340 + 28, 'IDR', 4, 180);
+
+    const rate = mbps.toFixed(1) + ' MB/S';
+    drawText(a, w, h, w - 40 - charWidth(rate, 4), 190 + 44, rate, 4, 180);
+
+    /* Bottom strip: a level meter of the last second's rate, 0..4 MB/s. */
+    const lv = clamp(Math.round(mbps / 4 * (w - 80)), 0, w - 80);
+    fillY(a, w, h, 40, h - 40, w - 80, 6, 60);
+    fillY(a, w, h, 40, h - 40, lv, 6, 236);
+    fillUV(a, w, h, 40, h - 40, w - 80, 6, 90, 160);
+    return a;
+}
+
+/**
+ * What is shown while CarLife is selected but nothing is arriving yet.
+ *
+ * An empty layer and a broken layer look the same on the cluster: black. This
+ * says which one it is, and the blinking dot says the app is alive rather than
+ * stuck - without it, "waiting" and "crashed" are the same picture.
+ */
+function waitingAtlas(out, w, h, tick) {
+    const need = atlasSize(w, h);
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    a.fill(18, 0, w * h);
+    a.fill(128, w * h);
+
+    const s1 = 'WAITING FOR', k1 = 5;
+    drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2), Math.round(h * 0.20), s1, k1, 150);
+    const s2 = 'CARLIFE', k2 = 9;
+    drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2), Math.round(h * 0.40), s2, k2, 225);
+
+    const n = tick % 3;
+    for (let i = 0; i < 3; i++) {
+        const x = Math.round(w / 2 - 82 + i * 70);
+        fillY(a, w, h, x, Math.round(h * 0.80), 24, 24, i === n ? 235 : 70);
+    }
+    return a;
+}
+
+module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas, activityAtlas, waitingAtlas };

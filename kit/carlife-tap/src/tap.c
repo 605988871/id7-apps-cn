@@ -27,11 +27,19 @@
  * library, so the installing tool can prove the library loads and runs on the
  * unit without touching CarLife.
  *
+ * Sink: /dev/shm/carlife-map/live.sock. Every inbound chunk is also written
+ * there, unchanged, for the CarLife Map app to read. The socket is optional in
+ * every sense: non-blocking, MSG_NOSIGNAL (a closed reader must never raise
+ * SIGPIPE in carlife), a full buffer drops the chunk instead of buffering it
+ * in carlife's memory, and no reader at all costs one connect attempt per
+ * second. Capture must not be able to hurt the thing it observes.
+ *
  * Build: kit/carlife-tap/build-zig.sh (zig cc, x86_64-linux-gnu.2.27, the
  * unit's glibc).
  */
 
 #define _GNU_SOURCE
+#include <errno.h>
 #include <fcntl.h>      /* AT_FDCWD and the O_* the report file is opened with */
 #include <stdarg.h>
 #include <stddef.h>
@@ -39,8 +47,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -88,6 +98,7 @@ _Static_assert(sizeof(struct usbdevfs_bulktransfer) == 24, "usbdevfs_bulktransfe
 #define MAXFD 2048
 #define REPORT "/dev/shm/carlife-tap.txt"
 #define MARKER "/dev/shm/carlife-tap.loaded"
+#define SINK "/dev/shm/carlife-map/live.sock"
 #define CHUNKS 4
 #define HEAD 24
 
@@ -154,6 +165,51 @@ static void clock_now(char *b, size_t n)
     strftime(b, n, "%H:%M:%S", &tm);
 }
 
+/* ---- handing the stream to whoever is listening ---- */
+static int sink_fd = -1;
+static long sink_next;
+static unsigned long long sink_bytes, sink_drops;
+
+static void sink_close(void)
+{
+    if (sink_fd >= 0) syscall(SYS_close, sink_fd);
+    sink_fd = -1;
+}
+
+static int sink_connect(void)
+{
+    if (sink_fd >= 0) return 1;
+    long now = (long)time(NULL);
+    if (now < sink_next) return 0;
+    sink_next = now + 1;                 /* one attempt a second, never a loop */
+
+    int fd = (int)syscall(SYS_socket, AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return 0;
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sun_family = AF_UNIX;
+    strncpy(sa.sun_path, SINK, sizeof sa.sun_path - 1);
+    long r = syscall(SYS_connect, fd, &sa, sizeof sa);
+    if (r != 0 && errno != EINPROGRESS) { syscall(SYS_close, fd); return 0; }
+    sink_fd = fd;
+    return 1;
+}
+
+/* Non-blocking and without SIGPIPE: if the app is not running, or is slower
+ * than the phone, the chunk is dropped. Buffering it would grow carlife's
+ * memory, and raising SIGPIPE would kill it - neither is acceptable for an
+ * observer. */
+static void sink_write(const void *buf, size_t n)
+{
+    if (!on || !n) return;
+    if (sink_fd < 0 && !sink_connect()) return;
+    long w = syscall(SYS_sendto, sink_fd, buf, n, 0x4000 /* MSG_NOSIGNAL */, NULL, 0);
+    if (w == (long)n) { __sync_fetch_and_add(&sink_bytes, n); return; }
+    __sync_fetch_and_add(&sink_drops, 1);
+    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) return;
+    sink_close();                        /* reader went away: reconnect later */
+}
+
 /* ---- the stream, as it goes past ---- */
 static void scan_annexb(const unsigned char *b, size_t n)
 {
@@ -188,6 +244,7 @@ static void tap_in(const void *buf, size_t n)
         memcpy(chunk_head[i], buf, h);
     }
     scan_annexb((const unsigned char *)buf, n);
+    sink_write(buf, n);
 }
 
 static void tap_out(size_t n)
@@ -228,6 +285,9 @@ static void report(void)
     putf("urbs: in=%llu (%.1fMB) out=%llu (%.1fMB) submits=%llu\n",
          in_urbs, (double)in_bytes / (1024.0 * 1024.0),
          out_urbs, (double)out_bytes / (1024.0 * 1024.0), submits);
+    putf("sink: %s sent=%.1fMB drops=%llu\n",
+         sink_fd >= 0 ? "connected" : "no reader",
+         (double)sink_bytes / (1024.0 * 1024.0), sink_drops);
     for (int i = 0; i < CHUNKS && i < chunk_n; i++) {
         putf("in#%d len=%u ", i + 1, chunk_len[i]);
         puthex(chunk_head[i], chunk_len[i] < HEAD ? chunk_len[i] : HEAD);
@@ -369,4 +429,5 @@ __attribute__((constructor)) static void carlife_tap_init(void)
 __attribute__((destructor)) static void carlife_tap_fini(void)
 {
     if (on) report();
+    sink_close();
 }
