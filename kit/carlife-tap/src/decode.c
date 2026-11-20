@@ -930,7 +930,18 @@ int main(void)
     memset(&dec, 0, sizeof dec);
     dec.dri = -1;
 
-    if (!load_mfx()) { write_report(); return 1; }
+    if (!load_mfx()) {
+        /* The library the unit decodes with is missing or unusable. Returning
+         * here would put the unit into a restart loop, which reads as a failed
+         * install and tells nobody why; staying up reports the same reason once
+         * a second and picks the library up the moment it can be loaded. */
+        for (;;) {
+            write_report();
+            sleep(30);
+            g_why[0] = 0;
+            if (load_mfx()) break;
+        }
+    }
     /* Once before anything is decoded, so that the report can say what it is
      * set up to cut even while it waits for the tap. */
     read_crop(&g_crop);

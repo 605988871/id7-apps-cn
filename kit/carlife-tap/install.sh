@@ -17,7 +17,7 @@ set -e
 # of $0" is the one answer that stays right in every layout - a run from / or
 # from /var/opt/carlife-tap would otherwise look for the library in the wrong
 # place and report it missing.
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 LOCAL="$HERE/libcarlife-tap.so"
 
 # What the unit is told to preload is the Store's stable path, not this
@@ -26,7 +26,14 @@ LOCAL="$HERE/libcarlife-tap.so"
 # "current" the same line keeps working across upgrades, and after an
 # uninstall it is a dangling entry the loader warns about and skips - CarLife
 # still starts, which is what matters most.
-SO=/var/opt/carlife-tap/current/libcarlife-tap.so
+# Under a Store install there is a /var/opt/carlife-tap to point into; a copy
+# unpacked by hand has none, and then this directory is the only path that
+# exists, so use it and accept that the next upgrade invalidates it.
+if [ -d /var/opt/carlife-tap ]; then
+    SO=/var/opt/carlife-tap/current/libcarlife-tap.so
+else
+    SO="$LOCAL"
+fi
 TAG=carlife-tap
 
 say() { echo "$TAG: $*"; }
@@ -40,15 +47,25 @@ say() { echo "$TAG: $*"; }
 # the ELF is loadable on this unit and its constructors run.
 MARKER=/dev/shm/carlife-tap.loaded
 rm -f "$MARKER"
-if ! LD_PRELOAD="$LOCAL" CARLIFE_TAP=0 /bin/sh -c 'exit 0' 2>/dev/null; then
-    echo "$TAG: the library does not load on this unit's loader"
-    exit 1
-fi
-# With no /dev/shm there is nowhere to leave the marker, and its absence would
-# say nothing about the library: skip the check rather than fail on it.
-if [ -d /dev/shm ]; then
-    [ -s "$MARKER" ] || { echo "$TAG: the library loads but its constructor never ran"; exit 1; }
+# A loader that cannot use the file says so on stderr and then runs the program
+# anyway. That is the failure worth stopping for, and the message is what says
+# it: a static /bin/sh (busybox is one binary) ignores LD_PRELOAD in silence and
+# would leave no marker without anything being wrong, so a missing marker alone
+# must never fail the install - that would block a good library on a shell.
+ERR=$(LD_PRELOAD="$LOCAL" CARLIFE_TAP=0 /bin/sh -c 'exit 0' 2>&1 >/dev/null)
+case "$ERR" in
+    *libcarlife-tap.so*)
+        echo "$TAG: the library does not load on this unit's loader:"
+        printf '%s\n' "$ERR" | head -4
+        exit 1
+        ;;
+esac
+# The marker still earns its keep as a positive signal: it proves the ELF
+# resolves and its constructor runs, which is more than an absent error says.
+if [ -s "$MARKER" ]; then
     say "library loads"
+elif [ -d /dev/shm ]; then
+    say "no marker from /bin/sh (a static shell, or nothing loaded yet)"
 fi
 
 # ---- 2. which unit starts CarLife ----
@@ -64,8 +81,10 @@ unit_of_pid() {
 UNIT=
 UNIT_HOW=
 for d in /proc/[0-9]*; do
-    [ -r "$d/cmdline" ] || continue
-    first=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+    # A process can exit between the glob and this read; that is not an error,
+    # it is the next pid's turn - and with `set -e` an unchecked redirect here
+    # would end the install.
+    first=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null) || continue
     first=${first%% *}
     case "${first##*/}" in
         carlife) UNIT=$(unit_of_pid "${d#/proc/}")
@@ -113,16 +132,42 @@ fi
 say "unit $UNIT ($UNIT_HOW)"
 
 # ---- 3. keep whatever the unit already preloads ----
-PREV=$(systemctl show "$UNIT" -p Environment 2>/dev/null |
-       tr ' ' '\n' | sed -n 's/^LD_PRELOAD=//p' | tail -1)
-# An upgrade puts the library in a new version directory, so a path written by
-# the last install no longer exists: drop ours, keep everything else. Leaving
-# it in would hand the loader a file that is not there.
+# "systemctl show -p Environment" prints one line, "Environment=A=1 B=2", with
+# the property name in front and the variables space separated - the quotes
+# systemd adds around values with spaces stay in the string. So strip the
+# property, split on spaces, unquote each token, and take only the LD_PRELOAD
+# one: the other variables are systemd's business, not this script's.
+#
+# Getting this wrong is quiet and expensive: writing a drop-in with only our
+# library in it replaces the unit's own LD_PRELOAD instead of extending it, and
+# the unit goes on starting - just without the /usr/lib/libschedeconfig.so.1 the
+# head unit preloads into carlife.
+if ! RAW=$(systemctl show "$UNIT" -p Environment 2>/dev/null); then
+    say "could not read the unit's own environment, so it was left untouched"
+    say "install again after a reboot - nothing was preloaded"
+    exit 0
+fi
+PREV_RAW=$(printf '%s\n' "$RAW" | sed -n 's/^Environment=//p' | tail -1)
 LIST=
-OLDIFS=$IFS; IFS=:
-for e in $PREV; do
-    case "$e" in *libcarlife-tap.so) continue ;; esac
-    [ -n "$e" ] && LIST="${LIST:+$LIST:}$e"
+OLDIFS=$IFS; IFS=' '
+for tok in $PREV_RAW; do
+    tok=${tok#\"}; tok=${tok%\"}          # systemd may quote the whole variable
+    case "$tok" in
+        LD_PRELOAD=*)
+            PREV=${tok#LD_PRELOAD=}
+            PREV=${PREV#\"}; PREV=${PREV%\"}  # ... or only its value
+            ;;
+        *) continue ;;
+    esac
+    # An upgrade puts the library in a new version directory, so a path written
+    # by the last install no longer exists: drop ours, keep everything else.
+    # Leaving it in would hand the loader a file that is not there.
+    OIFS=$IFS; IFS=:
+    for e in $PREV; do
+        case "$e" in *libcarlife-tap.so) continue ;; esac
+        if [ -n "$e" ]; then LIST="${LIST:+$LIST:}$e"; fi
+    done
+    IFS=$OIFS
 done
 IFS=$OLDIFS
 PREV=$LIST
@@ -132,18 +177,87 @@ if [ -n "$PREV" ]; then
 else
     WANT="$SO"
 fi
+# A value with a quote or a space in it would make the Environment line below
+# something systemd cannot parse, and a unit that will not parse is worse than
+# one without a preload: say so and leave it alone.
+case "$WANT" in
+    *\"*|*" "*)
+        say "the unit's LD_PRELOAD is not a plain path list, so it was left untouched"
+        say "preload $SO by hand, or install again after a reboot"
+        exit 0
+        ;;
+esac
 
 # ---- 4. the drop-in ----
+# /etc may be on a read-only root. The Store remounts while it lays down its own
+# unit files, but this runs as a hook of its own and cannot assume that: try the
+# write first, and remount only if it fails - then put the root back, because
+# leaving it writable is not this script's decision to make.
 D="/etc/systemd/system/${UNIT}.d"
-mkdir -p "$D"
+RW=0
+# Whatever happens next - a write that fails, a command that stops the script -
+# the root goes back to read-only: leaving it writable is not this script's
+# decision to make, and a trap is the only way to be sure of that on every exit
+# path. `set -e` would otherwise turn "[ $RW = 1 ] && mount ..." into an exit
+# of its own when nothing was remounted.
+trap 'if [ "$RW" = 1 ]; then mount -o remount,ro / 2>/dev/null; fi' EXIT
+
+# Can this be written at all? A directory that is really a file, or a root that
+# is mounted read-only, both say no here - and both are the difference between
+# "installed" and "installed, but nothing happens".
+writable() {
+    [ -d "$D" ] || mkdir -p "$D" 2>/dev/null || return 1
+    touch "$D/.carlife-tap-rw" 2>/dev/null || return 1
+    rm -f "$D/.carlife-tap-rw" 2>/dev/null
+}
+if ! writable; then
+    if mount -o remount,rw / 2>/dev/null; then
+        RW=1
+        if ! writable; then
+            say "$D cannot be written even with the root remounted read-write"
+            say "remove whatever is at that path, then install again - nothing was preloaded"
+            exit 0
+        fi
+    else
+        say "$D is not writable and the root file system cannot be remounted"
+        say "unlock the root file system, then install again - nothing was preloaded"
+        exit 0
+    fi
+fi
+
+F="$D/50-carlife-tap.conf"
 {
     echo '# carlife-tap: copies the phone video stream out of carlife (read-only).'
     echo '# Remove this file and run systemctl daemon-reload to undo.'
     echo '[Service]'
     echo "Environment=\"LD_PRELOAD=$WANT\""
-} > "$D/50-carlife-tap.conf"
+} > "$F" 2>/dev/null || true
+# A write can fail without the shell saying so - a full tmpfs, a unit directory
+# that is not a directory - so the file itself is the evidence, not the exit
+# status: read the line back before claiming it is there.
+if ! grep -q '^Environment="LD_PRELOAD=' "$F" 2>/dev/null; then
+    say "could not write $F"
+    say "the install is fine, but nothing was preloaded; install again after a reboot"
+    exit 0
+fi
+sync
+if [ "$RW" = 1 ]; then
+    mount -o remount,ro / 2>/dev/null || true
+    RW=0
+fi
 systemctl daemon-reload 2>/dev/null || true
 
-say "installed for $UNIT; it takes effect at the next start"
-say "restart the head unit (or: systemctl restart $UNIT)"
-printf '{"status":"preloaded into %s","reboot":"the CarLife tap loads when carlife starts"}\n' "$UNIT"
+# The decoder is a unit of ours, and on an upgrade the one running is the old
+# binary. try-restart touches nothing that has never started, and a stuck
+# systemctl must not hold the install open - the probe's script does the same.
+if command -v systemctl >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 10 systemctl try-restart carlife-decode.service 2>/dev/null || true
+    else
+        systemctl try-restart carlife-decode.service 2>/dev/null || true
+    fi
+fi
+
+say "installed for $UNIT, $WANT"
+# the Store quotes the last line it read: keep the actionable one last
+say "restart the head unit to load it; open the app and check the USB tap line"

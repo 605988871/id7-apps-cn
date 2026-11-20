@@ -131,6 +131,18 @@ says so on its last line; the library is simply not preloaded yet, and the next
 install after one CarLife session finishes the job. Failing here would roll the
 app and the decoder back with it over a step that fixes itself.
 
+Two things about step 3 that are easy to get wrong and impossible to see from
+the outside, so they are spelled out here:
+
+- The unit's own `LD_PRELOAD` is read from `systemctl show -p Environment`,
+  whose output starts with the property name (`Environment=LD_PRELOAD=...`).
+  Splitting on spaces without stripping it yields nothing, and the drop-in then
+  *replaces* the unit's preload instead of extending it — CarLife still starts,
+  just without the `libschedeconfig` the head unit puts there.
+- `/etc` can be on a read-only root. The Store remounts while it installs its
+  own units, but this hook runs on its own: it tries the write, remounts only if
+  that fails, and a trap puts the root back to read-only on every exit path.
+
 It does **not** restart anything. CarLife picks the library up at the unit's
 next start, so a head-unit restart is what makes it live; restarting just
 carlife while the rest of the Cinemo stack keeps running is the less predictable
@@ -234,6 +246,12 @@ stub libraries, so no container and no compiler install is needed:
 ```sh
 ZIG=/d/zig/zig-x86_64-windows-0.14.1/zig.exe ./build-zig.sh
 ```
+
+`python3 test/component_test.py` checks the manifest the way the Store reads it:
+only the fields the other tools use, payload at the component's root, the unit
+starting something that is in the payload through `/var/opt/carlife-tap/current`,
+`postInstall` present, and the app's `requires` naming this version. It is the
+test that would have caught the first install's failure.
 
 `-target x86_64-linux-gnu.2.27` is the whole point: `check_elf.py` then reads
 the result back and refuses it unless it is a 64-bit little-endian x86-64
