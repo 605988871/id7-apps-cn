@@ -1,0 +1,12 @@
+{
+  "id": "carlife-tap",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "CarLife tap",
+  "description": "Watches what CarLife reads from the phone and reports it: the copy point for CarLife's map on the instrument cluster, because the phone sends one stream and no second display. Read-only, it changes no byte of the stream. Installed with the CarLife Map app.",
+  "mguHmi": ["ID7"],
+  "uninstallable": true,
+  "files": [
+    { "path": "libcarlife-tap.so", "from": "bin/libcarlife-tap.so", "mode": "0644" }
+  ]
+}
