@@ -75,6 +75,95 @@ function cropAtlas(src, sw, sh, dx, dy, dw, dh, out) {
     return a;
 }
 
+/** Fill a triangle in the Y plane. Used for arrow heads, which have to look
+ * like an arrow and not like a box. */
+function fillTri(a, w, h, x0, y0, x1, y1, x2, y2, value) {
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+    const maxY = Math.min(h - 1, Math.ceil(Math.max(y0, y1, y2)));
+    const e = [[x0, y0, x1, y1], [x1, y1, x2, y2], [x2, y2, x0, y0]];
+    for (let y = minY; y <= maxY; y++) {
+        const xs = [];
+        for (let i = 0; i < 3; i++) {
+            const ax = e[i][0], ay = e[i][1], bx = e[i][2], by = e[i][3];
+            if ((ay <= y && by > y) || (by <= y && ay > y)) {
+                xs.push(ax + (y - ay) * (bx - ax) / (by - ay));
+            }
+        }
+        if (xs.length < 2) continue;
+        const lo = Math.max(0, Math.round(Math.min(xs[0], xs[1])));
+        const hi = Math.min(w - 1, Math.round(Math.max(xs[0], xs[1])));
+        if (hi >= lo) fillY(a, w, h, lo, y, hi - lo + 1, 1, value);
+    }
+}
+
+/**
+ * The turn card: an arrow and the distance to it, nothing else.
+ *
+ * This is what a HUD is for. A projected HUD shows roughly 560x200 of glass a
+ * metre in front of the driver, at a focal distance where a map is unreadable
+ * but a single arrow is obvious — the stock head unit draws exactly this for
+ * its own navigation, and CarPlay does the same for Apple Maps. Feeding the
+ * HUD a shrunken map, which is what this app did before, works against the
+ * hardware.
+ *
+ * Drawn here, in the atlas, so the shape can be judged on the car before any
+ * picture source exists: with `Picture source = demo` the HUD shows this card.
+ * Later the same card comes from CarLife's own guidance strip, cropped out of
+ * its picture — the geometry, the layer and the layer size do not change.
+ *
+ * `dir` is 'left', 'right' or 'straight'; `dist`/`unit`/`road` are text.
+ */
+function arrowAtlas(out, w, h, tick, opt) {
+    const need = atlasSize(w, h);
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    a.fill(16, 0, w * h);
+    a.fill(128, w * h);
+
+    const o = opt || {};
+    const dir = o.dir === 'right' || o.dir === 'straight' ? o.dir : 'left';
+
+    /* The arrow owns a square on the left; the numbers sit to its right. */
+    const side = Math.min(h - 16, Math.round(w * 0.32));
+    const cx = 8 + (side >> 1);
+    const cy = h >> 1;
+    const s = side;
+    const t = Math.max(6, Math.round(s * 0.17));       /* shaft thickness */
+    const ink = 238;
+    const shaftTop = cy - Math.round(s * (dir === 'straight' ? 0.06 : 0.12));
+
+    /* Shaft, from the bottom of the box up to the elbow. */
+    fillY(a, w, h, cx - (t >> 1), shaftTop, t, Math.round(s * 0.45), ink);
+
+    if (dir === 'straight') {
+        fillTri(a, w, h, cx, cy - Math.round(s * 0.46),
+            cx - Math.round(s * 0.23), shaftTop,
+            cx + Math.round(s * 0.23), shaftTop, ink);
+    } else {
+        const sign = dir === 'left' ? -1 : 1;
+        const armLen = Math.round(s * 0.30);
+        const armX = sign < 0 ? cx - armLen : cx - (t >> 1);
+        fillY(a, w, h, armX, shaftTop, armLen + (t >> 1), t, ink);
+        const baseX = sign < 0 ? armX : armX + armLen + (t >> 1);
+        const tipX = baseX + sign * Math.round(s * 0.19);
+        fillTri(a, w, h, tipX, shaftTop + (t >> 1),
+            baseX, shaftTop - Math.round(t * 0.85),
+            baseX, shaftTop + Math.round(t * 1.85), ink);
+    }
+
+    /* To the right: the distance big with its unit at its foot, the road small
+     * underneath. A HUD is read at a glance, so there are exactly two pieces of
+     * text and no third line to hunt through. */
+    const tx = 8 + side + Math.round(w * 0.06);
+    const kd = Math.max(4, Math.round((h * 0.32) / 7));
+    const ty = Math.round(h * 0.20);
+    const end = drawText(a, w, h, tx, ty, o.dist || '300', kd, 236);
+    if (o.unit !== '') {
+        drawText(a, w, h, end + 10, ty + 7 * kd - 21, o.unit || 'M', 3, 190);
+    }
+    drawText(a, w, h, tx, ty + 7 * kd + Math.round(h * 0.10), o.road || 'CHANGAN AVE', 3, 150);
+    return a;
+}
+
 /**
  * Build a moving, map-like test picture directly in the atlas.
  * `out` may be a reused buffer of the exact size; otherwise one is made.
@@ -218,6 +307,29 @@ function activityAtlas(out, w, h, tick, mb, idr, mbps) {
 }
 
 /**
+ * The card's placeholder while CarLife's stream arrives but cannot be decoded.
+ *
+ * activityAtlas is laid out for the cluster's 1088x480 and its lower half would
+ * fall off a 480x168 card, so the card gets its own: the same proof — a marker
+ * that moves only while bytes are still coming — in two lines instead of six.
+ */
+function liveCardAtlas(out, w, h, tick, mb) {
+    const need = atlasSize(w, h);
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    a.fill(20, 0, w * h);
+    a.fill(128, w * h);
+
+    const mx = (tick * 7) % Math.max(1, w - 60);
+    fillY(a, w, h, mx, 8, 60, 8, 238);
+
+    const s1 = 'CARLIFE';
+    drawText(a, w, h, Math.round((w - charWidth(s1, 6)) / 2), Math.round(h * 0.26), s1, 6, 225);
+    const s2 = mb.toFixed(1) + ' MB';
+    drawText(a, w, h, Math.round((w - charWidth(s2, 4)) / 2), Math.round(h * 0.62), s2, 4, 160);
+    return a;
+}
+
+/**
  * What is shown while CarLife is selected but nothing is arriving yet.
  *
  * An empty layer and a broken layer look the same on the cluster: black. This
@@ -243,4 +355,5 @@ function waitingAtlas(out, w, h, tick) {
     return a;
 }
 
-module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas, activityAtlas, waitingAtlas };
+module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas, arrowAtlas,
+    activityAtlas, liveCardAtlas, waitingAtlas };

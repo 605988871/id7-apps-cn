@@ -26,7 +26,7 @@ const net = require('net');
 const fs = require('fs');
 const pathmod = require('path');
 const EventEmitter = require('events');
-const { demoAtlas, activityAtlas, waitingAtlas, atlasSize } = require('./atlas');
+const { demoAtlas, arrowAtlas, activityAtlas, liveCardAtlas, waitingAtlas, atlasSize } = require('./atlas');
 
 const MAGIC = 0x464d4c43;
 const HEAD = 12;
@@ -95,15 +95,27 @@ class FrameSource extends EventEmitter {
 
 /** A moving picture made on the head unit: proves the whole rendering path. */
 class DemoSource extends FrameSource {
+    constructor(opts) {
+        super(opts);
+        /* 'map' is the scrolling test map; 'arrow' is the HUD's turn card. They
+         * are different pictures at different sizes, not one picture cropped
+         * twice - the HUD card exists so the shape can be judged before any
+         * picture source does. */
+        this.draw = opts.draw === 'arrow' ? 'arrow' : 'map';
+        this.card = opts.card || null;
+    }
+
     _start() {
-        this.emit('status', 'demo picture');
+        this.emit('status', this.draw === 'arrow' ? 'demo turn card' : 'demo picture');
         const period = Math.max(33, Math.round(1000 / this.fps));
         let buf = null;
         this.tick = 0;
         this.timer = setInterval(() => {
             if (!this.running) return;
             try {
-                buf = demoAtlas(buf, this.w, this.h, this.tick++);
+                buf = this.draw === 'arrow'
+                    ? arrowAtlas(buf, this.w, this.h, this.tick++, this.card)
+                    : demoAtlas(buf, this.w, this.h, this.tick++);
                 this._frame(buf);
             } catch (e) { this._fail('demo: ' + e.message); }
         }, period);
@@ -406,15 +418,24 @@ class CarlifeSource extends FrameSource {
      * The last picture is re-sent even when nothing changes: a stopped stream
      * must not let the layer look stalled, and an identical frame costs
      * nothing against the service's dirty-tile budget. */
+    /* Two shapes of the same report. The cluster gets the full page; the HUD
+     * card, a third of its height, would lose the lower half of it. */
+    _statusAtlas(buf, tick, mb) {
+        if (this.h >= 240) {
+            return activityAtlas(buf, this.w, this.h, tick, mb, this.h264Idr, this.mbps);
+        }
+        return liveCardAtlas(buf, this.w, this.h, tick, mb);
+    }
+
     _activity() {
         if (!this.running || this.format === 'clmf') return;
         if (this.format === 'h264') {
             if (this.h264Bytes !== this.actSeen) {
                 this.actSeen = this.h264Bytes;
-                this.actBuf = activityAtlas(this.actBuf, this.w, this.h, this.actTick++,
-                    this.h264Bytes / 1048576, this.h264Idr, this.mbps);
+                this.actBuf = this._statusAtlas(this.actBuf, this.actTick++,
+                    this.h264Bytes / 1048576);
             } else if (!this.actBuf) {
-                this.actBuf = activityAtlas(this.actBuf, this.w, this.h, this.actTick++, 0, 0, 0);
+                this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0);
             }
         } else {
             this.waitTick = (this.waitTick + 1) % 1000000;

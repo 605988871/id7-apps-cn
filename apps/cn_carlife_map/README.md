@@ -1,6 +1,10 @@
 # CarLife Map on Cluster / HUD
 
-把手机 CarLife 的导航画面显示在 iDrive 7 仪表盘中央地图区，实验性地也能显示在 HUD。
+把手机 CarLife 的导航送到 iDrive 7：**仪表盘显示地图，HUD 显示一个转向箭头和距离**。
+
+仪表盘和 HUD 是两种画面，不是一张图裁两次。HUD 的玻璃离眼睛一米、只有约 560×200 可见，
+把地图缩到那里去既看不清也没意义；原厂导航和 CarPlay 在 HUD 上画的都是一个箭头。所以
+HUD 走自己的一路：一张 `480×168` 的转向卡片。
 
 > 这是**车机侧**应用。它不负责从手机抓 CarLife 画面——那一步必须由单独的捕获程序完成（见下文"帧源"）。没有帧源时可以用内置测试画面验证整条显示链路。
 
@@ -74,6 +78,7 @@ python3 kit/tools/build.py cn_carlife_map
 | 设置 | 说明 |
 |---|---|
 | Show map on | Off / 仅仪表 / 仅 HUD / 仪表和 HUD |
+| What the HUD shows | `Turn arrow and distance`（默认）HUD 画转向卡片；`A piece of the map` 退回到投一小块地图 |
 | Picture source | Test picture 测试画面 / CarLife 实时画面 / TCP 网络 / 本地管道 |
 | Frame rate | 5–30 fps。地图变化慢，15 fps 通常够，也能减轻簇的上传负担 |
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
@@ -162,6 +167,36 @@ CarLife 协议里**只有一路视频**：手机把中控那块屏整块编码�
 `carlife.json` 里可以用 `carlifeHost` / `carlifePort` 让应用主动去连（手机上跑取流件时用），
 `sockPath` 改本地路径。
 
+## HUD 显示什么：一个箭头
+
+HUD 上只有两行东西——一个转向箭头、一个距离（外加路名）。这不是简化，是这块玻璃的用法：
+它离眼睛一米、可见区约 560×200、焦点在远处，地图放上去既看不清也来不及看。原厂导航在 HUD 上
+画的就是一个箭头，CarPlay 也是。
+
+所以 HUD 有**自己的一路帧**，尺寸 480×168，走 `/dev/shm/carlife-map/hud.sock`（与地图的
+`live.sock` 并存，格式相同）。一个尺寸一路流，是 cluster-render 的硬要求：层帧长度必须正好
+等于 `vw × vh`，否则静默丢弃。
+
+`What the HUD shows` 两档：
+
+- `Turn arrow and distance`（默认）：HUD 上是转向卡片。`Picture source = Test picture` 时
+  这张卡由车机自己画（在 `atlas.js` 的 `arrowAtlas()` 里），**所以不用等解码器就能在车上
+  看形状、调大小和位置**——箭头是左转、右转还是直行都能改。
+- `A piece of the map`：退回旧行为，从 1088×480 的地图帧中心裁一块给 HUD。字会很小，只作对照。
+
+接真画面时，卡片不是"从地图裁"，而是**从 CarLife 整屏画面的导航条裁**：导航条横在画面顶部，
+箭头在它左端。这块位置写在 `crop.json` 的 `hud` 段里（`strip` 百分比 + `out` 尺寸 + `sock`），
+解码器按它输出第二路。`mode` 为 `map` 时该段不生效。
+
+`HUD card:` 一行是判断依据：
+
+| 显示 | 含义 |
+|---|---|
+| `navi arrow, 37 from demo, own socket` | 卡片正在出图，37 帧来自测试图案 |
+| `navi arrow, 0 from carlife, own socket` | 选了实时画面但卡片流还没数据（解码器未接或未输出第二路） |
+| `off (no HUD layer)` | 当前 target 不含 HUD，或 HUD 层没建起来 |
+| `map crop, middle of the picture` | 处于地图模式 |
+
 ### TCP
 
 帧源连到 `127.0.0.1:20558`。端口/主机可用应用数据目录下的 `carlife.json` 覆盖：
@@ -191,6 +226,10 @@ u32 len   = 783360        (1088 * (480 + 480/2))
 u32 seq   = 帧序号
 len 字节的 4:2:0 atlas
 ```
+
+HUD 的卡片流是同一格式、另一个尺寸：480×168 时 `len = 480 * 252 = 120960`，
+写在 `/dev/shm/carlife-map/hud.sock`。尺寸跟着 `HUD width` 变，解码器按 `crop.json` 的
+`hud.out` 出图。
 
 atlas 布局：
 
@@ -227,9 +266,9 @@ ffmpeg -i phone_capture.mp4 -vf scale=1088:480 -pix_fmt nv12 -f rawvideo - \
 `vw × vh`，否则 cluster-render 的 `frame()` 直接返回 false，**静默丢弃**，界面上什么也
 不会说；而层矩形比帧小时不是缩放而是**裁切**，只有帧的左上角那一块会被画出来。把地图的
 1088×480 帧直接喂给 456×200 的 HUD 层，HUD 上就只有地图左上角的深色背景——在投影式
-HUD 上等于什么都没有。所以 HUD 层有自己的 `vw/vh`，画面由 `atlas.js` 的 `cropAtlas()`
-从地图帧中心裁出来，逐帧复用同一块缓冲。HUD 层用 `class: 'overlay'`，压在原厂的
-`content` 层之上。
+HUD 上等于什么都没有。现在 HUD 层有自己的 `vw/vh`，**转向卡片模式下来自第二路流**
+（`hud.sock`，480×168 起）；只有退回地图模式时才用 `cropAtlas()` 从地图帧里裁一块。
+HUD 层用 `class: 'overlay'`，压在原厂的 `content` 层之上。
 
 **必须清楚的限制：**
 
@@ -241,7 +280,7 @@ HUD 上等于什么都没有。所以 HUD 层有自己的 `vw/vh`，画面由 `a
 - **投到 HUD 比投到仪表盘弱。** cluster-render 的 `hud_take_over_stock=0`，抢不过原厂
   HUD 导航引导；video 层没有逐像素 alpha，会盖住底下的宝马内容。所以本应用把画面
   限制在 HUD 可见窗口的安全区（约 x120–680 / y120–320），避开底部的速度/限速牌。
-  实测 HUD 可见窗口只有约 560×240，地图缩到这么小字会偏小。
+  也因为这块窗口只有约 560×200，HUD 上放的是 480×168 的转向卡片，而不是地图。
 - **map slot 争抢有失败率。** 实测约 30% 的争抢会输，服务按 2/5/10/20/30 秒阶梯重试；
   不是装上立刻就显示。抢到时会同时隐藏原厂转向框（`guide_hold:1`）。
 - **上传预算共享。** 所有客户端合计约 5500 KB/s。测试图案已做成静止网格 + 单个移动

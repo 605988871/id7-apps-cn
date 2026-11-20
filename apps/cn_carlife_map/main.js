@@ -18,14 +18,20 @@ const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
-const { MAP_W, MAP_H, cropAtlas } = require('./atlas');
+const { MAP_W, MAP_H, cropAtlas, atlasSize } = require('./atlas');
 
 const APP = 'cn_carlife_map';
-const KEYS = ['target', 'source', 'fps', 'hudWidth', 'hudX', 'hudY', 'hudKeep',
+const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudWidth', 'hudX', 'hudY', 'hudKeep',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* Where the decoder is told how much of CarLife's picture is the map. */
 const CROP_FILE = '/dev/shm/carlife-map/crop.json';
+/* The HUD's turn card, in glass pixels. The visible HUD area is about 560x200,
+ * and the stock speed reading and limit sign sit along its bottom, so the card
+ * takes most of the width but not all of the height. */
+const CARD_W = 480;
+const CARD_H = 168;
+const CARD_SOCK = '/dev/shm/carlife-map/hud.sock';
 
 async function run(ctx) {
     const { ui, settings, log } = ctx;
@@ -48,10 +54,12 @@ async function run(ctx) {
     let source = null;
     let mapLayer = 0, hudLayer = 0;
     let lastAtlas = null, lastSeq = 0, frames = 0;
-    /* The HUD gets a frame of its own size (see cropAtlas): a layer's frame
-     * must be exactly its vw x vh, and cluster-render drops any frame that is
-     * not, silently. */
+    /* The HUD gets a frame of its own size, from its own source: a layer's
+     * frame must be exactly its vw x vh, and cluster-render drops any frame
+     * that is not, silently. */
     let hudW = 0, hudH = 0, hudAtlas = null, hudSeq = 0, hudFrames = 0;
+    /* The turn card is its own picture on its own socket - see setHudSource. */
+    let hudSource = null, hudBuf = null, hudSourceKind = '', hudCards = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
     let wantHud = false, hudBlocked = false;
     const layerState = { map: 'off', hud: 'off' };
@@ -74,16 +82,35 @@ async function run(ctx) {
      * so keep the picture in a safe box that does not cover that strip. */
     const HUD_BOX = { x: 120, y: 120, right: 680, bottom: 320 };
 
+    /* Two ways to fill the HUD, and they are not the same picture:
+     *
+     *   navi - a turn card: one arrow, the distance to it, the road name. This
+     *          is what a HUD is for, and what the stock head unit shows for its
+     *          own navigation.
+     *   map  - a piece of the map, at HUD size. Kept because it is the only
+     *          thing that works before a card source exists, and because some
+     *          people want it.
+     *
+     * The card is drawn at its own aspect ratio, so its height follows from
+     * hudWidth rather than from the map's. */
     function hudRect() {
-        const pct = Number(settings.get('hudWidth')) || 50;
-        let w = Math.round(800 * pct / 100) & ~3;
+        const mode = settings.get('hudMode') || 'navi';
+        const pct = Number(settings.get('hudWidth')) || (mode === 'map' ? 50 : 86);
+        let w, h;
+        if (mode === 'map') {
+            w = Math.round(800 * pct / 100) & ~3;
+            h = Math.round(w * MAP_H / MAP_W) & ~3;
+        } else {
+            w = Math.round(560 * pct / 100) & ~3;
+            h = Math.round(w * CARD_H / CARD_W) & ~3;
+        }
         if (w < 64) w = 64;
         if (w > HUD_BOX.right - HUD_BOX.x) w = HUD_BOX.right - HUD_BOX.x;
-        let h = Math.round(w * MAP_H / MAP_W) & ~3;
         if (h < 32) h = 32;
         if (h > HUD_BOX.bottom - HUD_BOX.y) {
             h = HUD_BOX.bottom - HUD_BOX.y;
-            w = Math.round(h * MAP_W / MAP_H) & ~3;
+            w = (mode === 'map' ? Math.round(h * MAP_W / MAP_H)
+                                : Math.round(h * CARD_W / CARD_H)) & ~3;
         }
         const dx = Number(settings.get('hudX')) || 0;
         const dy = Number(settings.get('hudY')) || 0;
@@ -96,20 +123,76 @@ async function run(ctx) {
 
     const wants = (t, which) => t === which || t === 'both';
 
-    /* The HUD draws the middle of the map, at its own size.
+    /* The HUD's frame, in whichever shape the mode asks for.
      *
      * cluster-render takes a frame only when it is exactly the layer's vw x vh,
      * and a layer rectangle that is smaller than the frame does not scale it —
-     * it cuts, showing only the frame's top-left corner. Fed the map's
-     * 1088x480 frame, the HUD therefore showed the corner of a dark test grid,
-     * which on a projected HUD is nothing at all. Cropping the middle into a
-     * frame the size of the HUD's box is what makes it visible. */
+     * it cuts, showing only the frame's top-left corner. So each mode has to
+     * hand over a frame of exactly the size the layer was created with. */
     const sendHud = safe('hud frame', (atlas) => {
-        if (!cr || !hudLayer || !hudW || !hudH) return;
-        const dx = ((MAP_W - hudW) >> 1) & ~1;
-        const dy = ((MAP_H - hudH) >> 1) & ~1;
-        hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
-        if (cr.frame(hudLayer, hudAtlas, ++hudSeq)) hudFrames++;
+        if (!cr || !cr.ready || !hudLayer || !hudW || !hudH) return;
+        let frame;
+        if ((settings.get('hudMode') || 'navi') === 'map') {
+            if (!atlas) return;
+            const dx = ((MAP_W - hudW) >> 1) & ~1;
+            const dy = ((MAP_H - hudH) >> 1) & ~1;
+            hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
+            frame = hudAtlas;
+        } else {
+            /* The card arrives on its own stream, already the right size. A
+             * map atlas is not a source for it: cutting an arrow out of a
+             * shrunken map would show a shrunken arrow. */
+            frame = hudBuf;
+        }
+        if (frame && cr.frame(hudLayer, frame, ++hudSeq)) hudFrames++;
+    });
+
+    /* The turn card has its own stream, because it is not a crop of the map.
+     *
+     * Same wire format, second socket: whatever produces the card (for now the
+     * decoder, until then the demo) writes 480x168-ish atlases to
+     * /dev/shm/carlife-map/hud.sock, and the map keeps its own socket
+     * untouched. One size per layer, one layer per size - that is the rule
+     * cluster-render enforces, and this is the cheapest way to obey it.
+     *
+     * With `Picture source = demo` the card is drawn on the head unit, so the
+     * shape, the size and the HUD layer can all be judged on the car before any
+     * picture source exists. */
+    const setHudSource = safe('hud source', () => {
+        const kind = settings.get('source') || 'demo';
+        const fps = Number(settings.get('fps')) || 15;
+        const navi = (settings.get('hudMode') || 'navi') !== 'map';
+        if (!wantHud || !navi || !hudW || !hudH) {
+            if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
+            hudSource = null; hudBuf = null; hudSourceKind = '';
+            return;
+        }
+        if (hudSource && hudSourceKind === kind && hudSource.w === hudW && hudSource.h === hudH) {
+            return;                                   /* still the right one */
+        }
+        if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
+        hudSource = null; hudBuf = null; hudSourceKind = kind;
+        const live = kind === 'carlife';
+        hudSource = createSource({
+            kind: kind, w: hudW, h: hudH, fps: fps,
+            draw: 'arrow',
+            card: { dir: 'left', dist: '300', unit: 'M', road: 'CHANGAN AVE' },
+            host: live ? (override.carlifeHost || null) : (override.host || DEFAULT_HOST),
+            port: live ? (Number(override.carlifePort) || CARLIFE_PORT)
+                       : (Number(override.port) || DEFAULT_PORT),
+            sockPath: override.hudSockPath || CARD_SOCK,
+            path: override.path || DEFAULT_FIFO,
+            tcpListen: override.tcpListen === true
+        });
+        hudSource.on('frame', safe('hud card', (buf) => {
+            if (buf.length !== atlasSize(hudW, hudH)) return;
+            hudBuf = buf;
+            hudCards++;
+            sendHud(null);
+        }));
+        hudSource.on('status', safe('hud status', () => {}));
+        hudSource.start();
+        log.info('hud card source: ' + kind + ' at ' + hudW + 'x' + hudH);
     });
 
     const setLayers = safe('layers', () => {
@@ -120,6 +203,7 @@ async function run(ctx) {
         wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
             refreshClaim();
+            setHudSource();                        /* nothing to feed: let it go */
             return;
         }
         const fps = Number(settings.get('fps')) || 15;
@@ -148,6 +232,7 @@ async function run(ctx) {
             layerState.hud = hudLayer ? 'waiting' : 'refused';
         }
         refreshClaim();
+        setHudSource();
         if (lastAtlas) {
             if (mapLayer) cr.frame(mapLayer, lastAtlas, lastSeq);
             if (hudLayer) sendHud(lastAtlas);
@@ -169,7 +254,18 @@ async function run(ctx) {
         const box = {
             top: pct('mapTop', 8), bottom: pct('mapBottom', 0),
             left: pct('mapLeft', 0), right: pct('mapRight', 0),
-            fit: settings.get('mapFit') || 'band'
+            fit: settings.get('mapFit') || 'band',
+            /* The HUD's card is a second crop of the same picture, delivered on
+             * a second socket at its own size. CarLife's guidance strip runs
+             * across the top of its picture with the turn arrow at its left
+             * end, so the card is a small box there and nothing else: these are
+             * starting values to be tuned on the car, not measurements. */
+            hud: {
+                mode: settings.get('hudMode') || 'navi',
+                strip: { top: 0, bottom: 12, left: 0, right: 20 },
+                out: [hudW, hudH],
+                sock: override.hudSockPath || CARD_SOCK
+            }
         };
         mkdirp('/dev/shm/carlife-map');
         fs.writeFileSync(CROP_FILE, JSON.stringify(box) + '\n');
@@ -288,6 +384,15 @@ async function run(ctx) {
         return tapInfo;
     }
 
+    /* What the HUD is showing, in one line: the answer to "is it the arrow, or
+     * still a piece of the map?". */
+    function hudCardInfo() {
+        const mode = settings.get('hudMode') || 'navi';
+        if (mode === 'map') return 'map crop, middle of the picture';
+        if (!hudSource) return 'off (no HUD layer)';
+        return 'navi arrow, ' + hudCards + ' from ' + hudSourceKind + ', own socket';
+    }
+
     /* ---------- status page ---------- */
     ctx.loop('MAIN', 5, safe('ui', () => {
         const cv = ctx.canvas(1600, 520).clear('#0b1016');
@@ -303,9 +408,10 @@ async function run(ctx) {
         cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 288, 26, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
             (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 328, 26, '#a8d8c0');
-        cv.text('USB tap : ' + readTap(), 40, 368, 24, '#e0c88a');
-        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 408, 22, '#e0c88a');
-        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 456, 24, '#8fa3b4');
+        cv.text('HUD card: ' + hudCardInfo(), 40, 368, 24, '#a8d8c0');
+        cv.text('USB tap : ' + readTap(), 40, 404, 22, '#e0c88a');
+        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 440, 22, '#e0c88a');
+        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 476, 22, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 
