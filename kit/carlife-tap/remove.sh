@@ -21,5 +21,11 @@ done
 [ "$found" = 1 ] || say "no drop-in was installed"
 systemctl daemon-reload 2>/dev/null || true
 
-rm -f /dev/shm/carlife-tap.loaded /dev/shm/carlife-tap.txt
+# The decoder is a unit of its own. The Store disables and removes units it
+# installed, but a stop here means the picture goes away now, not at the next
+# boot, and nothing else would notice it was still running.
+systemctl stop carlife-decode.service 2>/dev/null || true
+
+rm -f /dev/shm/carlife-tap.loaded /dev/shm/carlife-tap.txt /dev/shm/carlife-decode.txt
+rm -f /dev/shm/carlife-map/h264.sock /dev/shm/carlife-map/live.sock /dev/shm/carlife-map/hud.sock
 say "done; CarLife runs without the library at its next start"

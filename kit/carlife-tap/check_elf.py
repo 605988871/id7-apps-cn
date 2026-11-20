@@ -22,6 +22,7 @@ SHT_DYNAMIC = 6
 SHT_DYNSYM = 11
 DT_NEEDED = 1
 ET_DYN = 3
+ET_EXEC = 2
 EM_X86_64 = 62
 MAX_GLIBC = (2, 27)
 
@@ -39,8 +40,8 @@ def sections(d):
         raise Bad("not little-endian")
     e_type = struct.unpack_from("<H", d, 16)[0]
     e_machine = struct.unpack_from("<H", d, 18)[0]
-    if e_type != ET_DYN:
-        raise Bad("not a shared object (e_type=%d, want ET_DYN)" % e_type)
+    if e_type not in (ET_DYN, ET_EXEC):
+        raise Bad("not an object the loader takes (e_type=%d)" % e_type)
     if e_machine != EM_X86_64:
         raise Bad("wrong machine (e_machine=%d, want %d)" % (e_machine, EM_X86_64))
 
@@ -123,10 +124,11 @@ def glibc_versions(d):
 
 
 def main(path):
+    lib = path.endswith(".so")
     d = open(path, "rb").read()
     secs = sections(d)
     needed, soname = dyn_needed(d, secs)
-    syms = exported(d, secs)
+    syms = exported(d, secs) if lib else set()
     vers = glibc_versions(d)
 
     print("file      %s (%.1f KB)" % (path, len(d) / 1024.0))
@@ -145,10 +147,19 @@ def main(path):
     if bad:
         raise Bad("asks for GLIBC %s; the unit has %d.%d"
                   % (", ".join(sorted(bad)), *MAX_GLIBC))
-    for fn in ("read", "ioctl"):
-        if fn not in syms:
-            raise Bad("%s() is not exported: that call would not be interposed" % fn)
-    print("interpose read, ioctl  ok")
+    if lib:
+        for fn in ("read", "ioctl"):
+            if fn not in syms:
+                raise Bad("%s() is not exported: that call would not be interposed" % fn)
+        print("interpose read, ioctl  ok")
+    else:
+        # A program that loads its libraries itself must not drag in anything
+        # the unit may not have: only the C runtime is allowed.
+        allowed = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1"}
+        extra = [n for n in needed if n not in allowed]
+        if extra:
+            raise Bad("needs %s; the unit has only the C runtime" % ", ".join(extra))
+        print("runtime   C library only")
 
     for fn in ("malloc", "free", "pthread_create", "dlsym"):
         if fn in needed:                    # nonsensical, but cheap to guard

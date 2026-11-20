@@ -86,7 +86,7 @@ python3 kit/tools/build.py cn_carlife_map
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
 | Map crop top / bottom / left / right | 从 CarLife 整屏画面里裁掉多少才算地图区，按百分比 |
-| Map crop fit | 裁出的地图怎么装进 1088×480：Fill（按形状裁）/ Stretch / Fit（留黑边） |
+| Map crop fit | 裁出的地图怎么装进 1088×480：Fill（按形状裁边，推荐）/ Stretch（压扁，会变形） |
 
 应用状态页会显示：当前帧源及其细节、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号、
 HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB tap` 一行——取流件写在
@@ -101,7 +101,7 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 |---|---|
 | `not installed (no report)` | 取流件没装成功，或装了但还没重启车机（库只在 carlife 启动时加载） |
 | `in 0.0MB ...` | 库已加载但没读到 USB 数据：手机没连、或 CarLife 没在前台跑导航 |
-| `in 12.4MB ..., H.264, IDR 240` | **取流通了**：画面正从手机经 USB 到车机，只是还没有解码器 |
+| `in 12.4MB ..., H.264, IDR 240` | **取流通了**：画面正从手机经 USB 到车机；下一行 `Decode` 说它有没有变成画面 |
 | `out 3.2MB` 也在涨 | 反向（触摸）数据在走，说明链路是双向正常的 |
 
 取流件 0.3.0 起，同一行后面还会跟两个词，来自它的协议分诊：
@@ -114,6 +114,20 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 
 这一行是判断"车机要多大画面"的唯一入口。完整报告在 `/dev/shm/carlife-tap.txt`，
 里面有每个 `serviceType` 的出现次数和头 24 字节，够看出命令通道里到底有什么。
+
+再下面一行 `Decode` 读的是解码器写的 `/dev/shm/carlife-decode.txt`：取流说字节到了，
+解码说它有没有变成画面，以及卡在哪一步。
+
+| 显示 | 含义 |
+|---|---|
+| `not running (no report)` | 解码服务没起来（`carlife-decode.service`），或工具没装成功 |
+| `0 frames, 0 fps` | 解码器在跑但一个画面都没出来，`error:` 后面就是卡住的那次调用 |
+| `812 frames, 15 fps, last 66ms` | **通了**：仪表盘和 HUD 上的画面就是它给的 |
+| `... - MFXVideoDECODE_Init: -15` | 到这一步为止都正常，参数被拒；报告里同时有库名和 API 版本 |
+
+解码在车机侧做，因为 CarLife 只送一路整屏 H.264，协议里既没有"只含地图"的第二路，
+也没有转向/车道/限速这些数据（官方车机端 SDK 的导航模块只有 `IDLE` 和 `START` 两个状态）。
+所以地图和 HUD 上那条导航栏，都是从这一路画面里裁出来的。
 
 ## 帧源
 

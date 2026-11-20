@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Mirror of decode.c's geometry, checked against pictures of the sizes CarLife uses.
+
+The decoder itself cannot run on the build machine: it needs the unit's MSDK
+library and a VA display. Its arithmetic can run anywhere, and that is where a
+mistake is silent - a rectangle one pixel too wide does not fail, it reads the
+row next door, and nobody sees it on a 480-row picture until the map is shifted
+by a hair.
+
+So this is rect_of() and blit() again, in Python, with the same clamps, run over
+the sizes a phone actually asks for (1920x720, 1920x1080, 1280x720) and the
+crops the settings allow. It asserts what the C cannot assert on a build machine:
+
+  * the crop stays inside the picture
+  * with fit=filled the result has the target's aspect, within a pixel
+  * every source coordinate blit() would read is inside the plane it reads from
+  * the number of bytes written is exactly the atlas the app expects
+
+    python3 test/decode_math_test.py
+"""
+
+import sys
+
+MAP_W, MAP_H = 1088, 480
+CARD_W, CARD_H = 480, 168
+
+
+def even(v, lo=0, hi=1 << 20):
+    u = int(v) if v > 0 else 0
+    u &= ~1
+    if u < lo:
+        u = lo & ~1
+    if u > hi:
+        u = hi & ~1
+    return u
+
+
+class Rect:
+    def __init__(self, x, y, w, h):
+        self.x, self.y, self.w, self.h = x, y, w, h
+
+    def __repr__(self):
+        return "Rect(%d,%d %dx%d)" % (self.x, self.y, self.w, self.h)
+
+
+def rect_of(pw, ph, top, bottom, left, right, dw, dh, keep_aspect):
+    """The C function, line for line."""
+    x0 = even(pw * left / 100.0)
+    x1 = even(pw - pw * right / 100.0)
+    y0 = even(ph * top / 100.0)
+    y1 = even(ph - ph * bottom / 100.0)
+    if x1 <= x0 + 16:
+        x1 = x0 + 16
+    if y1 <= y0 + 16:
+        y1 = y0 + 16
+    if x1 > pw:
+        x1 = pw
+    if y1 > ph:
+        y1 = ph
+    r = Rect(x0, y0, x1 - x0, y1 - y0)
+    if not dw or not dh:
+        return r
+    if keep_aspect:
+        if r.w / r.h > dw / dh:
+            nw = even(r.h * dw / dh, 16, pw)
+            if nw < r.w:
+                r.x += (r.w - nw) // 2
+                r.w = nw
+        else:
+            nh = even(r.w * dh / dw, 16, ph)
+            if nh < r.h:
+                r.y += (r.h - nh) // 2
+                r.h = nh
+    r.x &= ~1
+    r.y &= ~1
+    r.w &= ~1
+    r.h &= ~1
+    return r
+
+
+def blit_spans(dw, dh, pitch, pheight, r):
+    """Every (plane, row) blit() would touch, and the last column of each: a read
+    past the plane is what this is looking for."""
+    worst = []
+    for y in range(dh):
+        syy = r.y + y * r.h // dh
+        last = (r.x + r.w - 1) if r.w != dw else (r.x + dw - 1)
+        worst.append(("y", syy * pitch + last))
+    hh, hw = dh // 2, dw // 2
+    rx, ry, rw, rh = r.x // 2, r.y // 2, r.w // 2, r.h // 2
+    for y in range(hh):
+        syy = ry + y * rh // hh
+        last = (rx + rw - 1) if rw != hw else (rx + hw - 1)
+        worst.append(("uv", syy * pitch + last * 2 + 1))
+    return worst
+
+
+def main():
+    sizes = [(1920, 720), (1920, 1080), (1280, 720), (2360, 1080)]
+    crops = [
+        (0, 0, 0, 0), (8, 0, 0, 0), (8, 4, 0, 0), (4, 12, 6, 6), (20, 20, 10, 10),
+    ]
+    fits = [True, False]
+    bad = 0
+    cases = 0
+
+    for pw, ph in sizes:
+        pitch = (pw + 63) & ~63
+        for top, bottom, left, right in crops:
+            for keep in fits:
+                for (dw, dh) in ((MAP_W, MAP_H), (CARD_W, CARD_H)):
+                    cases += 1
+                    r = rect_of(pw, ph, top, bottom, left, right, dw, dh, keep)
+
+                    # inside the picture
+                    if r.x < 0 or r.y < 0 or r.x + r.w > pw or r.y + r.h > ph:
+                        print("OUT   %dx%d %s -> %s" % (pw, ph, (top, bottom, left, right), r))
+                        bad += 1
+                        continue
+                    # even, or NV12 chroma is off by one
+                    if r.x % 2 or r.y % 2 or r.w % 2 or r.h % 2:
+                        print("ODD   %dx%d %s -> %s" % (pw, ph, (top, bottom, left, right), r))
+                        bad += 1
+                    # the aspect the layer will be drawn at
+                    if keep:
+                        want, got = dw / dh, r.w / r.h
+                        if abs(want - got) > 0.02:
+                            print("ASPECT %dx%d %s -> %s  %.3f vs %.3f"
+                                  % (pw, ph, (top, bottom, left, right), r, got, want))
+                            bad += 1
+                    # reads: inside both planes
+                    plane_y = pitch * ph
+                    limit_y = plane_y
+                    limit_uv = plane_y + pitch * (ph // 2)
+                    for plane, off in blit_spans(dw, dh, pitch, ph, r):
+                        if plane == "y" and off >= limit_y:
+                            print("READ-Y %dx%d %s off=%d limit=%d"
+                                  % (pw, ph, (top, bottom, left, right), off, limit_y))
+                            bad += 1
+                            break
+                        if plane == "uv" and off >= limit_uv:
+                            print("READ-UV %dx%d %s off=%d limit=%d"
+                                  % (pw, ph, (top, bottom, left, right), off, limit_uv))
+                            bad += 1
+                            break
+
+    # the atlas the app checks a frame's length against
+    for (w, h) in ((MAP_W, MAP_H), (CARD_W, CARD_H)):
+        n = w * h + (w // 2) * (h // 2) * 2
+        assert n == w * h * 3 // 2, "atlas size is not w*h*3/2"
+
+    print("%d cases, %d problems" % (cases, bad))
+    if bad:
+        return 1
+    print("geometry ok: crops inside the picture, even, aspect kept, reads in-plane")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

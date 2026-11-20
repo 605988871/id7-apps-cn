@@ -48,7 +48,7 @@
  * library, so the installing tool can prove the library loads and runs on the
  * unit without touching CarLife.
  *
- * Sink: /dev/shm/carlife-map/live.sock. Every inbound chunk is also written
+ * Sink: /dev/shm/carlife-map/h264.sock. Every inbound chunk is also written
  * there, unchanged, for the CarLife Map app to read. The socket is optional in
  * every sense: non-blocking, MSG_NOSIGNAL (a closed reader must never raise
  * SIGPIPE in carlife), a full buffer drops the chunk instead of buffering it
@@ -119,7 +119,9 @@ _Static_assert(sizeof(struct usbdevfs_bulktransfer) == 24, "usbdevfs_bulktransfe
 #define MAXFD 2048
 #define REPORT "/dev/shm/carlife-tap.txt"
 #define MARKER "/dev/shm/carlife-tap.loaded"
-#define SINK "/dev/shm/carlife-map/live.sock"
+/* carlife-decode listens here and turns the stream into the pictures the
+ * apps draw; the apps themselves only ever see decoded frames. */
+#define SINK "/dev/shm/carlife-map/h264.sock"
 #define CHUNKS 4
 #define HEAD 24
 

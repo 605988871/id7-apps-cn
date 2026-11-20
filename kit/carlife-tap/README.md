@@ -89,7 +89,7 @@ not errors to hide: a stream that does not frame the way CarLife does after
 8192 misses is treated as bare and handed over byte for byte, exactly as 0.2
 did — the probe is never allowed to cost the picture.
 
-Sink: `/dev/shm/carlife-map/live.sock`. Every inbound chunk — or, when the
+Sink: `/dev/shm/carlife-map/h264.sock` (the decoder listens there). Every inbound chunk — or, when the
 stream is framed, just its payload — is also written there for the CarLife Map
 app. The socket is optional in every
 sense — non-blocking, `MSG_NOSIGNAL` (a closed reader must never raise
@@ -142,14 +142,64 @@ rm -f /etc/systemd/system/*.service.d/50-carlife-tap.conf
 systemctl daemon-reload
 ```
 
-## The decoder is still missing
+## The decoder
 
-The sink carries **raw H.264**, because that is what leaves the phone. Nothing
-on the unit decodes it for us, so the app shows the bytes and keyframes it has
-received rather than a map — proof the capture path works, not the finished
-feature. The next step is `decoder_msdk.cpp` from Maps on cluster (MSDK over
-`/dev/dri/renderD128`, which is present on this unit) writing `CLMF` frames into
-the same socket. Nothing in the app has to change for that.
+The sink carries **raw H.264**, because that is what leaves the phone: CarLife's
+protocol has no map-only channel and no navigation data at all (the vehicle SDK's
+navigation module has two states, idle and running). So `carlife-decode` decodes
+the picture on the unit and cuts out the two pieces the apps draw:
+
+```
+carlife (USB) --tap--> /dev/shm/carlife-map/h264.sock --> carlife-decode
+                                                           |        |
+                                     live.sock 1088x480 <--+        +--> hud.sock 480x168
+                                     (the map)                       (the guidance strip)
+```
+
+Both carry the same `CLMF` header the app's other frame sources read, so nothing
+in the app needed changing to accept them.
+
+It loads the unit's own Intel MSDK library with `dlopen` — `/usr/lib/libmfxhw64.so`,
+API 1.24, with no dispatcher on this unit — plus `libva`, takes a VA display on
+`/dev/dri/renderD128`, decodes into opaque surfaces and runs one VPP pass per
+picture into system memory. Nothing has to be linked or installed beside it, and
+decoding happens in its own process: a decoder that crashes must not take CarLife
+with it. `nice -5` so it gets scheduled, and `Restart=always`, because a stopped
+decoder is a black cluster and the screen would not say why.
+
+The cut rectangles are percentages of CarLife's own picture, so they do not care
+what size the phone was asked for:
+
+```json
+{"mapTop":8,"mapBottom":0,"mapLeft":0,"mapRight":0,"mapFit":"fill",
+ "mapW":1088,"mapH":480,
+ "cardMode":"navi","cardTop":0,"cardBottom":16,"cardLeft":0,"cardRight":24,
+ "cardW":480,"cardH":168}
+```
+
+`/dev/shm/carlife-map/crop.json`, written by the app when its settings change and
+re-read by the decoder every second — the settings take effect without a restart.
+Flat keys on purpose: the decoder is C with no JSON library, and a `strstr` plus a
+`strtod` is all that needs.
+
+`fit=filled` trims the longer side so the layer is not stretched; `stretch` uses
+the rectangle as it is. Both the rectangle and its origin are forced even, because
+NV12 chroma is a quarter of the picture and an odd centring puts the colour one
+column into its neighbour.
+
+Everything the decoder knows about itself goes to `/dev/shm/carlife-decode.txt`,
+which the app shows on its status page — the car's screen is the only screen the
+user has, so the report has to say which library was loaded, whether the VA display
+came up, the picture size, the frame rate and the first call that failed:
+
+```
+=== CARLIFE DECODE 17:40:12 pid=812 ===
+libs: mfx=libmfxhw64.so va=libva mfxapi=124
+state: decoding 1920x720
+frames: 812 rate 15 fps last 66ms
+sockets: map=on(812) card=on(812) drops=0+0
+error: none
+```
 
 ## Build
 
@@ -169,6 +219,19 @@ unit with "undefined symbol" and no screen says why, so the build stops
 instead. Its `NEEDED` entries are `libc.so.6` plus `libpthread.so.0` (zig's
 glibc stub emits the latter; no pthread symbol is actually referenced).
 
+`build-zig.sh decode` builds the decoder the same way. It is a program, not a
+library, so `check_elf.py` holds it to the other rule: it may need only the C
+runtime, because it finds MSDK and libva itself. Its MSDK headers are in
+`third_party/mfx` (Intel's, MIT, the 1.x subset the unit's 1.24 library takes).
+
+`test/decode_math_test.py` is the decoder's arithmetic again, in Python: the
+decoder cannot run on a build machine (it needs the unit's MSDK and a VA display),
+but its rectangles can be checked anywhere. It runs the crop settings over the
+sizes a phone asks for and asserts the rectangle stays inside the picture, stays
+even (NV12 chroma), keeps the layer's aspect, and that every source byte `blit()`
+would read is inside the plane it reads from. It found the odd-centring bug that
+would have shifted the colour plane by one column.
+
 `make target` produces the same ABI through Docker + Ubuntu 18.04 and is what a
 CI job would run; `build-zig.sh` is for a machine without Docker.
 
@@ -183,15 +246,19 @@ On Windows the library can only be built, not exercised.
 
 ## State
 
-0.3.0 — captures, classifies the stream, reports the size the car asked for,
-and delivers the picture to the app; installed and removed as a `requires`
-entry of `cn_carlife_map`. `install.sh` finds the unit (running process, then
-`ExecStart`, then file name), keeps the unit's own `LD_PRELOAD`, and adds this
-library; `remove.sh` takes it back out. What it does **not** do yet is decode:
-the app receives H.264 and says so instead of showing a picture.
+0.4.0 — captures, classifies, decodes, and delivers both pictures; installed and
+removed as a `requires` entry of `cn_carlife_map`. `install.sh` finds the unit
+(running process, then `ExecStart`, then file name), keeps the unit's own
+`LD_PRELOAD`, and adds this library; `remove.sh` takes it back out. The decoder
+is a unit of its own (`carlife-decode.service`), enabled with the tool and
+restarted on upgrade.
 
-0.3.0 adds the protocol probe, and with it the one number that was missing
-until now: whether this pipe even carries CarLife's command channel, and at
-what size the car asked the phone to encode. Both answers change what the
-decoder and the crop settings have to do, and neither can be assumed from the
-CarPlay side of the same feature.
+What is still unproven is the decode itself: `libmfxhw64` + `libva` on this unit
+have never been driven by anything but CarLife, so the first install answers
+whether the session, the opaque pool and the VPP pass behave as the reference
+decoder says they do. The report is written for exactly that question — if it
+stops at a call, that call is named.
+
+0.3.0 added the protocol probe, and with it the one number that was missing until
+then: whether the pipe carries CarLife's command channel, and at what size the car
+asked the phone to encode.

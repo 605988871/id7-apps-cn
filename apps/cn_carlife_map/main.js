@@ -25,6 +25,8 @@ const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
               'hudWidth', 'hudX', 'hudY', 'hudKeep',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
+/* The decoder's own report: whether the stream became a picture. */
+const DECODE_REPORT = '/dev/shm/carlife-decode.txt';
 /* Where the decoder is told how much of CarLife's picture is the map. */
 const CROP_FILE = '/dev/shm/carlife-map/crop.json';
 /* The HUD's turn card, in glass pixels. The visible HUD area is about 560x200,
@@ -273,31 +275,30 @@ async function run(ctx) {
             const v = Math.round(Number(settings.get(k)));
             return isFinite(v) ? Math.min(45, Math.max(0, v)) : d;
         };
+        /* Flat keys, not nested objects: the decoder is C with no JSON
+         * library, and a search for "mapTop" plus a strtod is all it needs.
+         * Both rectangles are percentages of CarLife's own picture, so they do
+         * not care what size the phone asked for. */
         const box = {
-            top: pct('mapTop', 8), bottom: pct('mapBottom', 0),
-            left: pct('mapLeft', 0), right: pct('mapRight', 0),
-            fit: settings.get('mapFit') || 'band',
+            mapTop: pct('mapTop', 8), mapBottom: pct('mapBottom', 0),
+            mapLeft: pct('mapLeft', 0), mapRight: pct('mapRight', 0),
+            mapFit: settings.get('mapFit') || 'fill',
+            mapW: MAP_W, mapH: MAP_H,
             /* The HUD's card is a second crop of the same picture, delivered on
              * a second socket at its own size. CarLife's guidance strip runs
              * across the top of its picture with the turn arrow at its left
              * end, so the card is a small box there and nothing else: these are
-             * starting values to be tuned on the car, not measurements. */
-            hud: {
-                mode: settings.get('hudMode') || 'navi',
-                /* For the decoder: CarLife's guidance block runs across the top
-                 * of its picture - turn arrow at the left end, lane row under
-                 * the words. The strip has to cover the lanes too, so the
-                 * bottom edge is generous; these are starting values to be
-                 * tuned on the car, not measurements. */
-                strip: { top: 0, bottom: 16, left: 0, right: 24 },
-                out: [hudW, hudH],
-                sock: override.hudSockPath || CARD_SOCK
-            }
+             * starting values to be tuned on the car, not measurements. The
+             * bottom edge has to reach the lane row, or the lanes are cut off. */
+            cardMode: (settings.get('hudMode') || 'navi') === 'navi' ? 'navi' : 'off',
+            cardTop: 0, cardBottom: 16, cardLeft: 0, cardRight: 24,
+            cardW: hudW, cardH: hudH
         };
         mkdirp('/dev/shm/carlife-map');
         fs.writeFileSync(CROP_FILE, JSON.stringify(box) + '\n');
-        log.info('map crop: top ' + box.top + '% bottom ' + box.bottom +
-            '% left ' + box.left + '% right ' + box.right + '%, fit ' + box.fit);
+        log.info('map crop: top ' + box.mapTop + '% bottom ' + box.mapBottom +
+            '% left ' + box.mapLeft + '% right ' + box.mapRight + '%, fit ' + box.mapFit +
+            '; card ' + box.cardMode + ' ' + box.cardW + 'x' + box.cardH);
     });
 
     const setSource = safe('source', () => {
@@ -411,6 +412,31 @@ async function run(ctx) {
         return tapInfo;
     }
 
+    /* What the decoder says about itself. The tap report says the stream is
+     * there; this one says whether it became a picture, and if not, at which
+     * call it stopped - the one question a black cluster cannot answer. */
+    let decInfo = 'not read yet';
+    let decAt = 0;
+    function readDecode() {
+        const now = Date.now();
+        if (now - decAt < 2000) return decInfo;
+        decAt = now;
+        let s;
+        try { s = fs.readFileSync(DECODE_REPORT, 'utf8'); }
+        catch (e) {
+            decInfo = e.code === 'ENOENT' ? 'not running (no report)' : e.message;
+            return decInfo;
+        }
+        const f = /^frames: (\d+) rate (\d+) fps last (-?\d+)ms/m.exec(s);
+        const err = /^error: (.*)$/m.exec(s);
+        if (!f) { decInfo = 'report has no frames line'; return decInfo; }
+        const e = err && err[1] !== 'none' ? err[1] : '';
+        decInfo = f[1] + ' frames, ' + f[2] + ' fps' +
+            (Number(f[3]) >= 0 ? ', last ' + f[3] + 'ms' : '') +
+            (e ? ' - ' + e : '');
+        return decInfo;
+    }
+
     /* What the HUD is showing, in one line: the answer to "is it the arrow, or
      * still a piece of the map?". */
     function hudCardInfo() {
@@ -437,8 +463,9 @@ async function run(ctx) {
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
             (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 328, 26, '#a8d8c0');
         cv.text('HUD card: ' + hudCardInfo(), 40, 368, 24, '#a8d8c0');
-        cv.text('USB tap : ' + readTap(), 40, 404, 22, '#e0c88a');
-        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 440, 22, '#e0c88a');
+        cv.text('USB tap : ' + readTap(), 40, 396, 22, '#e0c88a');
+        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 428, 22, '#e0c88a');
+        cv.text('Decode  : ' + readDecode(), 40, 460, 22, '#a8d8c0');
         cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 476, 22, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));

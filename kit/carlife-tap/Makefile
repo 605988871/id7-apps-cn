@@ -30,6 +30,14 @@ $(T)/libcarlife-tap.so: src/tap.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -fPIC -shared -o $@ src/tap.c
 
+# The decoder. Plain C, its own dlopen of the unit's MSDK and libva, and the
+# MSDK 1.x headers the unit's library takes (third_party/mfx, Intel MIT).
+MFX = ../../third_party/mfx/include
+
+$(T)/carlife-decode: src/decode.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -I$(MFX) -o $@ src/decode.c
+
 # Named *carlife* on purpose: the library only reports inside a process whose
 # executable is carlife's, and the test has to reach that path.
 $(T)/carlife-tap-test: test/tap_test.c
@@ -50,7 +58,7 @@ test: $(T)/libcarlife-tap.so $(T)/carlife-tap-test
 	LD_PRELOAD=$(abspath $(T))/libcarlife-tap.so $(T)/carlife-tap-test raw
 	$(MAKE) check
 
-check: $(T)/libcarlife-tap.so
+check: $(T)/libcarlife-tap.so $(T)/carlife-decode
 	@echo "--- what the library must be ---"
 	@file $(T)/libcarlife-tap.so
 	@nm -D --defined-only $(T)/libcarlife-tap.so | grep -E ' T (read|ioctl)$$' || \
@@ -67,11 +75,13 @@ target:
 		-v "$(CURDIR):/w" -w /w $(IMAGE) make -s -j$(JOBS) BUILD=$(BUILD) test
 	$(MAKE) bin
 
-bin: $(T)/libcarlife-tap.so
+bin: $(T)/libcarlife-tap.so $(T)/carlife-decode
 	@mkdir -p bin
 	cp -f $(T)/libcarlife-tap.so bin/libcarlife-tap.so
+	cp -f $(T)/carlife-decode bin/carlife-decode
 	@chmod 0644 bin/libcarlife-tap.so
-	@ls -l bin/libcarlife-tap.so
+	@chmod 0755 bin/carlife-decode
+	@ls -l bin/libcarlife-tap.so bin/carlife-decode
 
 clean:
 	rm -rf $(BUILD)
