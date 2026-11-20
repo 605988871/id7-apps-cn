@@ -251,6 +251,7 @@ async function run(ctx) {
      * installed but not loaded into carlife, loaded and reading nothing (phone
      * not connected), loaded and reading the stream. */
     let tapInfo = 'not read yet';
+    let tapCmds = '';
     let tapAt = 0;
     function readTap() {
         const now = Date.now();
@@ -275,6 +276,15 @@ async function run(ctx) {
         const m = /^media: (\d+)x(\d+)@(\d+)/m.exec(s);
         if (m) h += ', car wants ' + m[1] + 'x' + m[2];
         tapInfo = 'in ' + u[2] + 'MB out ' + u[4] + 'MB' + h;
+        /* The service types the command channel carries, with how often each
+         * was seen. This is the list that says whether anything besides video
+         * and handshake is in the pipe at all - and the report itself is a file
+         * nobody can read from the car's screen, so it has to be shown. */
+        const seen = [];
+        const re = /^cmd 0x([0-9a-f]{8}) n=(\d+)/gm;
+        let c;
+        while ((c = re.exec(s)) && seen.length < 8) seen.push(c[1].slice(2) + '*' + c[2]);
+        tapCmds = seen.join(' ');
         return tapInfo;
     }
 
@@ -294,8 +304,8 @@ async function run(ctx) {
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
             (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 328, 26, '#a8d8c0');
         cv.text('USB tap : ' + readTap(), 40, 368, 24, '#e0c88a');
-        cv.text('CarLife needs the USB tap tool and a decoder; see the app README.', 40, 424, 24, '#8fa3b4');
-        cv.text('Settings: picture source, target, frame rate, HUD size and position.', 40, 464, 24, '#8fa3b4');
+        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 408, 22, '#e0c88a');
+        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 456, 24, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 
