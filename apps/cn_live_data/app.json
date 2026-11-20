@@ -2,7 +2,7 @@
   "id": "cn_live_data",
   "title": "Live Data",
   "description": "只读显示车辆及各控制单元的实时数据、带油耗成本的行车电脑，以及自定义仪表盘界面，其中一个可作主屏小组件",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "vendor": "custom",
   "loggingId": "OA9D",
   "iconGlyph": "gauge",

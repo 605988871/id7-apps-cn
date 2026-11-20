@@ -2,7 +2,7 @@
   "id": "cn_dyno",
   "title": "Virtual Dyno",
   "description": "由全油门加速得出的功率与扭矩曲线，可保存并对比",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "vendor": "custom",
   "loggingId": "OA98",
   "iconGlyph": "dyno",

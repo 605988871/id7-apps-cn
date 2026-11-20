@@ -2,7 +2,7 @@
   "id": "cn_car_vitals",
   "title": "M Vitals",
   "description": "发动机、温度、进气/燃油/点火、轮胎与底盘实时仪表",
-  "version": "2.27.8",
+  "version": "2.27.9",
   "vendor": "custom",
   "loggingId": "OA93",
   "iconGlyph": "gauge",

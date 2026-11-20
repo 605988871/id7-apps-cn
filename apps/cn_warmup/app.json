@@ -2,7 +2,7 @@
   "id": "cn_warmup",
   "title": "Warm-Up",
   "description": "机油与冷却液暖机计算器（到运行温度的时间）、安全转速限制、涡轮冷却计时及冷启动计数",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "vendor": "custom",
   "loggingId": "OA9A",
   "iconGlyph": "temp",
