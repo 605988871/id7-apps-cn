@@ -45,24 +45,45 @@ async function run(ctx) {
     let mapLayer = 0, hudLayer = 0;
     let lastAtlas = null, lastSeq = 0, frames = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
+    let wantHud = false, hudBlocked = false;
     const layerState = { map: 'off', hud: 'off' };
     const targetEvents = {};
 
+    /* Keep the HUD claim honest: give way while another app holds it, take it
+     * back when free. hud_claim's claim marker is only a write - without this
+     * poll a second HUD app would draw over us (or we over it). */
+    const refreshClaim = safe('claim', () => {
+        const busy = HudClaim.others(APP).length > 0;
+        hudBlocked = wantHud && busy;
+        claim.hold(wantHud && !busy);
+    });
+    const claimTimer = setInterval(refreshClaim, 2000);
+    if (claimTimer.unref) claimTimer.unref();
+
+    /* iDrive 7 HUD: what the glass actually shows is about x120..680, y120..360
+     * of the 800x480 scene (G21/G05 test patterns), and BMW's own speed and
+     * limit sign live along the bottom from y~325. A video layer is opaque,
+     * so keep the picture in a safe box that does not cover that strip. */
+    const HUD_BOX = { x: 120, y: 120, right: 680, bottom: 320 };
+
     function hudRect() {
-        const pct = Number(settings.get('hudWidth')) || 57;
+        const pct = Number(settings.get('hudWidth')) || 50;
         let w = Math.round(800 * pct / 100) & ~3;
         if (w < 64) w = 64;
-        if (w > 800) w = 800;
+        if (w > HUD_BOX.right - HUD_BOX.x) w = HUD_BOX.right - HUD_BOX.x;
         let h = Math.round(w * MAP_H / MAP_W) & ~3;
         if (h < 32) h = 32;
-        if (h > 480) h = 480;
+        if (h > HUD_BOX.bottom - HUD_BOX.y) {
+            h = HUD_BOX.bottom - HUD_BOX.y;
+            w = Math.round(h * MAP_W / MAP_H) & ~3;
+        }
         const dx = Number(settings.get('hudX')) || 0;
         const dy = Number(settings.get('hudY')) || 0;
-        return {
-            x: Math.round((800 - w) / 2 + dx),
-            y: Math.round((480 - h) / 2 + dy),
-            w: w, h: h
-        };
+        let x = Math.round((HUD_BOX.x + HUD_BOX.right - w) / 2 + dx);
+        let y = Math.round((HUD_BOX.y + HUD_BOX.bottom - h) / 2 + dy);
+        x = Math.max(HUD_BOX.x, Math.min(HUD_BOX.right - w, x));
+        y = Math.max(HUD_BOX.y, Math.min(HUD_BOX.bottom - h, y));
+        return { x: x, y: y, w: w, h: h };
     }
 
     const wants = (t, which) => t === which || t === 'both';
@@ -72,8 +93,9 @@ async function run(ctx) {
         if (mapLayer) { if (cr) cr.drop(mapLayer); mapLayer = 0; layerState.map = 'off'; }
         if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; }
 
+        wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
-            claim.hold(false);
+            refreshClaim();
             return;
         }
         const fps = Number(settings.get('fps')) || 15;
@@ -96,7 +118,7 @@ async function run(ctx) {
             }));
             layerState.hud = hudLayer ? 'waiting' : 'refused';
         }
-        claim.hold(wants(t, 'hud'));
+        refreshClaim();
         if (lastAtlas) {
             if (mapLayer) cr.frame(mapLayer, lastAtlas, lastSeq);
             if (hudLayer) cr.frame(hudLayer, lastAtlas, lastSeq);
@@ -172,7 +194,7 @@ async function run(ctx) {
         cv.text('Source  : ' + (settings.get('source') || 'demo') + '  -  ' + srcStatus, 40, 140, 28, '#a8d8c0');
         cv.text('Render  : ' + renderStatus, 40, 184, 28, '#a8d8c0');
         cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 228, 28, '#a8d8c0');
-        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || ''), 40, 272, 28, '#a8d8c0');
+        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 272, 28, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq, 40, 316, 28, '#a8d8c0');
         cv.text('Install Cluster renderer from the MGU Store if Render stays empty.', 40, 398, 26, '#8fa3b4');
         cv.text('Settings: source, target, frame rate and HUD size/position.', 40, 442, 26, '#8fa3b4');

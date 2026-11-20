@@ -57,10 +57,11 @@ function demoAtlas(out, w, h, tick) {
     fillUV(a, w, h, 70, 44, 240, 150, 92, 100);
     fillUV(a, w, h, 710, 285, 320, 145, 188, 72);
 
-    // Scrolling street grid.
-    const off = tick % 96;
-    for (let x = off; x < w; x += 96) fillY(a, w, h, x, 0, 5, h, 174);
-    for (let y = off; y < h; y += 96) fillY(a, w, h, 0, y, w, 5, 174);
+    // Static street grid. The whole atlas is sent each frame, but the service
+    // uploads only changed 64x64 tiles against the shared 5500 KB/s budget:
+    // a scrolling grid would dirty every tile. Only the marker below moves.
+    for (let x = 0; x < w; x += 96) fillY(a, w, h, x, 0, 5, h, 174);
+    for (let y = 0; y < h; y += 96) fillY(a, w, h, 0, y, w, 5, 174);
 
     // The main road across the middle, brighter.
     const mid = h >> 1;

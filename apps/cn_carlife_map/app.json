@@ -11,7 +11,8 @@
   ],
   "autostart": true,
   "requires": {
-    "idrive7-renderd": "2.1.15"
+    "idrive7-renderd": "2.1.15",
+    "cluster-render": "0.5.3"
   },
   "screens": [
     {
