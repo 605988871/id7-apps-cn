@@ -68,10 +68,24 @@ if [ -z "$UNIT" ]; then
     done
 fi
 
+# A unit named after it, whose ExecStart runs a wrapper: the last resort before
+# giving up. It is used only when nothing else named carlife.
+if [ -z "$UNIT" ]; then
+    for f in /etc/systemd/system/carlife*.service \
+             /lib/systemd/system/carlife*.service \
+             /usr/lib/systemd/system/carlife*.service; do
+        [ -f "$f" ] || continue
+        UNIT=$(basename "$f")
+        UNIT_HOW="from its file name; its ExecStart starts a wrapper"
+        break
+    done
+fi
+
 [ -n "$UNIT" ] || {
     echo "$TAG: no systemd unit starts a binary named carlife; nothing changed"
-    echo "$TAG: open CarLife once, then run this again (the running process names its unit)"
     echo "$TAG: the probe app's report shows how CarLife is started here"
+    # the Store quotes the last line it read: keep the actionable one last
+    echo "$TAG: open CarLife once, then install again (a running process names its unit)"
     exit 1
 }
 say "unit $UNIT ($UNIT_HOW)"

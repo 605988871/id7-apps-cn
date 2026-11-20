@@ -29,26 +29,43 @@ KOMBI 的 GPU 做 YUV→RGB，上屏
 ## 前置条件
 
 1. iDrive 7 / MGU（与 id7-apps-cn 同代固件）。iDrive 8 未验证。
-2. **MGU Store 里添加 `robertnisipeanu/idrive-apps` 源**。`app.json` 的 `requires` 已声明
-   `cluster-render: 0.5.3`，商店会跨源解析并自动安装 Cluster renderer；但那个源必须存在，
-   否则安装会直接报 `needs cluster-render ... which no source has`。没装服务时应用能启动，
-   Render 一栏会一直是空的，仪表/HUD 不出画面。
+2. 车上要有 **cluster-render**（`/dev/shm/cluster-render/render.sock`）。多数车的包里有，也可以
+   从 `robertnisipeanu/idrive-apps` 源装。它**不**写在 `requires` 里：仓库里没有这个组件，写成
+   硬依赖会让安装停在计划阶段（`needs cluster-render ... which no source has`），比运行时连不上
+   更难查。没连上时应用状态页显示 `not connected`。
 3. 想投 HUD 的车需要有 HUD；HUD 上仅中间一块区域可见，用设置里的位置和尺寸微调。
-4. 一个能提供画面的帧源；第一次先用 **Demo (test picture)** 验证。
+4. 想显示手机画面，还需要 CarLife 在跑（工具会随应用一起装，见"安装"）。
 
-> 可行性提示：这个应用只是"播放器"，负责把已有画面显示到仪表盘/HUD。它**不包含**
-> 从手机取 CarLife 画面的部分——那一步需要一个独立的捕获程序（见"帧源"一节）。
-> 另外，用 JS 客户端走 video 层投到实车，本仓库没有先例（唯一实车验证的 video 生产者是
-> native C++ 的 waze-on-cluster）；先用 Demo 在车上确认整条链路，再接真实帧源。
+> 这个应用只是"播放器"：它把帧送进 cluster-render 的 map / hud 槽位，自己不解码。
+> 选 `CarLife (live)` 时，画面由工具 `carlife-tap` 从 carlife 进程里复制出来、写进
+> `/dev/shm/carlife-map/live.sock`；那个工具是 `requires` 里的一项，装应用时会一并装上。
 
 ## 安装
+
+商店里装 **CarLife Map** 即可，`requires` 会带上：
+
+| 组件 | 作用 |
+|---|---|
+| `idrive7-renderd` | 应用自己的 GPU 渲染器 |
+| `carlife-tap` | 从 carlife 进程复制 H.264，随应用安装、随应用卸载 |
+
+两件事必须做对，否则装完没效果：
+
+1. **装之前先在车上打开一次 CarLife**（插手机、进到导航页）。取流件的安装脚本要从正在运行的
+   进程里认出是哪个 unit 启动了 carlife，进而把库追加到它的 `LD_PRELOAD`。CarLife 没在跑时，
+   它会退回到读 unit 文件、再退回到按文件名匹配；三者都不中时安装会失败并说明原因——那时打开
+   CarLife 再装一次即可。
+2. **装完重启车机**。库只在 carlife 启动时加载；安装脚本不会重启服务（单独重启 carlife 而
+   Cinemo 其余进程还在跑，风险更大且没有收益）。
+
+本地构建：
 
 ```sh
 python3 kit/tools/build.py cn_carlife_map
 ```
 
-产出 `dist/cn_carlife_map@1.0.0.tgz` / `.mgu`，用 mgu-store 或 `deploy/push-to-car.sh` 安装。
-应用默认自启动（`autostart: true`），装完重启一次车机即可。
+产出 `dist/cn_carlife_map@<version>.tgz` / `.mgu`，用 mgu-store 或 `deploy/push-to-car.sh` 安装。
+应用默认自启动（`autostart: true`）。
 
 版本号必须提升才能让车机端 mgu-deploy 真正重装（它按版本号判断 `current`）。
 
@@ -73,7 +90,7 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 
 | 显示 | 含义 |
 |---|---|
-| `not installed (no report)` | 取流工具没装，或装了但还没重启车机（库只在 carlife 启动时加载） |
+| `not installed (no report)` | 取流件没装成功，或装了但还没重启车机（库只在 carlife 启动时加载） |
 | `in 0.0MB ...` | 库已加载但没读到 USB 数据：手机没连、或 CarLife 没在前台跑导航 |
 | `in 12.4MB ..., H.264, IDR 240` | **取流通了**：画面正从手机经 USB 到车机，只是还没有解码器 |
 | `out 3.2MB` 也在涨 | 反向（触摸）数据在走，说明链路是双向正常的 |
@@ -88,9 +105,9 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 ### CarLife（实时画面）
 
 选这一项时，应用在 `/dev/shm/carlife-map/live.sock` 上等取流件连进来，收到的是 CarLife
-自己的画面。前提是车机上装了 **MGU Store → 车机工具 → CarLife 画面取流**（tool id
-`carlife-tap`），并且**装完后重启过一次车机**：那个库由 systemd drop-in 挂到 carlife 的
-`LD_PRELOAD` 上，只在 carlife 启动时加载。
+自己的画面。取流件（tool id `carlife-tap`）在应用的 `requires` 里，**装应用时会一并装上、
+卸应用时一并卸掉**；但要**装完重启过一次车机**才生效：那个库由 systemd drop-in 挂到 carlife
+的 `LD_PRELOAD` 上，只在 carlife 启动时加载。
 
 装之前，仪表盘会显示 `WAITING FOR CARLIFE`——不是黑屏，所以"在等"和"坏了"不是同一个画面。
 

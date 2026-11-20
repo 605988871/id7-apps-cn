@@ -1,7 +1,7 @@
 {
   "id": "carlife-tap",
   "kind": "tool",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "title": "CarLife 画面取流",
   "description": "把 CarLife 从手机收到的画面复制一份交给 CarLife Map，供仪表盘和 HUD 显示；手机只送一路画面，车机内部没有第二个读取者，所以只能从 CarLife 进程内部复制。只读：一个字节都不改，也不解码，安装后下次启动车机生效（iDrive 7）",
   "mguHmi": ["ID7"],

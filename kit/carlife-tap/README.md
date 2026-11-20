@@ -67,18 +67,28 @@ runs — without touching CarLife.
 
 ## Installing it into CarLife
 
+It is not installed on its own: it is a `requires` entry of the app
+`cn_carlife_map`, so the Store installs it with the app and takes it away with
+the app. Installing it from the tools list still works and does the same thing.
+
 `install.sh` runs as root after every install (component.json `activate`) and
 does three things:
 
 1. **Proves the library loads** on this unit before anything else happens. A
    library that cannot resolve shows up as a carlife process that starts and
    dies, which is a very bad way to find out.
-2. **Finds the unit that starts carlife** by reading `ExecStart` lines, not by
-   guessing a name.
+2. **Finds the unit that starts carlife** — from the running process's cgroup
+   first, because Cinemo starts carlife as a child of a launcher whose unit file
+   never names it; then from `ExecStart`; then from a unit named after it. A
+   failed `activate` fails the whole install, so this has to be hard to miss.
 3. **Appends to the unit's own `LD_PRELOAD`**, never replaces it: the unit
    already preloads `/usr/lib/libschedeconfig.so.1` into carlife, and
    overwriting that value would silently take it away. The drop-in is
    `/etc/systemd/system/<unit>.d/50-carlife-tap.conf`.
+
+Because CarLife has to be running for step 2 to read its unit, install while
+CarLife is open. When the unit cannot be found at all, the install fails and
+says so — a tool that silently attaches to nothing is worse.
 
 It does **not** restart anything. CarLife picks the library up at the unit's
 next start, so a head-unit restart is what makes it live; restarting just
@@ -133,7 +143,9 @@ library can only be built, not exercised.
 
 ## State
 
-0.2.0 — captures, reports, and delivers the stream to the app. `install.sh`
-finds the unit, keeps its own `LD_PRELOAD`, and adds this library; `remove.sh`
-takes it back out. What it does **not** do yet is decode: the app receives
-H.264 and says so instead of showing a picture.
+0.2.2 — captures, reports, and delivers the stream to the app; installed and
+removed as a `requires` entry of `cn_carlife_map`. `install.sh` finds the unit
+(running process, then `ExecStart`, then file name), keeps the unit's own
+`LD_PRELOAD`, and adds this library; `remove.sh` takes it back out. What it
+does **not** do yet is decode: the app receives H.264 and says so instead of
+showing a picture.
