@@ -18,7 +18,7 @@ const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
-const { MAP_W, MAP_H, cropAtlas, atlasSize } = require('./atlas');
+const { MAP_W, MAP_H, cropAtlas, atlasSize, liveCardAtlas } = require('./atlas');
 const { toRgba, parseTarget, parseLayer } = require('./hud_convert');
 
 const APP = 'cn_carlife_map';
@@ -220,6 +220,34 @@ async function run(ctx) {
         layerState.hud = hudLayer ? 'waiting' : 'refused';
     }
 
+    /* The waiting page's words: how big and where, from the settings. Three
+     * numbers passed to the atlas builders, so the picture follows the dial
+     * without the app being restarted. */
+    const waitText = () => ({
+        scale: Number(settings.get('waitScale')) || 100,
+        x: Number(settings.get('waitX')) || 0,
+        y: Number(settings.get('waitY')) || 0
+    });
+
+    /* A card-sized waiting page.
+     *
+     * In map mode the HUD shows a window cut out of the map layer - and while
+     * nothing has arrived, that layer holds the cluster's waiting page, so the
+     * window is a 320x140 magnified fragment of one word. The words were never
+     * meant to be seen at that scale, which is why they filled the glass. When
+     * there is no picture to cut from, the card draws its own page at its own
+     * size instead. */
+    let hudWaitAt = 0, hudWaitTick = 0, hudWaitBuf = null;
+    const waitCard = () => {
+        if (!hudW || !hudH) return null;
+        const now = Date.now();
+        if (hudWaitBuf && now - hudWaitAt < 300) return hudWaitBuf;
+        hudWaitAt = now;
+        hudWaitBuf = liveCardAtlas(hudWaitBuf, hudW, hudH, hudWaitTick++,
+            0, waitText(), carlifeNote());
+        return hudWaitBuf;
+    };
+
     /* The HUD's frame, in whichever shape the mode asks for.
      *
      * cluster-render takes a frame only when it is exactly the layer's vw x vh,
@@ -229,26 +257,37 @@ async function run(ctx) {
     const sendHud = safe('hud frame', (atlas) => {
         if (!cr || !cr.ready || !hudLayer || !hudW || !hudH) return;
         let frame;
+        /* Is there a real picture yet? A CarLife source counts the frames it
+         * has actually received; until it has one, the map layer is a status
+         * page and there is nothing worth cropping out of it. */
+        const noPicture = srcKind === 'carlife' && !(source && source.live > 0);
         if ((settings.get('hudMode') || 'navi') === 'map') {
-            if (!atlas) return;
-            /* Which piece of the map the glass shows. Centred by default; the
-             * two pan settings move it, as a percentage of the map's own size,
-             * so that a HUD sitting off to one side can show the road and not
-             * the middle of the picture. The window cannot leave the map, and
-             * the offsets are even because 4:2:0 chroma is per 2x2 block. */
-            const px = Number(settings.get('hudMapX')) || 0;
-            const py = Number(settings.get('hudMapY')) || 0;
-            let dx = ((MAP_W - hudW) >> 1) + Math.round(MAP_W * px / 100);
-            let dy = ((MAP_H - hudH) >> 1) + Math.round(MAP_H * py / 100);
-            dx = Math.max(0, Math.min(MAP_W - hudW, dx)) & ~1;
-            dy = Math.max(0, Math.min(MAP_H - hudH, dy)) & ~1;
-            hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
-            frame = hudAtlas;
+            if (noPicture) {
+                frame = waitCard();
+            } else if (!atlas) {
+                return;
+            } else {
+                /* Which piece of the map the glass shows. Centred by default;
+                 * the two pan settings move it, as a percentage of the map's
+                 * own size, so that a HUD sitting off to one side can show the
+                 * road and not the middle of the picture. The window cannot
+                 * leave the map, and the offsets are even because 4:2:0 chroma
+                 * is per 2x2 block. */
+                const px = Number(settings.get('hudMapX')) || 0;
+                const py = Number(settings.get('hudMapY')) || 0;
+                let dx = ((MAP_W - hudW) >> 1) + Math.round(MAP_W * px / 100);
+                let dy = ((MAP_H - hudH) >> 1) + Math.round(MAP_H * py / 100);
+                dx = Math.max(0, Math.min(MAP_W - hudW, dx)) & ~1;
+                dy = Math.max(0, Math.min(MAP_H - hudH, dy)) & ~1;
+                hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
+                frame = hudAtlas;
+            }
         } else {
             /* The card arrives on its own stream, already the right size. A
              * map atlas is not a source for it: cutting an arrow out of a
-             * shrunken map would show a shrunken arrow. */
-            frame = hudBuf;
+             * shrunken map would show a shrunken arrow. With no card at all,
+             * the card-sized waiting page is still better than an empty HUD. */
+            frame = hudBuf || (noPicture ? waitCard() : null);
         }
         if (!frame) return;
         if (hudKind === 'image') {
@@ -845,6 +884,12 @@ async function run(ctx) {
          * It is set here, once a loop, because this is the only place that can
          * read the tap and decoder reports. */
         if (source && kind === 'carlife') source.note = carlifeNote();
+        /* Size and place of the HUD's waiting words. The cluster page keeps
+         * its own larger face: it is read at a glance, and a dial meant to fix
+         * the glass should not shrink it. Read when the next page is drawn, so
+         * a settings change lands on the next tick and nothing is rebuilt. */
+        const wt = waitText();
+        if (hudSource) hudSource.text = wt;
         const detail = (() => {
             try { return source && source.detail ? source.detail() : ''; } catch (e) { return ''; }
         })();

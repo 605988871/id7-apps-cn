@@ -97,6 +97,45 @@ ok('no decoder at all says so, and says it in the picture', () => {
     assert.notStrictEqual(Buffer.compare(s.seen[s.seen.length - 1], plain), 0);
 });
 
+ok('waiting text follows the size and position settings', () => {
+    const w = 320, h = 140;
+    const note = 'DECODER NOT RUNNING';
+    const smallOpt = { scale: 33, x: 20, y: -15 };
+    const normal = atlas.waitingAtlas(null, w, h, 0, note, { scale: 100, x: 0, y: 0 });
+    const small = atlas.waitingAtlas(null, w, h, 0, note, smallOpt);
+    const moved = atlas.waitingAtlas(null, w, h, 0, note, { scale: 33, x: -20, y: 15 });
+    assert.notStrictEqual(Buffer.compare(normal, small), 0);
+    assert.notStrictEqual(Buffer.compare(small, moved), 0);
+
+    const card = atlas.liveCardAtlas(null, w, h, 0, 0, { scale: 100, x: 0, y: 0 }, note);
+    const cardSmall = atlas.liveCardAtlas(null, w, h, 0, 0, smallOpt, note);
+    const cardMoved = atlas.liveCardAtlas(null, w, h, 0, 0,
+        { scale: 33, x: -20, y: 15 }, note);
+    assert.notStrictEqual(Buffer.compare(card, cardSmall), 0);
+    assert.notStrictEqual(Buffer.compare(cardSmall, cardMoved), 0);
+
+    assert.strictEqual(atlas.textOpt(smallOpt).k, 0.33);
+    assert.strictEqual(atlas.textOpt(smallOpt).dx, 0.2);
+    assert.ok(atlas.fitScale('CARLIFE', w, 600) <= atlas.fitScale('CARLIFE', w, 1000));
+    assert.ok(7 * 6 * atlas.fitScale('CARLIFE', w, 1000) <= w);
+});
+
+ok('a card status page carries the reason and the text settings', () => {
+    const s = new CarlifeSource({ w: 320, h: 140, fps: 5, sockPath: '/tmp/none.sock' });
+    s.running = true;
+    s.format = '';
+    s.note = 'DECODER NOT RUNNING';
+    s.text = { scale: 33, x: 20, y: -15 };
+    const seen = [];
+    s.on('frame', (b) => seen.push(b));
+    for (let i = 0; i < 6; i++) s._activity();
+    assert.ok(seen.length > 0);
+    const first = Buffer.from(seen[seen.length - 1]);
+    s.text = { scale: 100, x: 0, y: 0 };
+    for (let i = 0; i < 6; i++) s._activity();
+    assert.notStrictEqual(Buffer.compare(first, seen[seen.length - 1]), 0);
+});
+
 ok('a status page never grows the layer: its frame is exactly vw x vh', () => {
     for (const [w, h] of [[1088, 480], [480, 168], [344, 120]]) {
         const s = new CarlifeSource({ w: w, h: h, fps: 5, sockPath: '/tmp/none.sock' });

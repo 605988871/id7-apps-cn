@@ -398,6 +398,31 @@ const GLYPH = {
 
 function charWidth(s, scale) { return s.length * 6 * scale - scale; }
 
+/**
+ * The biggest face a string may be drawn in without leaving the picture.
+ *
+ * The waiting page's size comes from a setting, and a setting can be set to
+ * 600%: the glyphs would simply be clipped by the edge of the buffer and the
+ * line would end mid-word, which looks like a bug rather than a choice. So the
+ * requested size is a wish, and the picture is the limit.
+ */
+function fitScale(s, w, want) {
+    const room = Math.floor((w * 0.94) / Math.max(1, s.length * 6));
+    return Math.max(1, Math.min(Math.max(1, Math.round(want)), Math.max(1, room)));
+}
+
+/** The waiting text's size and place, as the app's settings describe them:
+ * `scale` in percent of the default face, `x`/`y` in percent of the picture.
+ * Absent settings mean "as designed", so every caller may pass nothing. */
+function textOpt(o) {
+    const pct = o && Number(o.scale) > 0 ? Number(o.scale) : 100;
+    return {
+        k: pct / 100,
+        dx: ((o && Number(o.x)) || 0) / 100,
+        dy: ((o && Number(o.y)) || 0) / 100
+    };
+}
+
 function drawText(a, w, h, x, y, s, scale, value, chroma) {
     let cx = x;
     for (let i = 0; i < s.length; i++) {
@@ -461,25 +486,51 @@ function activityAtlas(out, w, h, tick, mb, idr, mbps) {
 }
 
 /**
- * The card's placeholder while CarLife's stream arrives but cannot be decoded.
+ * The card's placeholder while CarLife's stream arrives but cannot be decoded,
+ * and while it has not started arriving at all.
  *
  * activityAtlas is laid out for the cluster's 1088x480 and its lower half would
- * fall off a 480x168 card, so the card gets its own: the same proof — a marker
- * that moves only while bytes are still coming — in two lines instead of six.
+ * fall off a 480x168 card, so the card gets its own: the same proof - a marker
+ * that moves only while bytes are still coming - in three short lines instead
+ * of six.
+ *
+ * The face is about a third of the cluster's. At five and nine, "WAITING FOR
+ * CARLIFE" covered the card once the HUD scaled the card up again; two and
+ * three leave the car's own speed and limit sign alone. `opt` is the app's own
+ * idea of how big and where (see textOpt), so it can be changed without a
+ * rebuild. `mb` is kept for the card's own stream; a `note` from the app wins
+ * because it says why the map is empty rather than merely how much came in.
  */
-function liveCardAtlas(out, w, h, tick, mb) {
+function liveCardAtlas(out, w, h, tick, mb, opt, note) {
     const need = atlasSize(w, h);
     const a = out && out.length === need ? out : Buffer.alloc(need);
     a.fill(20, 0, w * h);
     a.fill(128, w * h);
+    const o = textOpt(opt);
+
+    const s1 = 'WAITING FOR';
+    const k1 = fitScale(s1, w, 2 * o.k);
+    drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2 + w * o.dx),
+        Math.round(h * 0.14 + h * o.dy), s1, k1, 150);
+    const s2 = 'CARLIFE';
+    const k2 = fitScale(s2, w, 3 * o.k);
+    drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2 + w * o.dx),
+        Math.round(h * 0.34 + h * o.dy), s2, k2, 225);
+
+    /* One short line under it, whatever it is: the app's reason on the map's
+     * HUD, megabytes on the card's own stream. Truncated to what the card can
+     * hold rather than clipped by its edge. */
+    const line = note || (typeof mb === 'number' ? mb.toFixed(1) + ' MB' : mb);
+    if (line) {
+        const k = fitScale('X', w, 2 * o.k);
+        const room = Math.max(1, Math.floor((w * 0.94) / (6 * k)));
+        const txt = String(line).toUpperCase().replace(/[^A-Z0-9 ./:-]/g, ' ').slice(0, room);
+        drawText(a, w, h, Math.round((w - charWidth(txt, k)) / 2 + w * o.dx),
+            Math.round(h * 0.62 + h * o.dy), txt, k, 170);
+    }
 
     const mx = (tick * 7) % Math.max(1, w - 60);
-    fillY(a, w, h, mx, 8, 60, 8, 238);
-
-    const s1 = 'CARLIFE';
-    drawText(a, w, h, Math.round((w - charWidth(s1, 6)) / 2), Math.round(h * 0.26), s1, 6, 225);
-    const s2 = mb.toFixed(1) + ' MB';
-    drawText(a, w, h, Math.round((w - charWidth(s2, 4)) / 2), Math.round(h * 0.62), s2, 4, 160);
+    fillY(a, w, h, mx, Math.round(h - 14), 60, 6, 238);
     return a;
 }
 
@@ -495,33 +546,43 @@ function liveCardAtlas(out, w, h, tick, mb) {
  * that never started and of frames that arrive at the wrong size, and those
  * are three different things to do. Whoever knows which one it is passes it
  * in; an empty note keeps the page as it was.
+ *
+ * `opt` carries the size and the place from the app's settings (textOpt). The
+ * cluster's page is large on purpose - it is the one picture a driver sees
+ * without looking down - so 100% is the size it always had; a HUD card drawn
+ * by liveCardAtlas starts a third of that.
  */
-function waitingAtlas(out, w, h, tick, note) {
+function waitingAtlas(out, w, h, tick, note, opt) {
     const need = atlasSize(w, h);
     const a = out && out.length === need ? out : Buffer.alloc(need);
     a.fill(18, 0, w * h);
     a.fill(128, w * h);
+    const o = textOpt(opt);
 
-    const s1 = 'WAITING FOR', k1 = 5;
-    drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2), Math.round(h * 0.20), s1, k1, 150);
-    const s2 = 'CARLIFE', k2 = 9;
-    drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2), Math.round(h * 0.40), s2, k2, 225);
+    const s1 = 'WAITING FOR', k1 = fitScale(s1, w, 5 * o.k);
+    drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2 + w * o.dx),
+        Math.round(h * 0.20 + h * o.dy), s1, k1, 150);
+    const s2 = 'CARLIFE', k2 = fitScale(s2, w, 9 * o.k);
+    drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2 + w * o.dx),
+        Math.round(h * 0.40 + h * o.dy), s2, k2, 225);
 
     /* Drawn in a smaller face than the title: it is a diagnosis, not a
      * headline, and it has to fit on one line at 1088 pixels. */
     if (note) {
-        const txt = String(note).toUpperCase().replace(/[^A-Z0-9 ./:-]/g, ' ').slice(0, 44);
-        const k = 3;
-        drawText(a, w, h, Math.round((w - charWidth(txt, k)) / 2), Math.round(h * 0.62), txt, k, 236);
+        const k = fitScale('X', w, 3 * o.k);
+        const room = Math.max(1, Math.floor((w * 0.94) / (6 * k)));
+        const txt = String(note).toUpperCase().replace(/[^A-Z0-9 ./:-]/g, ' ').slice(0, room);
+        drawText(a, w, h, Math.round((w - charWidth(txt, k)) / 2 + w * o.dx),
+            Math.round(h * 0.62 + h * o.dy), txt, k, 236);
     }
 
     const n = tick % 3;
     for (let i = 0; i < 3; i++) {
-        const x = Math.round(w / 2 - 82 + i * 70);
-        fillY(a, w, h, x, Math.round(h * 0.80), 24, 24, i === n ? 235 : 70);
+        const x = Math.round(w / 2 - 82 + i * 70 + w * o.dx);
+        fillY(a, w, h, x, Math.round(h * 0.80 + h * o.dy), 24, 24, i === n ? 235 : 70);
     }
     return a;
 }
 
 module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas, arrowAtlas,
-    activityAtlas, liveCardAtlas, waitingAtlas };
+    activityAtlas, liveCardAtlas, waitingAtlas, fitScale, textOpt };

@@ -341,6 +341,10 @@ class CarlifeSource extends FrameSource {
         /* One short line for the waiting picture, set by the app from the
          * reports it can read and this one cannot. */
         this.note = '';
+        /* How big that page's words are and where they sit, as the app's
+         * settings have it: {scale, x, y}, percent of the designed face and of
+         * the picture. Null means "as drawn". */
+        this.text = null;
         this.countTimer = null;
         this.actTimer = null;
     }
@@ -530,10 +534,10 @@ class CarlifeSource extends FrameSource {
      * card, a third of its height, would lose the lower half of it. */
     _statusAtlas(buf, tick, mb, note) {
         if (this.h >= 240) {
-            if (note) return waitingAtlas(buf, this.w, this.h, tick, note);
+            if (note) return waitingAtlas(buf, this.w, this.h, tick, note, this.text);
             return activityAtlas(buf, this.w, this.h, tick, mb, this.h264Idr, this.mbps);
         }
-        return liveCardAtlas(buf, this.w, this.h, tick, mb);
+        return liveCardAtlas(buf, this.w, this.h, tick, mb, this.text, note);
     }
 
     _activity() {

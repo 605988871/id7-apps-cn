@@ -1,8 +1,8 @@
 {
   "id": "cn_carlife_map",
-  "title": "CarLife Map",
-  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示 CarLife 自己的导航条（箭头、车道、路名）。取流与解码组件随应用一同安装，画面在车机侧解码后裁切；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。HUD 可调宽度与不透明度；实验功能",
-  "version": "1.4.8",
+  "title": "CarLife 地图",
+  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示 CarLife 自己的导航条（箭头、车道、路名）。取流与解码组件随应用一同安装，画面在车机侧解码后裁切；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。HUD 可调宽度、位置、等待文字大小与不透明度；实验功能",
+  "version": "1.4.9",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -18,11 +18,11 @@
     {
       "name": "MAIN",
       "kind": "canvas",
-      "title": "CarLife Map",
+      "title": "CarLife 地图",
       "buttons": [
         [
           "BTN_SETTINGS",
-          "Settings"
+          "设置"
         ]
       ]
     }
@@ -30,57 +30,57 @@
   "settings": [
     {
       "key": "target",
-      "label": "Show on",
+      "label": "显示在",
       "type": "choice",
       "default": "cluster",
       "options": [
         [
           "off",
-          "Off"
+          "关闭"
         ],
         [
           "cluster",
-          "Cluster only"
+          "仅仪表盘"
         ],
         [
           "hud",
-          "HUD only"
+          "仅 HUD"
         ],
         [
           "both",
-          "Cluster and HUD"
+          "仪表盘和 HUD"
         ]
       ]
     },
     {
       "key": "source",
-      "label": "Picture source",
+      "label": "画面来源",
       "type": "choice",
       "default": "demo",
       "options": [
         [
           "demo",
-          "Test picture"
+          "测试画面"
         ],
         [
           "carlife",
-          "CarLife (live)"
+          "CarLife（实时画面）"
         ],
         [
           "tcp",
-          "Network (TCP)"
+          "网络（TCP）"
         ],
         [
           "fifo",
-          "Local pipe"
+          "本地管道"
         ]
       ]
     },
     {
       "key": "fps",
-      "label": "Frame rate",
+      "label": "帧率",
       "type": "number",
-      "unit": "fps",
+      "unit": "帧/秒",
       "default": 15,
       "steps": [
         5,
@@ -92,43 +92,43 @@
     },
     {
       "key": "hudMode",
-      "label": "What the HUD shows",
+      "label": "HUD 显示内容",
       "type": "choice",
       "default": "navi",
       "options": [
         [
           "navi",
-          "Turn card (arrow, lanes, limit)"
+          "转向卡片（箭头、车道、限速）"
         ],
         [
           "map",
-          "A piece of the map"
+          "一小块地图"
         ]
       ]
     },
     {
       "key": "hudDetail",
-      "label": "Turn card detail",
+      "label": "转向卡片内容",
       "type": "choice",
       "default": "full",
       "options": [
         [
           "full",
-          "Arrow, distance, road, lanes, limit"
+          "箭头、距离、路名、车道、限速"
         ],
         [
           "standard",
-          "Arrow, distance, road"
+          "箭头、距离、路名"
         ],
         [
           "minimal",
-          "Arrow and distance only"
+          "只要箭头和距离"
         ]
       ]
     },
     {
       "key": "hudWidth",
-      "label": "HUD width",
+      "label": "HUD 画面宽度",
       "type": "number",
       "unit": "%",
       "default": 62,
@@ -146,7 +146,7 @@
     },
     {
       "key": "hudOpacity",
-      "label": "HUD picture opacity",
+      "label": "HUD 画面不透明度",
       "type": "number",
       "unit": "%",
       "default": 100,
@@ -161,9 +161,9 @@
     },
     {
       "key": "hudX",
-      "label": "HUD left / right",
+      "label": "HUD 左右位置",
       "type": "number",
-      "unit": "px",
+      "unit": "像素",
       "default": 0,
       "steps": [
         -160,
@@ -179,9 +179,9 @@
     },
     {
       "key": "hudY",
-      "label": "HUD up / down",
+      "label": "HUD 上下位置",
       "type": "number",
-      "unit": "px",
+      "unit": "像素",
       "default": 0,
       "steps": [
         -80,
@@ -197,33 +197,33 @@
     },
     {
       "key": "hudKeep",
-      "label": "HUD on top of alerts",
+      "label": "HUD 压在提示框之上",
       "type": "bool",
       "default": false
     },
     {
       "key": "hudPath",
-      "label": "HUD picture as",
+      "label": "HUD 画面方式",
       "type": "choice",
       "default": "auto",
       "options": [
         [
           "auto",
-          "Auto (video, then a picture)"
+          "自动（先视频层，失败换图像层）"
         ],
         [
           "image",
-          "A picture (RGBA)"
+          "图像（RGBA）"
         ],
         [
           "video",
-          "Video (4:2:0)"
+          "视频（4:2:0）"
         ]
       ]
     },
     {
       "key": "mapTop",
-      "label": "Map crop top",
+      "label": "地图裁剪：上边",
       "type": "number",
       "unit": "%",
       "default": 8,
@@ -231,7 +231,7 @@
     },
     {
       "key": "mapBottom",
-      "label": "Map crop bottom",
+      "label": "地图裁剪：下边",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -239,7 +239,7 @@
     },
     {
       "key": "mapLeft",
-      "label": "Map crop left",
+      "label": "地图裁剪：左边",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -247,7 +247,7 @@
     },
     {
       "key": "mapRight",
-      "label": "Map crop right",
+      "label": "地图裁剪：右边",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -255,23 +255,23 @@
     },
     {
       "key": "mapFit",
-      "label": "Map crop fit",
+      "label": "地图裁剪方式",
       "type": "choice",
       "default": "fill",
       "options": [
         [
           "fill",
-          "Fill (cut to shape)"
+          "填充（按形状裁切）"
         ],
         [
           "stretch",
-          "Stretch (distorts)"
+          "拉伸（会变形）"
         ]
       ]
     },
     {
       "key": "cardTop",
-      "label": "HUD card crop top",
+      "label": "HUD 卡片裁剪：上边",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -279,7 +279,7 @@
     },
     {
       "key": "cardBottom",
-      "label": "HUD card crop bottom",
+      "label": "HUD 卡片裁剪：下边",
       "type": "number",
       "unit": "%",
       "default": 16,
@@ -287,7 +287,7 @@
     },
     {
       "key": "cardLeft",
-      "label": "HUD card crop left",
+      "label": "HUD 卡片裁剪：左边",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -295,7 +295,7 @@
     },
     {
       "key": "cardRight",
-      "label": "HUD card crop right",
+      "label": "HUD 卡片裁剪：右边",
       "type": "number",
       "unit": "%",
       "default": 24,
@@ -303,23 +303,23 @@
     },
     {
       "key": "cardFit",
-      "label": "HUD card crop fit",
+      "label": "HUD 卡片裁剪方式",
       "type": "choice",
       "default": "stretch",
       "options": [
         [
           "stretch",
-          "Stretch (shows all of it)"
+          "拉伸（整块都显示）"
         ],
         [
           "fill",
-          "Fill (keeps the arrow's shape)"
+          "填充（保持箭头形状）"
         ]
       ]
     },
     {
       "key": "hudMapX",
-      "label": "Map in HUD: left / right",
+      "label": "HUD 里地图左右",
       "type": "number",
       "unit": "%",
       "default": 0,
@@ -327,11 +327,81 @@
     },
     {
       "key": "hudMapY",
-      "label": "Map in HUD: up / down",
+      "label": "HUD 里地图上下",
       "type": "number",
       "unit": "%",
       "default": 0,
       "steps": [-40, -30, -20, -10, 0, 10, 20, 30, 40]
+    },
+    {
+      "key": "waitScale",
+      "label": "等待文字大小",
+      "type": "number",
+      "unit": "%",
+      "default": 100,
+      "steps": [
+        10,
+        15,
+        20,
+        25,
+        33,
+        50,
+        66,
+        75,
+        100,
+        125,
+        150,
+        200,
+        250,
+        300,
+        400,
+        500,
+        600
+      ]
+    },
+    {
+      "key": "waitX",
+      "label": "等待文字左右",
+      "type": "number",
+      "unit": "%",
+      "default": 0,
+      "steps": [
+        -40,
+        -30,
+        -20,
+        -15,
+        -10,
+        -5,
+        0,
+        5,
+        10,
+        15,
+        20,
+        30,
+        40
+      ]
+    },
+    {
+      "key": "waitY",
+      "label": "等待文字上下",
+      "type": "number",
+      "unit": "%",
+      "default": 0,
+      "steps": [
+        -40,
+        -30,
+        -20,
+        -15,
+        -10,
+        -5,
+        0,
+        5,
+        10,
+        15,
+        20,
+        30,
+        40
+      ]
     }
   ]
 }
