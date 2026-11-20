@@ -192,6 +192,11 @@ HUD 上先是一个转向箭头和一个距离（外加路名），路口再加�
 `live.sock` 并存，格式相同）。一个尺寸一路流，是 cluster-render 的硬要求：层帧长度必须正好
 等于 `vw × vh`，否则静默丢弃。
 
+卡片这一路**永远不会去连地图那一路的端口**：一个生产方只服务一条连接，连上去要么被拒、要么
+把地图挤掉。所以按来源分开——CarLife 用本地 socket；`Network (TCP)` 时改用 **端口 +1**
+（默认 `20559`）自己监听，谁来推都行；`Local pipe` 没有第二条路径，状态页会直接写
+`no card stream`。
+
 `What the HUD shows` 两档：
 
 - `Turn card`（默认）：HUD 上是转向卡片。`Picture source = Test picture` 时这张卡由车机自己画

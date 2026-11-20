@@ -59,6 +59,7 @@ async function run(ctx) {
      * frame must be exactly its vw x vh, and cluster-render drops any frame
      * that is not, silently. */
     let hudW = 0, hudH = 0, hudAtlas = null, hudSeq = 0, hudFrames = 0;
+    let hudCardNote = '';
     /* The turn card is its own picture on its own socket - see setHudSource. */
     let hudSource = null, hudBuf = null, hudSourceKind = '', hudCards = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
@@ -173,7 +174,7 @@ async function run(ctx) {
         const navi = (settings.get('hudMode') || 'navi') !== 'map';
         if (!wantHud || !navi || !hudW || !hudH) {
             if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
-            hudSource = null; hudBuf = null; hudSourceKind = '';
+            hudSource = null; hudBuf = null; hudSourceKind = ''; hudCardNote = '';
             return;
         }
         if (hudSource && hudSourceKind === kind && hudSource.w === hudW && hudSource.h === hudH) {
@@ -182,18 +183,29 @@ async function run(ctx) {
         }
         if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
         hudSource = null; hudBuf = null; hudSourceKind = kind;
+        /* The card is a second stream, and it must never be dialled onto the
+         * map's endpoint: a producer serves one connection, so the card would
+         * either be refused or steal the map's. CarLife's source already has a
+         * socket of its own; a network source listens on the next port instead;
+         * a pipe has no second path at all. */
         const live = kind === 'carlife';
+        if (kind === 'fifo') {
+            hudCardNote = 'no card stream: a pipe has one path, not two';
+            return;
+        }
+        const cardPort = (live ? (Number(override.carlifePort) || CARLIFE_PORT)
+                              : (Number(override.port) || DEFAULT_PORT)) + 1;
         hudSource = createSource({
             kind: kind, w: hudW, h: hudH, fps: fps,
             draw: 'arrow',
             card: cardSpec(),
             host: live ? (override.carlifeHost || null) : (override.host || DEFAULT_HOST),
-            port: live ? (Number(override.carlifePort) || CARLIFE_PORT)
-                       : (Number(override.port) || DEFAULT_PORT),
+            port: live ? (Number(override.carlifePort) || CARLIFE_PORT) : cardPort,
             sockPath: override.hudSockPath || CARD_SOCK,
             path: override.path || DEFAULT_FIFO,
-            tcpListen: override.tcpListen === true
+            tcpListen: kind === 'tcp' ? true : (override.tcpListen === true)
         });
+        hudCardNote = kind === 'tcp' ? 'listening on :' + cardPort : '';
         hudSource.on('frame', safe('hud card', (buf) => {
             if (buf.length !== atlasSize(hudW, hudH)) return;
             hudBuf = buf;
@@ -406,7 +418,7 @@ async function run(ctx) {
         if (mode === 'map') return 'map crop, middle of the picture';
         if (!hudSource) return 'off (no HUD layer)';
         return 'turn card (' + cardSpec().detail + '), ' + hudCards +
-            ' from ' + hudSourceKind + ', own socket';
+            ' from ' + hudSourceKind + ', ' + (hudCardNote || 'own socket');
     }
 
     /* ---------- status page ---------- */
