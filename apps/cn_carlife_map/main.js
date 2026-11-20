@@ -23,13 +23,17 @@ const { toRgba, parseTarget, parseLayer } = require('./hud_convert');
 
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
-              'hudWidth', 'hudX', 'hudY', 'hudKeep', 'hudPath',
+              'hudWidth', 'hudX', 'hudY', 'hudKeep', 'hudOpacity', 'hudPath',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit',
               'cardTop', 'cardBottom', 'cardLeft', 'cardRight', 'cardFit',
               'hudMapX', 'hudMapY'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* The decoder's own report: whether the stream became a picture. */
 const DECODE_REPORT = '/dev/shm/carlife-decode.txt';
+/* What the install hook saw when it tried to start the decoder. A decoder
+ * that never ran leaves no report at all, and this is the only account of
+ * why - so it is read and shown next to the report. */
+const DECODE_BOOT = '/dev/shm/carlife-decode-boot.txt';
 /* Where the decoder is told how much of CarLife's picture is the map. */
 const CROP_FILE = '/dev/shm/carlife-map/crop.json';
 /* The HUD's turn card, in glass pixels. The visible HUD area is about 560x200,
@@ -112,7 +116,12 @@ async function run(ctx) {
      * hudWidth rather than from the map's. */
     function hudRect() {
         const mode = settings.get('hudMode') || 'navi';
-        const pct = Number(settings.get('hudWidth')) || (mode === 'map' ? 50 : 86);
+        /* Smaller than the glass on purpose. The HUD is shared: BMW draws its
+         * speed and limit sign on it, and another app in this repository puts
+         * its own content there too. A picture that fills the whole glass
+         * hides all of that, so the defaults leave room - 62% of the width for
+         * a card, 30% for a piece of the map. */
+        const pct = Number(settings.get('hudWidth')) || (mode === 'map' ? 30 : 62);
         let w, h;
         if (mode === 'map') {
             w = Math.round(800 * pct / 100) & ~3;
@@ -184,6 +193,11 @@ async function run(ctx) {
         hudSeenShown = false;
         hudSwapAt = 0;
         hudKind = wantHudKind();
+        /* The HUD is a shared surface: whatever else draws on it - BMW's own
+         * speed and limit sign, another app's content - sits underneath this
+         * layer and an opaque picture hides it. Opacity below 100 lets that
+         * through, dimmed, instead of covering it. */
+        const op = Math.min(100, Math.max(20, Number(settings.get('hudOpacity')) || 100)) / 100;
         if (hudKind === 'image') {
             /* RGBA, so the cluster only has to texture it: the path the other
              * HUD app in this repository uses on this car. */
@@ -191,14 +205,14 @@ async function run(ctx) {
                 klass: 'overlay',              /* above the stock HUD's content layers */
                 target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
                 iw: r.w, ih: r.h, fps: hudFps, sampling: 'nearest',
-                z: 0, visible: 1, opacity: 1
+                z: 0, visible: 1, opacity: op
             });
         } else {
             hudLayer = cr.video({
                 klass: 'overlay',
                 target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
                 vw: r.w, vh: r.h, fps: hudFps,
-                z: 0, visible: 1, opacity: 1, contend: 1,
+                z: 0, visible: 1, opacity: op, contend: 1,
                 dirty_threshold: 8, settle_ms: 1000, stall_ms: 6000,
                 yield: settings.get('hudKeep') ? 0 : 1
             });
@@ -344,6 +358,7 @@ async function run(ctx) {
         const sig = [t, Number(settings.get('fps')) || 15,
                      hw ? [hw.x, hw.y, hw.w, hw.h].join(',') : '-',
                      settings.get('hudKeep') ? 1 : 0,
+                     settings.get('hudOpacity') || 100,
                      settings.get('hudPath') || 'auto',
                      (settings.get('hudMode') || 'navi')].join('|');
         if (sig === layerSig && (mapLayer || hudLayer || t === 'off')) return;
@@ -588,7 +603,57 @@ async function run(ctx) {
      * stays black while frames are being produced" is nearly always this. */
     let decInfo = 'not read yet';
     let decCrop = '';
+    let decErr = '';
     let decAt = 0;
+    /* Why there is no report at all, when that is the case. The install hook
+     * (kit/carlife-tap/install.sh) writes what it found when it tried to start
+     * the decoder - the execute bit, the unit, its systemd state and the
+     * unit's own last words - to /dev/shm/carlife-decode-boot.txt. Without it
+     * "not running (no report)" is a dead end: nothing on the car can say
+     * whether the binary is missing, not executable, or simply not started. */
+    let decBoot = '';
+    let decBootAt = 0;
+    function uptime() {
+        try {
+            const v = parseFloat(fs.readFileSync('/proc/uptime', 'utf8'));
+            return isFinite(v) ? v : -1;
+        } catch (e) { return -1; }
+    }
+    function readDecBoot() {
+        const now = Date.now();
+        if (now - decBootAt < 5000) return decBoot;
+        decBootAt = now;
+        let s;
+        try { s = fs.readFileSync(DECODE_BOOT, 'utf8'); } catch (e) { decBoot = ''; return decBoot; }
+        const lines = s.split('\n').filter(Boolean);
+        const state = lines.find((l) => /^state:/.test(l));
+        const exec = lines.find((l) => /^exec:/.test(l) && /(missing|not executable)/.test(l));
+        const unit = lines.find((l) => /^unit:/.test(l) && /not installed/.test(l));
+        const bad = lines.find((l) => /(Failed|failed|No such|not found|denied)/.test(l));
+        /* An install from before this boot has been overtaken: systemd started
+         * the unit at boot, and the hook's account of a unit that was not
+         * running then is history, not a diagnosis. */
+        const was = parseFloat((/^uptime: ([\d.]+)/m.exec(s) || [])[1]);
+        const up = uptime();
+        const stale = isFinite(was) && up > 0 && up < was;
+        const parts = [stale ? 'from before this boot' : '', state, exec, unit, bad].filter(Boolean);
+        decBoot = parts.join(' | ').replace(/^state: /, '').slice(0, 110);
+        return decBoot;
+    }
+
+    /* Has the decoder written its report lately? It rewrites it every second
+     * while it runs, so the file's age is a live answer to "is it up" - and a
+     * far better one than the file merely existing, which a crash leaves
+     * behind for ever. */
+    function decoderAge() {
+        try {
+            const st = fs.statSync(DECODE_REPORT);
+            /* mtimeMs is not on every Node 8 build; the Date is always there. */
+            const m = st.mtimeMs || (st.mtime && st.mtime.getTime()) || 0;
+            return m ? (Date.now() - m) / 1000 : -1;
+        } catch (e) { return -1; }
+    }
+
     function readDecode() {
         const now = Date.now();
         if (now - decAt < 2000) return decInfo;
@@ -596,7 +661,10 @@ async function run(ctx) {
         let s;
         try { s = fs.readFileSync(DECODE_REPORT, 'utf8'); }
         catch (e) {
-            decInfo = e.code === 'ENOENT' ? 'not running (no report)' : e.message;
+            const b = readDecBoot();
+            decInfo = e.code === 'ENOENT'
+                ? 'not running (no report)' + (b ? ' - ' + b : '')
+                : e.message;
             decCrop = '';
             return decInfo;
         }
@@ -605,7 +673,10 @@ async function run(ctx) {
         const soft = /^errors: (\d+)/m.exec(s);
         if (!f) { decInfo = 'report has no frames line'; return decInfo; }
         const e = err && err[1] !== 'none' ? err[1] : '';
-        decInfo = f[1] + ' frames, ' + f[2] + ' fps' +
+        decErr = e ? e.slice(0, 48) : '';
+        const age = decoderAge();
+        decInfo = (age > 4 ? 'stopped ' + Math.round(age) + 's ago - ' : '') +
+            f[1] + ' frames, ' + f[2] + ' fps' +
             (Number(f[3]) >= 0 ? ', last ' + f[3] + 'ms' : '') +
             (e ? ' - ' + e : '');
         /* The size it sent and the percentages it used, on one line: what to
@@ -635,6 +706,22 @@ async function run(ctx) {
         if (!hudSource) return 'off (no HUD layer)';
         return 'turn card (' + cardSpec().detail + '), ' + hudCards +
             ' from ' + hudSourceKind + ', ' + (hudCardNote || 'own socket');
+    }
+
+    /* One line for the waiting picture on the cluster: which of the three
+     * "nothing yet" states it is. Only this side can read the reports that
+     * say it - the source only sees its own socket. */
+    function carlifeNote() {
+        if (source && typeof source.live === 'number' && source.live > 0) return '';
+        const age = decoderAge();
+        /* Up but unable to decode is a different thing from up and waiting,
+         * and the decoder's own report is the only place that says so. */
+        if (age >= 0 && age <= 4) return decErr ? 'DECODER: ' + decErr : 'DECODER UP, NO PICTURE YET';
+        const b = readDecBoot();
+        if (/missing|not executable/.test(b)) return 'DECODER NOT EXECUTABLE';
+        if (/failed|Failed|denied/.test(b)) return 'DECODER FAILED TO START';
+        if (age > 4) return 'DECODER STOPPED';
+        return 'DECODER NOT RUNNING';
     }
 
     /* The service's own account, shortened: the target line says who holds the
@@ -673,6 +760,10 @@ async function run(ctx) {
 
         const cv = ctx.canvas(1600, 520).clear('#0b1016');
         const kind = settings.get('source') || 'demo';
+        /* The waiting picture on the cluster carries one short line of why.
+         * It is set here, once a loop, because this is the only place that can
+         * read the tap and decoder reports. */
+        if (source && kind === 'carlife') source.note = carlifeNote();
         const detail = (() => {
             try { return source && source.detail ? source.detail() : ''; } catch (e) { return ''; }
         })();
@@ -694,8 +785,11 @@ async function run(ctx) {
         cv.text('Decode  : ' + dec, 40, 363, 20, '#a8d8c0');
         /* The decoder's own crop and output size: the numbers to change when
          * a picture is off by a strip, and the ones that explain a layer that
-         * takes frames and shows none of them. */
-        cv.text('Cut     : ' + (decCrop || '-'), 40, 388, 19, '#7fbf9f');
+         * takes frames and shows none of them. When there is no crop to show -
+         * the decoder never ran - this line carries the install hook's account
+         * of why instead, which is the only account there is. */
+        cv.text((decCrop ? 'Cut     : ' : 'Dec boot: ') + (decCrop || readDecBoot() || '-'),
+            40, 388, 19, '#7fbf9f');
         cv.text('HUD slot: ' + (svcHudTarget() || (svcText ? 'no target hud line' : 'not asked yet')), 40, 414, 19, '#c8a8e0');
         cv.text('HUD lyr : ' + (svcHudLayer() || (svcText ? 'no layer on hud' : 'not asked yet')), 40, 439, 19, '#c8a8e0');
         cv.text('Refused : ' + (lastRefused ? lastRefused.slice(0, 120) : 'none'), 40, 464, 19,

@@ -304,6 +304,20 @@ class CarlifeSource extends FrameSource {
         this.actTick = 0;
         this.actSeen = -1;
         this.waitTick = 0;
+        /* What has actually arrived. `live` counts real pictures and
+         * `lastLiveAt` says when the last one did: the status pages exist for
+         * the case where those two say nothing, and they must not replace a
+         * picture that is working. */
+        this.live = 0;
+        this.lastLiveAt = 0;
+        /* The last CLMF payload that was not the layer's size. The decoder
+         * sends what crop.json asked for, so a mismatch here is the one thing
+         * that turns a working decoder into an empty layer - and it is a
+         * number, which is worth printing. */
+        this.badLen = 0;
+        /* One short line for the waiting picture, set by the app from the
+         * reports it can read and this one cannot. */
+        this.note = '';
         this.countTimer = null;
         this.actTimer = null;
     }
@@ -415,10 +429,25 @@ class CarlifeSource extends FrameSource {
             if (this.buf.length < HEAD + len) break;
             const payload = this.buf.slice(HEAD, HEAD + len);
             this.buf = this.buf.slice(HEAD + len);
-            if (len === this.expected) this._frame(payload);
-            else this.emit('status', 'frame size ' + len + ', want ' + this.expected);
+            if (len === this.expected) {
+                this.badLen = 0;
+                this._frame(payload);
+            } else {
+                this.badLen = len;
+                this.emit('status', 'frame size ' + len + ', want ' + this.expected);
+            }
         }
         if (this.buf.length > MAX_PACKET + HEAD) this.buf = Buffer.alloc(0);
+    }
+
+    /* Every real picture, counted before it is emitted: this is the signal
+     * that the status pages are no longer needed. */
+    _frame(buf) {
+        if (this.running && buf && buf.length === this.expected) {
+            this.live++;
+            this.lastLiveAt = Date.now();
+        }
+        super._frame(buf);
     }
 
     /** Count the stream and its keyframes; nothing is decoded here. */
@@ -450,27 +479,44 @@ class CarlifeSource extends FrameSource {
      * nothing against the service's dirty-tile budget. */
     /* Two shapes of the same report. The cluster gets the full page; the HUD
      * card, a third of its height, would lose the lower half of it. */
-    _statusAtlas(buf, tick, mb) {
+    _statusAtlas(buf, tick, mb, note) {
         if (this.h >= 240) {
+            if (note) return waitingAtlas(buf, this.w, this.h, tick, note);
             return activityAtlas(buf, this.w, this.h, tick, mb, this.h264Idr, this.mbps);
         }
         return liveCardAtlas(buf, this.w, this.h, tick, mb);
     }
 
     _activity() {
-        if (!this.running || this.format === 'clmf') return;
+        if (!this.running) return;
+        /* A picture that is arriving is left alone. These pages exist for the
+         * gap where nothing arrives; drawing one over a working map would be
+         * the very bug they are meant to report. */
+        if (this.live > 0 && Date.now() - this.lastLiveAt < 2000) return;
+
         if (this.format === 'h264') {
             if (this.h264Bytes !== this.actSeen) {
                 this.actSeen = this.h264Bytes;
                 this.actBuf = this._statusAtlas(this.actBuf, this.actTick++,
-                    this.h264Bytes / 1048576);
+                    this.h264Bytes / 1048576, '');
             } else if (!this.actBuf) {
-                this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0);
+                this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0, '');
             }
+        } else if (this.format === 'clmf') {
+            /* Frames arrive in a container we understand and not one of them
+             * is the layer's size - or they have stopped. Either way the layer
+             * is being fed nothing, and on the cluster that looks exactly like
+             * a decoder that was never installed. The size is the number to
+             * act on, so it goes on the screen. */
+            this.waitTick = (this.waitTick + 1) % 1000000;
+            if (this.waitTick % 3) return;
+            this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0,
+                this.badLen ? 'FRAME ' + this.badLen + ' WANT ' + this.expected
+                            : 'DECODER SENT NOTHING FOR 2S');
         } else {
             this.waitTick = (this.waitTick + 1) % 1000000;
             if (this.waitTick % 3) return;          /* once every 600 ms is enough */
-            this.actBuf = waitingAtlas(this.actBuf, this.w, this.h, this.actTick++);
+            this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0, this.note);
         }
         this.frames++;
         this.emit('frame', this.actBuf, this.seq++);
@@ -479,12 +525,16 @@ class CarlifeSource extends FrameSource {
     /** One line for the status page. */
     detail() {
         if (!this.running) return 'stopped';
-        if (!this.client) return 'waiting for capture (' + this.sockPath + ')';
+        if (!this.client) return 'no decoder on ' + this.sockPath;
         if (this.format === 'h264') {
             return 'H.264 ' + (this.h264Bytes / 1048576).toFixed(1) + 'MB ' +
                 this.h264Idr + ' IDR ' + this.mbps.toFixed(2) + 'MB/s, no decoder';
         }
-        if (this.format === 'clmf') return 'decoded frames from ' + this.remote;
+        if (this.format === 'clmf') {
+            return this.live + ' pictures' + (this.badLen
+                ? ', last frame ' + this.badLen + ' want ' + this.expected
+                : ', ' + this.remote);
+        }
         return 'connected, reading header';
     }
 }

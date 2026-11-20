@@ -1,8 +1,8 @@
 {
   "id": "cn_carlife_map",
   "title": "CarLife Map",
-  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示 CarLife 自己的导航条（箭头、车道、路名）。取流与解码组件随应用一同安装，画面在车机侧解码后裁切；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。实验功能",
-  "version": "1.4.4",
+  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示 CarLife 自己的导航条（箭头、车道、路名）。取流与解码组件随应用一同安装，画面在车机侧解码后裁切；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。HUD 可调宽度与不透明度；实验功能",
+  "version": "1.4.5",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -12,7 +12,7 @@
   "autostart": true,
   "requires": {
     "idrive7-renderd": "2.1.15",
-    "carlife-tap": "0.4.3"
+    "carlife-tap": "0.4.4"
   },
   "screens": [
     {
@@ -131,14 +131,31 @@
       "label": "HUD width",
       "type": "number",
       "unit": "%",
-      "default": 86,
+      "default": 62,
       "steps": [
+        20,
+        30,
         40,
         50,
         57,
         65,
         75,
         86,
+        100
+      ]
+    },
+    {
+      "key": "hudOpacity",
+      "label": "HUD picture opacity",
+      "type": "number",
+      "unit": "%",
+      "default": 100,
+      "steps": [
+        50,
+        60,
+        70,
+        80,
+        90,
         100
       ]
     },

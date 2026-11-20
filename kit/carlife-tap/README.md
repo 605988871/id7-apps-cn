@@ -109,7 +109,7 @@ It is not installed on its own: it is a `requires` entry of the app
 the app. Installing it from the tools list still works and does the same thing.
 
 `install.sh` runs as root after every install (component.json `postInstall`) and
-does three things:
+does four things:
 
 1. **Proves the library loads** on this unit before anything else happens. A
    library that cannot resolve shows up as a carlife process that starts and
@@ -143,10 +143,32 @@ the outside, so they are spelled out here:
   own units, but this hook runs on its own: it tries the write, remounts only if
   that fails, and a trap puts the root back to read-only on every exit path.
 
-It does **not** restart anything. CarLife picks the library up at the unit's
-next start, so a head-unit restart is what makes it live; restarting just
-carlife while the rest of the Cinemo stack keeps running is the less predictable
-option for no gain.
+4. **Starts the decoder and proves it is running.** The tap copies the stream
+   into `h264.sock`; a decoder that is not running reads nothing, and on the
+   cluster that looks exactly like an install that did nothing (the app sits on
+   `WAITING FOR CARLIFE` for ever). Two ways to get there, both silent: a
+   payload that arrived without its execute bit, and a unit that was *enabled*
+   but never *started* — enabling only takes effect at the next boot. So the
+   hook makes `carlife-decode` executable, `systemctl enable`s **and
+   restarts** it (not `try-restart`, which does nothing to a unit that is not
+   active), then writes what it found to `/dev/shm/carlife-decode-boot.txt`:
+
+   ```
+   exec: /var/opt/carlife-tap/current/carlife-decode
+   unit: /etc/systemd/system/carlife-decode.service
+   state: active
+   report: yes
+   ```
+
+   When the state is not `active` the unit's own last lines follow. The app
+   prints that file on its status page as the `Dec boot` line, so a decoder
+   that cannot start is one line on the screen instead of a dead end.
+
+The hook does **not** restart CarLife. CarLife picks the library up at the
+unit's next start, so a head-unit restart is what makes it live; restarting
+just carlife while the rest of the Cinemo stack keeps running is the less
+predictable option for no gain. The decoder unit is restarted, because it has
+to be running *now* for the stream to become a picture.
 
 `remove.sh` deletes only the drop-in, the report and the marker — nothing else,
 and no unit or payload of the Store's. The Store has no uninstall hook here, so

@@ -489,8 +489,14 @@ function liveCardAtlas(out, w, h, tick, mb) {
  * An empty layer and a broken layer look the same on the cluster: black. This
  * says which one it is, and the blinking dot says the app is alive rather than
  * stuck - without it, "waiting" and "crashed" are the same picture.
+ *
+ * `note` is one short line under the big words, and it is the whole point of
+ * the page: "waiting" is true of a phone that is not connected, of a decoder
+ * that never started and of frames that arrive at the wrong size, and those
+ * are three different things to do. Whoever knows which one it is passes it
+ * in; an empty note keeps the page as it was.
  */
-function waitingAtlas(out, w, h, tick) {
+function waitingAtlas(out, w, h, tick, note) {
     const need = atlasSize(w, h);
     const a = out && out.length === need ? out : Buffer.alloc(need);
     a.fill(18, 0, w * h);
@@ -500,6 +506,14 @@ function waitingAtlas(out, w, h, tick) {
     drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2), Math.round(h * 0.20), s1, k1, 150);
     const s2 = 'CARLIFE', k2 = 9;
     drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2), Math.round(h * 0.40), s2, k2, 225);
+
+    /* Drawn in a smaller face than the title: it is a diagnosis, not a
+     * headline, and it has to fit on one line at 1088 pixels. */
+    if (note) {
+        const txt = String(note).toUpperCase().replace(/[^A-Z0-9 ./:-]/g, ' ').slice(0, 44);
+        const k = 3;
+        drawText(a, w, h, Math.round((w - charWidth(txt, k)) / 2), Math.round(h * 0.62), txt, k, 236);
+    }
 
     const n = tick % 3;
     for (let i = 0; i < 3; i++) {

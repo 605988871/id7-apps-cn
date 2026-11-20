@@ -247,17 +247,93 @@ if [ "$RW" = 1 ]; then
 fi
 systemctl daemon-reload 2>/dev/null || true
 
-# The decoder is a unit of ours, and on an upgrade the one running is the old
-# binary. try-restart touches nothing that has never started, and a stuck
-# systemctl must not hold the install open - the probe's script does the same.
-if command -v systemctl >/dev/null 2>&1; then
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 10 systemctl try-restart carlife-decode.service 2>/dev/null || true
-    else
-        systemctl try-restart carlife-decode.service 2>/dev/null || true
-    fi
+# ---- 5. the decoder has to be running ----
+# The tap copies the stream into h264.sock and the decoder reads it. A decoder
+# that is not running looks exactly like an install that did nothing: the tap
+# fills its socket with nobody on the other end, and the cluster says "waiting
+# for CarLife" for ever, with no word about why.
+#
+# Two ways to get there, and both are silent: a payload that arrived without
+# its execute bit (the Store writes files, and mode is not always what the
+# manifest asked for), and a unit that was enabled but never started - enabled
+# only takes effect at the next boot, so a unit that failed once stays down
+# until someone starts it by hand.
+#
+# So: make the binary executable, enable *and* start the unit, and write what
+# happened where the app can print it. The app reads
+# /dev/shm/carlife-decode-boot.txt on its status page; a decoder that cannot
+# run is then one line on the screen instead of a blind install.
+CUR=/var/opt/carlife-tap/current
+BOOT=/dev/shm/carlife-decode-boot.txt
+printf '' > "$BOOT" 2>/dev/null || BOOT=/tmp/carlife-decode-boot.txt
+boot() { printf '%s\n' "$*" >> "$BOOT" 2>/dev/null || true; }
+
+# When this ran, in seconds since boot. The app compares it with the unit's own
+# uptime: an install from before the last restart is a report about a decoder
+# that has since been started by systemd at boot, and showing it as if it were
+# current would send someone chasing a failure that is no longer there.
+if read -r UP _ < /proc/uptime 2>/dev/null; then boot "uptime: $UP"; fi
+
+for b in "$HERE/carlife-decode" "$CUR/carlife-decode"; do
+    [ -f "$b" ] && chmod 0755 "$b" 2>/dev/null || true
+done
+if [ ! -x "$CUR/carlife-decode" ]; then
+    boot "exec: $CUR/carlife-decode is missing or not executable"
+else
+    boot "exec: $CUR/carlife-decode"
 fi
 
+FOUND=
+for f in /etc/systemd/system/carlife-decode.service \
+         /lib/systemd/system/carlife-decode.service \
+         /usr/lib/systemd/system/carlife-decode.service; do
+    [ -f "$f" ] && FOUND="$f" && break
+done
+if [ -n "$FOUND" ]; then
+    boot "unit: $FOUND"
+else
+    boot "unit: carlife-decode.service was not installed"
+fi
+
+STATE=none
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable carlife-decode.service >/dev/null 2>&1 || true
+    # restart, not try-restart: try-restart does nothing at all to a unit that
+    # is not active, which is precisely the case this section exists for.
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 systemctl restart carlife-decode.service >/dev/null 2>&1 || true
+    else
+        systemctl restart carlife-decode.service >/dev/null 2>&1 || true
+    fi
+    sleep 1
+    # An assignment from a command that exits non-zero fails under `set -e`,
+    # and is-active exits 3 for a unit that is not running - which is exactly
+    # the case being measured. So it is caught, not tested.
+    STATE=$(systemctl is-active carlife-decode.service 2>/dev/null) || STATE=unknown
+    [ -n "$STATE" ] || STATE=unknown
+    boot "state: $STATE"
+    if [ "$STATE" != active ]; then
+        # The unit's own account: the reason a service does not start is the
+        # first thing systemd says about it, and it is never on the car's
+        # screen otherwise.
+        systemctl status --no-pager -l carlife-decode.service 2>&1 | tail -6 >> "$BOOT" 2>/dev/null || true
+    fi
+else
+    boot "state: no systemctl on this unit"
+fi
+
+if [ -s /dev/shm/carlife-decode.txt ]; then
+    boot "report: yes"
+else
+    boot "report: no (/dev/shm/carlife-decode.txt)"
+fi
+
+if [ "$STATE" = active ]; then
+    say "decoder running"
+else
+    say "the decoder did not start: $BOOT says why"
+fi
 say "installed for $UNIT, $WANT"
 # the Store quotes the last line it read: keep the actionable one last
-say "restart the head unit to load it; open the app and check the USB tap line"
+say "restart the head unit to load the preload; then check the Decode line"

@@ -83,7 +83,8 @@ python3 kit/tools/build.py cn_carlife_map
 | Turn card detail | `full` 箭头+距离+路名+车道+限速（默认）/ `standard` 去掉车道和限速 / `minimal` 只留箭头和距离 |
 | Picture source | Test picture 测试画面 / CarLife 实时画面 / TCP 网络 / 本地管道 |
 | Frame rate | 5–30 fps。地图变化慢，15 fps 通常够，也能减轻簇的上传负担 |
-| HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
+| HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐。默认 62%（卡片约 344×120），不铺满整块玻璃：HUD 是共用的，宝马自己的车速/限速和别的应用也在上面，铺满就把它们全遮住了 |
+| HUD picture opacity | HUD 那层的不透明度，默认 100%。调到 60–80% 时下面的车速、限速和别的应用的内容会透出来，代价是自己的画面也变淡 |
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
 | HUD picture as | HUD 那层用什么送：Auto（默认，先用视频，6 秒没显示就改成一张图）/ A picture (RGBA) / Video (4:2:0)。画面出不来时先看这一项和状态页的 `HUD lyr` |
 | Map crop top / bottom / left / right | 从 CarLife 整屏画面里裁掉多少才算地图区，按百分比 |
@@ -124,10 +125,21 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 
 | 显示 | 含义 |
 |---|---|
-| `not running (no report)` | 解码服务没起来（`carlife-decode.service`），或工具没装成功 |
+| `not running (no report)` | 解码服务没起来（`carlife-decode.service`），或工具没装成功。后面跟的那一段来自 `Dec boot` 行，见下 |
 | `0 frames, 0 fps` | 解码器在跑但一个画面都没出来，`error:` 后面就是卡住的那次调用 |
 | `812 frames, 15 fps, last 66ms` | **通了**：仪表盘和 HUD 上的画面就是它给的 |
 | `... - MFXVideoDECODE_Init: -15` | 到这一步为止都正常，参数被拒；报告里同时有库名和 API 版本 |
+
+没有报告时，`Decode` 下面那行 `Cut` 会换成 `Dec boot:`，读的是安装钩子写的
+`/dev/shm/carlife-decode-boot.txt`：它当初有没有把 `carlife-decode` 变成可执行、
+单元文件在不在、`systemctl` 说它是什么状态，以及起不来时系统给的最后一句话。三种最常见的读法：
+
+| `Dec boot` | 含义 |
+|---|---|
+| `active` 但仍无报告 | 进程起来了又立刻退出，看同一行后面的 systemd 原文 |
+| `... is missing or not executable` | 载荷里的执行位丢了；重装一次工具即可（钩子会 `chmod 0755`） |
+| `unit: ... was not installed` | 商店没落单元文件；工具与应用的依赖关系没对上，重装应用 |
+| `failed` / `No such file or directory` | 单元在，`ExecStart` 指向的路径不存在：`/var/opt/carlife-tap/current` 没建起来 |
 
 解码在车机侧做，因为 CarLife 只送一路整屏 H.264，协议里既没有"只含地图"的第二路，
 也没有转向/车道/限速这些数据（官方车机端 SDK 的导航模块只有 `IDLE` 和 `START` 两个状态）。
@@ -148,6 +160,15 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 的 `LD_PRELOAD` 上，只在 carlife 启动时加载。
 
 装之前，仪表盘会显示 `WAITING FOR CARLIFE`——不是黑屏，所以"在等"和"坏了"不是同一个画面。
+
+这张等待画面的中间还有一行字，说明到底在等什么，因为三种"什么都没来"要做的事完全不同：
+
+| 画面上那行 | 意思 | 要做什么 |
+|---|---|---|
+| `DECODER NOT RUNNING` | 解码单元没跑（最常见） | 看状态页 `Dec boot` 行；重装一次取流件即可，钩子会 `chmod` 并 `systemctl restart` |
+| `DECODER FAILED TO START` | 单元在但起不来 | 同一行后面有 systemd 的原文 |
+| `DECODER UP, NO PICTURE YET` | 解码器在，取流件还没连上 | 打开 CarLife 并跑起导航 |
+| `FRAME 576000 WANT 783360` | 解码器在送，但尺寸不是图层要的 | 这一帧会被 cluster-render 静默丢掉；说明车机上跑的是旧版解码器，重装取流件 |
 
 链路分三种状态，仪表盘各有一张对应的画面，不会都用黑色糊过去：
 
