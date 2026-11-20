@@ -93,6 +93,25 @@ class FrameSource extends EventEmitter {
     }
 }
 
+/* What the test card cycles through, one every few seconds: the shapes a HUD
+ * has to survive. A u-turn with three lanes says something a left turn with one
+ * does not, and a card that only ever shows "left, 300 m" hides every
+ * alignment bug in the rest of it. */
+const CARD_SCENES = [
+    { dir: 'left', dist: '300', unit: 'M', road: 'CHANGAN AVE',
+      lanes: ['left', 'straight', 'straight'], active: 0, limit: '60' },
+    { dir: 'straight', dist: '1.2', unit: 'KM', road: 'G42 SHANGHAI',
+      lanes: ['straight', 'straight', 'slight-right'], active: 1, limit: '120' },
+    { dir: 'right', dist: '120', unit: 'M', road: 'NANJING RD',
+      lanes: ['straight', 'right', 'right'], active: 1, limit: '80' },
+    { dir: 'slight-left', dist: '500', unit: 'M', road: 'XINHUA ROAD',
+      lanes: ['slight-left', 'straight'], active: 0, limit: '40' },
+    { dir: 'uturn', dist: '200', unit: 'M', road: 'RING ROAD',
+      lanes: ['uturn', 'left-straight', 'straight'], active: 0, limit: '50' },
+    { dir: 'straight', dist: '80', unit: 'M', road: 'GARAGE',
+      lanes: ['left', 'straight', 'right'], active: 1, limit: '' }
+];
+
 /** A moving picture made on the head unit: proves the whole rendering path. */
 class DemoSource extends FrameSource {
     constructor(opts) {
@@ -102,7 +121,8 @@ class DemoSource extends FrameSource {
          * twice - the HUD card exists so the shape can be judged before any
          * picture source does. */
         this.draw = opts.draw === 'arrow' ? 'arrow' : 'map';
-        this.card = opts.card || null;
+        this.card = opts.card || {};
+        this.opt = { dir: 'left' };
     }
 
     _start() {
@@ -113,9 +133,19 @@ class DemoSource extends FrameSource {
         this.timer = setInterval(() => {
             if (!this.running) return;
             try {
-                buf = this.draw === 'arrow'
-                    ? arrowAtlas(buf, this.w, this.h, this.tick++, this.card)
-                    : demoAtlas(buf, this.w, this.h, this.tick++);
+                const t = this.tick++;
+                if (this.draw === 'arrow') {
+                    /* One scene every seven seconds, so the card can be watched
+                     * rather than studied. */
+                    const sc = CARD_SCENES[Math.floor(t / (this.fps * 7)) % CARD_SCENES.length];
+                    const o = this.opt;
+                    o.dir = sc.dir; o.dist = sc.dist; o.unit = sc.unit; o.road = sc.road;
+                    o.lanes = sc.lanes; o.active = sc.active; o.limit = sc.limit;
+                    o.detail = this.card.detail;
+                    buf = arrowAtlas(buf, this.w, this.h, t, o);
+                } else {
+                    buf = demoAtlas(buf, this.w, this.h, t);
+                }
                 this._frame(buf);
             } catch (e) { this._fail('demo: ' + e.message); }
         }, period);

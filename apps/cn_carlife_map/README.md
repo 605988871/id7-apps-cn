@@ -1,6 +1,7 @@
 # CarLife Map on Cluster / HUD
 
-把手机 CarLife 的导航送到 iDrive 7：**仪表盘显示地图，HUD 显示一个转向箭头和距离**。
+把手机 CarLife 的导航送到 iDrive 7：**仪表盘显示地图，HUD 显示转向卡片**（箭头、距离、路名，
+可加车道指引和限速）。
 
 仪表盘和 HUD 是两种画面，不是一张图裁两次。HUD 的玻璃离眼睛一米、只有约 560×200 可见，
 把地图缩到那里去既看不清也没意义；原厂导航和 CarPlay 在 HUD 上画的都是一个箭头。所以
@@ -78,7 +79,8 @@ python3 kit/tools/build.py cn_carlife_map
 | 设置 | 说明 |
 |---|---|
 | Show map on | Off / 仅仪表 / 仅 HUD / 仪表和 HUD |
-| What the HUD shows | `Turn arrow and distance`（默认）HUD 画转向卡片；`A piece of the map` 退回到投一小块地图 |
+| What the HUD shows | `Turn card`（默认）HUD 画转向卡片；`A piece of the map` 退回到投一小块地图 |
+| Turn card detail | `full` 箭头+距离+路名+车道+限速（默认）/ `standard` 去掉车道和限速 / `minimal` 只留箭头和距离 |
 | Picture source | Test picture 测试画面 / CarLife 实时画面 / TCP 网络 / 本地管道 |
 | Frame rate | 5–30 fps。地图变化慢，15 fps 通常够，也能减轻簇的上传负担 |
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
@@ -167,11 +169,24 @@ CarLife 协议里**只有一路视频**：手机把中控那块屏整块编码�
 `carlife.json` 里可以用 `carlifeHost` / `carlifePort` 让应用主动去连（手机上跑取流件时用），
 `sockPath` 改本地路径。
 
-## HUD 显示什么：一个箭头
+## HUD 显示什么：转向卡片
 
-HUD 上只有两行东西——一个转向箭头、一个距离（外加路名）。这不是简化，是这块玻璃的用法：
-它离眼睛一米、可见区约 560×200、焦点在远处，地图放上去既看不清也来不及看。原厂导航在 HUD 上
-画的就是一个箭头，CarPlay 也是。
+HUD 上先是一个转向箭头和一个距离（外加路名），路口再加一排车道指引和一个限速牌。这不是简化，
+是这块玻璃的用法：它离眼睛一米、可见区约 560×200、焦点在远处，地图放上去既看不清也来不及看。
+原厂导航在 HUD 上画的就是一个箭头，CarPlay 也是。
+
+`Turn card detail` 三档，因为一张 HUD 说得太多就等于什么都没说：
+
+| 档位 | 内容 |
+|---|---|
+| `full`（默认） | 箭头、距离、路名、车道排、限速 |
+| `standard` | 箭头、距离、路名 |
+| `minimal` | 箭头、距离 |
+
+车道排按 CarLife 自己的说法画：`straight` / `left` / `right` / `slight-left` / `slight-right` /
+`uturn` / `left-straight` / `right-straight`。该走的那条画**亮**，其余压暗——单色投影只有一个
+通道可用，亮度就够：眼睛会落在亮的那条上。限速牌是圆环加数字，三位数时字号自动降一级，
+因为 `100` 塞不进 `60` 的环。
 
 所以 HUD 有**自己的一路帧**，尺寸 480×168，走 `/dev/shm/carlife-map/hud.sock`（与地图的
 `live.sock` 并存，格式相同）。一个尺寸一路流，是 cluster-render 的硬要求：层帧长度必须正好
@@ -179,21 +194,28 @@ HUD 上只有两行东西——一个转向箭头、一个距离（外加路名�
 
 `What the HUD shows` 两档：
 
-- `Turn arrow and distance`（默认）：HUD 上是转向卡片。`Picture source = Test picture` 时
-  这张卡由车机自己画（在 `atlas.js` 的 `arrowAtlas()` 里），**所以不用等解码器就能在车上
-  看形状、调大小和位置**——箭头是左转、右转还是直行都能改。
+- `Turn card`（默认）：HUD 上是转向卡片。`Picture source = Test picture` 时这张卡由车机自己画
+  （`atlas.js` 的 `arrowAtlas()`），**所以不用等解码器就能在车上把形状、大小、位置都调好**。
+  卡片每 7 秒换一个场景（左转带三车道、直行带五车道、掉头、无路名……），因为只演一种情形
+  会把其余排版的问题全藏起来。
 - `A piece of the map`：退回旧行为，从 1088×480 的地图帧中心裁一块给 HUD。字会很小，只作对照。
 
+**要清楚一件事：卡片上的车道和限速，眼下只有测试画面能给。** 百度官方的车机端 SDK
+（`CarLife-Android-Vehicle-V2.0`）里，导航模块只有两个状态 `NAVI_STATUS_IDLE` /
+`NAVI_STATUS_START`——没有转向类型、没有距离、没有车道、没有限速。所以接真画面时，这些
+**只能从 CarLife 自己的导航条上裁下来**（箭头和车道本来就画在那一条里），不可能由车机重画。
+
 接真画面时，卡片不是"从地图裁"，而是**从 CarLife 整屏画面的导航条裁**：导航条横在画面顶部，
-箭头在它左端。这块位置写在 `crop.json` 的 `hud` 段里（`strip` 百分比 + `out` 尺寸 + `sock`），
+箭头在它左端，车道排和路名也在这一条里。所以 `strip` 的下沿要够到车道排（默认 16%），否则
+车道会被切掉。这块位置写在 `crop.json` 的 `hud` 段里（`strip` 百分比 + `out` 尺寸 + `sock`），
 解码器按它输出第二路。`mode` 为 `map` 时该段不生效。
 
 `HUD card:` 一行是判断依据：
 
 | 显示 | 含义 |
 |---|---|
-| `navi arrow, 37 from demo, own socket` | 卡片正在出图，37 帧来自测试图案 |
-| `navi arrow, 0 from carlife, own socket` | 选了实时画面但卡片流还没数据（解码器未接或未输出第二路） |
+| `turn card (full), 37 from demo, own socket` | 卡片正在出图，37 帧来自测试图案 |
+| `turn card (full), 0 from carlife, own socket` | 选了实时画面但卡片流还没数据（解码器未接或未输出第二路） |
 | `off (no HUD layer)` | 当前 target 不含 HUD，或 HUD 层没建起来 |
 | `map crop, middle of the picture` | 处于地图模式 |
 

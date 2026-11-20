@@ -96,22 +96,139 @@ function fillTri(a, w, h, x0, y0, x1, y1, x2, y2, value) {
     }
 }
 
+/** A thick line, laid down as a run of square brushes: lane arrows turn at
+ * angles that pixel rectangles cannot follow. */
+function lineThick(a, w, h, x0, y0, x1, y1, t, value) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const steps = Math.max(2, Math.round(Math.max(Math.abs(dx), Math.abs(dy))));
+    const half = t >> 1;
+    for (let i = 0; i <= steps; i++) {
+        fillY(a, w, h,
+            Math.round(x0 + dx * i / steps) - half,
+            Math.round(y0 + dy * i / steps) - half, t, t, value);
+    }
+}
+
+/** A ring, for the speed limit sign. */
+function fillRing(a, w, h, cx, cy, rOut, thick, value) {
+    const rIn = Math.max(0, rOut - thick);
+    for (let y = -rOut; y <= rOut; y++) {
+        const yy = cy + y;
+        if (yy < 0 || yy >= h) continue;
+        const outer = Math.round(Math.sqrt(rOut * rOut - y * y));
+        if (Math.abs(y) >= rIn) {
+            fillY(a, w, h, cx - outer, yy, outer * 2 + 1, 1, value);
+            continue;
+        }
+        const inner = Math.round(Math.sqrt(rIn * rIn - y * y));
+        fillY(a, w, h, cx - outer, yy, outer - inner, 1, value);
+        fillY(a, w, h, cx + inner + 1, yy, outer - inner, 1, value);
+    }
+}
+
 /**
- * The turn card: an arrow and the distance to it, nothing else.
+ * One lane's arrow, inside a box.
+ *
+ * `type` is what the lane does, in the same words CarLife's own strip uses:
+ * straight, left, right, slight-left, slight-right, uturn, or left-straight /
+ * right-straight for a lane that goes two ways. A driver reads these at a
+ * glance, so each is the ordinary icon and nothing clever.
+ */
+function laneGlyph(a, w, h, x, y, bw, bh, type, value) {
+    const t = Math.max(3, Math.round(bh * 0.15));
+    const half = t >> 1;
+    const cx = x + (bw >> 1);
+    /* The brush is t wide and centred on the path, so the path has to stay
+     * half a brush inside the box or the arrow bleeds over the card's edge. */
+    const top = y + half, bottom = y + bh - 1 - half;
+    const midY = y + Math.round(bh * 0.50);
+    const headLen = Math.max(5, Math.round(bh * 0.26));
+    const headHalf = Math.max(4, Math.round(headLen * 0.62));
+
+    switch (type) {
+    case 'straight':
+        lineThick(a, w, h, cx, bottom, cx, top + headLen, t, value);
+        fillTri(a, w, h, cx, top, cx - headHalf, top + headLen,
+            cx + headHalf, top + headLen, value);
+        break;
+    case 'left':
+    case 'right': {
+        const s = type === 'left' ? -1 : 1;
+        const hl = Math.max(4, Math.round(Math.min(bh * 0.30, bw * 0.34)));
+        const arm = Math.max(2, (bw >> 1) - hl);
+        lineThick(a, w, h, cx, bottom, cx, midY, t, value);
+        lineThick(a, w, h, cx, midY, cx + s * arm, midY, t, value);
+        fillTri(a, w, h, cx + s * (arm + hl), midY,
+            cx + s * arm, midY - headHalf, cx + s * arm, midY + headHalf, value);
+        break;
+    }
+    case 'slight-left':
+    case 'slight-right': {
+        const s = type === 'slight-left' ? -1 : 1;
+        const shear = Math.round(bh * 0.20) * s;
+        const rows = bottom - (top + headLen);
+        for (let i = 0; i <= rows; i++) {
+            const off = Math.round(shear * i / Math.max(1, rows));
+            fillY(a, w, h, cx - (t >> 1) + off, bottom - i, t, 1, value);
+        }
+        const hx = cx + shear;
+        fillTri(a, w, h, hx + Math.round(shear * 0.45), top,
+            hx - headHalf, top + headLen, hx + headHalf, top + headLen, value);
+        break;
+    }
+    case 'uturn': {
+        const arm = Math.min(Math.round(bw * 0.32), Math.round(bw / 2) - headHalf - 1);
+        const elbow = y + Math.round(bh * 0.34);
+        const down = midY + Math.round(bh * 0.20);
+        lineThick(a, w, h, cx, bottom, cx, elbow, t, value);
+        lineThick(a, w, h, cx, elbow, cx - arm, elbow, t, value);
+        lineThick(a, w, h, cx - arm, elbow, cx - arm, down, t, value);
+        fillTri(a, w, h, cx - arm, down + headLen, cx - arm - headHalf, down,
+            cx - arm + headHalf, down, value);
+        break;
+    }
+    case 'left-straight':
+    case 'right-straight': {
+        const s = type === 'left-straight' ? -1 : 1;
+        const arm = Math.min(Math.round(bw * 0.30), Math.round(bw / 2) - headLen - 1);
+        const armY = y + Math.round(bh * 0.44);
+        lineThick(a, w, h, cx, bottom, cx, top + headLen, t, value);
+        fillTri(a, w, h, cx, top, cx - headHalf, top + headLen,
+            cx + headHalf, top + headLen, value);
+        lineThick(a, w, h, cx, armY, cx + s * arm, armY, t, value);
+        fillTri(a, w, h, cx + s * (arm + headLen), armY,
+            cx + s * arm, armY - headHalf, cx + s * arm, armY + headHalf, value);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/**
+ * The turn card: the arrow, the distance to it, and, when there is room, the
+ * lane guidance and the speed limit.
  *
  * This is what a HUD is for. A projected HUD shows roughly 560x200 of glass a
  * metre in front of the driver, at a focal distance where a map is unreadable
- * but a single arrow is obvious — the stock head unit draws exactly this for
- * its own navigation, and CarPlay does the same for Apple Maps. Feeding the
- * HUD a shrunken map, which is what this app did before, works against the
- * hardware.
+ * but a single arrow is obvious - the stock head unit draws exactly this for
+ * its own navigation, and so does CarPlay. Feeding the HUD a shrunken map,
+ * which is what this app did before, works against the hardware.
  *
- * Drawn here, in the atlas, so the shape can be judged on the car before any
- * picture source exists: with `Picture source = demo` the HUD shows this card.
- * Later the same card comes from CarLife's own guidance strip, cropped out of
- * its picture — the geometry, the layer and the layer size do not change.
+ * `detail` decides how much of it appears, because a HUD that says too much
+ * says nothing:
  *
- * `dir` is 'left', 'right' or 'straight'; `dist`/`unit`/`road` are text.
+ *   minimal   the arrow and the distance
+ *   standard  ... and the road name
+ *   full      ... and the lane guidance and the speed limit
+ *
+ * Drawn here, on the head unit, so the shape can be judged on the car before
+ * any decoder exists: with `Picture source = Test picture` the HUD shows this
+ * card and the settings move it. The same geometry then comes from CarLife's
+ * own guidance strip, cropped out of its picture.
+ *
+ * `dir` is a lane glyph type; `lanes` is an array of them with `active` naming
+ * the lane to take; `limit` is a speed limit in km/h or null.
  */
 function arrowAtlas(out, w, h, tick, opt) {
     const need = atlasSize(w, h);
@@ -120,47 +237,84 @@ function arrowAtlas(out, w, h, tick, opt) {
     a.fill(128, w * h);
 
     const o = opt || {};
-    const dir = o.dir === 'right' || o.dir === 'straight' ? o.dir : 'left';
+    const dir = o.dir || 'left';
+    const detail = o.detail === 'standard' || o.detail === 'minimal' ? o.detail : 'full';
+    const lanes = detail === 'full' && Array.isArray(o.lanes) && o.lanes.length ? o.lanes : [];
+    const limit = detail === 'full' && o.limit ? String(o.limit) : '';
 
-    /* The arrow owns a square on the left; the numbers sit to its right. */
-    const side = Math.min(h - 16, Math.round(w * 0.32));
-    const cx = 8 + (side >> 1);
-    const cy = h >> 1;
-    const s = side;
-    const t = Math.max(6, Math.round(s * 0.17));       /* shaft thickness */
-    const ink = 238;
-    const shaftTop = cy - Math.round(s * (dir === 'straight' ? 0.06 : 0.12));
+    const pad = Math.max(6, Math.round(h * 0.06));
+    const laneH = lanes.length ? Math.round(h * 0.27) : 0;
+    const mainH = h - laneH;
 
-    /* Shaft, from the bottom of the box up to the elbow. */
-    fillY(a, w, h, cx - (t >> 1), shaftTop, t, Math.round(s * 0.45), ink);
+    /* The arrow owns a square on the left; the text sits to its right. */
+    const side = Math.min(mainH - pad, Math.round(w * 0.30));
+    laneGlyph(a, w, h, pad, Math.round((mainH - side) / 2), side, side, dir, 238);
 
-    if (dir === 'straight') {
-        fillTri(a, w, h, cx, cy - Math.round(s * 0.46),
-            cx - Math.round(s * 0.23), shaftTop,
-            cx + Math.round(s * 0.23), shaftTop, ink);
-    } else {
-        const sign = dir === 'left' ? -1 : 1;
-        const armLen = Math.round(s * 0.30);
-        const armX = sign < 0 ? cx - armLen : cx - (t >> 1);
-        fillY(a, w, h, armX, shaftTop, armLen + (t >> 1), t, ink);
-        const baseX = sign < 0 ? armX : armX + armLen + (t >> 1);
-        const tipX = baseX + sign * Math.round(s * 0.19);
-        fillTri(a, w, h, tipX, shaftTop + (t >> 1),
-            baseX, shaftTop - Math.round(t * 0.85),
-            baseX, shaftTop + Math.round(t * 1.85), ink);
+    const ringR = limit ? Math.min(Math.round(mainH * 0.20), 26) : 0;
+    const ringCx = w - pad - ringR;
+    const textRight = limit ? ringCx - ringR - pad : w - pad;
+    const tx = pad + side + Math.round(w * 0.055);
+
+    /* The distance is the one number that matters, so it is as large as the
+     * space allows and the unit hangs off its shoulder. */
+    const kd0 = detail === 'minimal' ? 0.46 : 0.34;
+    let kd = Math.max(3, Math.round((mainH * kd0) / 7));
+    const dist = o.dist || '300';
+    const unit = o.unit === '' ? '' : (o.unit || 'M');
+    let wDist = charWidth(dist, kd) + (unit ? 8 + charWidth(unit, 3) : 0);
+    while (kd > 3 && tx + wDist > textRight) {
+        kd--;
+        wDist = charWidth(dist, kd) + (unit ? 8 + charWidth(unit, 3) : 0);
+    }
+    const roadScale = 3;
+    const hasRoad = detail !== 'minimal';
+    const blockH = 7 * kd + (hasRoad ? Math.round(h * 0.10) + 7 * roadScale : 0);
+    const ty = Math.round((mainH - blockH) / 2);
+
+    const end = drawText(a, w, h, tx, ty, dist, kd, 236);
+    if (unit) drawText(a, w, h, end + 8, ty + 7 * kd - 21, unit, roadScale, 190);
+    if (hasRoad) {
+        const ry = ty + 7 * kd + Math.round(h * 0.10);
+        let road = o.road || 'CHANGAN AVE';
+        const room = Math.floor((textRight - tx + roadScale) / (6 * roadScale));
+        if (road.length > room) road = road.slice(0, Math.max(0, room));
+        drawText(a, w, h, tx, ry, road, roadScale, 150);
     }
 
-    /* To the right: the distance big with its unit at its foot, the road small
-     * underneath. A HUD is read at a glance, so there are exactly two pieces of
-     * text and no third line to hunt through. */
-    const tx = 8 + side + Math.round(w * 0.06);
-    const kd = Math.max(4, Math.round((h * 0.32) / 7));
-    const ty = Math.round(h * 0.20);
-    const end = drawText(a, w, h, tx, ty, o.dist || '300', kd, 236);
-    if (o.unit !== '') {
-        drawText(a, w, h, end + 10, ty + 7 * kd - 21, o.unit || 'M', 3, 190);
+    if (limit) {
+        fillRing(a, w, h, ringCx, Math.round(mainH / 2), ringR, Math.max(3, (ringR / 6) | 0), 210);
+        let ks = ringR >= 22 ? 3 : 2;
+        const inner = 2 * (ringR - Math.max(3, (ringR / 6) | 0)) - 4;
+        while (ks > 1 && charWidth(limit, ks) > inner) ks--;
+        const lw = charWidth(limit, ks);
+        drawText(a, w, h, ringCx - (lw >> 1), Math.round(mainH / 2) - (7 * ks >> 1),
+            limit, ks, 232);
     }
-    drawText(a, w, h, tx, ty + 7 * kd + Math.round(h * 0.10), o.road || 'CHANGAN AVE', 3, 150);
+
+    if (lanes.length) {
+        /* A hairline separates the lanes from the words: without it a five-lane
+         * row reads as part of the road name. It stops at the last lane so it
+         * does not run under the speed limit. */
+        const ruleW = Math.min(textRight - tx + 8,
+            Math.floor((textRight - tx) / lanes.length) * lanes.length);
+        fillY(a, w, h, tx - 4, mainH, ruleW, 1, 45);
+
+        const bandY = mainH + Math.round(laneH * 0.10);
+        const bh = laneH - Math.round(laneH * 0.34);
+        const avail = textRight - tx;
+        const cellW = Math.floor(avail / lanes.length);
+        const bw = Math.min(cellW - 8, Math.round(bh * 1.2));
+        const active = Number(o.active);
+        for (let i = 0; i < lanes.length; i++) {
+            const cx = tx + i * cellW + (cellW >> 1);
+            /* The lane to take is the bright one; the rest are dimmed, not
+             * hidden. Brightness is the only channel a monochrome projection
+             * has, and it is enough: the eye lands on the lit arrow. */
+            const on = i === active;
+            laneGlyph(a, w, h, cx - (bw >> 1), bandY, bw, bh, lanes[i], on ? 245 : 108);
+        }
+    }
+
     return a;
 }
 

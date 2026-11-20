@@ -21,7 +21,8 @@ const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_
 const { MAP_W, MAP_H, cropAtlas, atlasSize } = require('./atlas');
 
 const APP = 'cn_carlife_map';
-const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudWidth', 'hudX', 'hudY', 'hudKeep',
+const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
+              'hudWidth', 'hudX', 'hudY', 'hudKeep',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* Where the decoder is told how much of CarLife's picture is the map. */
@@ -158,6 +159,14 @@ async function run(ctx) {
      * With `Picture source = demo` the card is drawn on the head unit, so the
      * shape, the size and the HUD layer can all be judged on the car before any
      * picture source exists. */
+    /* How much the card says. `full` adds the lane row and the speed limit,
+     * which is what a junction needs and a straight road does not: a HUD that
+     * says too much says nothing. */
+    function cardSpec() {
+        const d = settings.get('hudDetail');
+        return { detail: d === 'standard' || d === 'minimal' ? d : 'full' };
+    }
+
     const setHudSource = safe('hud source', () => {
         const kind = settings.get('source') || 'demo';
         const fps = Number(settings.get('fps')) || 15;
@@ -168,7 +177,8 @@ async function run(ctx) {
             return;
         }
         if (hudSource && hudSourceKind === kind && hudSource.w === hudW && hudSource.h === hudH) {
-            return;                                   /* still the right one */
+            hudSource.card = cardSpec();              /* detail may have changed */
+            return;
         }
         if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
         hudSource = null; hudBuf = null; hudSourceKind = kind;
@@ -176,7 +186,7 @@ async function run(ctx) {
         hudSource = createSource({
             kind: kind, w: hudW, h: hudH, fps: fps,
             draw: 'arrow',
-            card: { dir: 'left', dist: '300', unit: 'M', road: 'CHANGAN AVE' },
+            card: cardSpec(),
             host: live ? (override.carlifeHost || null) : (override.host || DEFAULT_HOST),
             port: live ? (Number(override.carlifePort) || CARLIFE_PORT)
                        : (Number(override.port) || DEFAULT_PORT),
@@ -262,7 +272,12 @@ async function run(ctx) {
              * starting values to be tuned on the car, not measurements. */
             hud: {
                 mode: settings.get('hudMode') || 'navi',
-                strip: { top: 0, bottom: 12, left: 0, right: 20 },
+                /* For the decoder: CarLife's guidance block runs across the top
+                 * of its picture - turn arrow at the left end, lane row under
+                 * the words. The strip has to cover the lanes too, so the
+                 * bottom edge is generous; these are starting values to be
+                 * tuned on the car, not measurements. */
+                strip: { top: 0, bottom: 16, left: 0, right: 24 },
                 out: [hudW, hudH],
                 sock: override.hudSockPath || CARD_SOCK
             }
@@ -390,7 +405,8 @@ async function run(ctx) {
         const mode = settings.get('hudMode') || 'navi';
         if (mode === 'map') return 'map crop, middle of the picture';
         if (!hudSource) return 'off (no HUD layer)';
-        return 'navi arrow, ' + hudCards + ' from ' + hudSourceKind + ', own socket';
+        return 'turn card (' + cardSpec().detail + '), ' + hudCards +
+            ' from ' + hudSourceKind + ', own socket';
     }
 
     /* ---------- status page ---------- */

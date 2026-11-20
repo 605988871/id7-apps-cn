@@ -1,8 +1,8 @@
 {
   "id": "cn_carlife_map",
   "title": "CarLife Map",
-  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示转向箭头和距离。取流组件随应用一同安装；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。实验功能",
-  "version": "1.2.0",
+  "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘显示地图，HUD 显示转向卡片（箭头、距离、路名，可加车道指引和限速）。取流组件随应用一同安装；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。实验功能",
+  "version": "1.3.0",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -30,7 +30,7 @@
   "settings": [
     {
       "key": "target",
-      "label": "Show map on",
+      "label": "Show on",
       "type": "choice",
       "default": "cluster",
       "options": [
@@ -98,11 +98,31 @@
       "options": [
         [
           "navi",
-          "Turn arrow and distance"
+          "Turn card (arrow, lanes, limit)"
         ],
         [
           "map",
           "A piece of the map"
+        ]
+      ]
+    },
+    {
+      "key": "hudDetail",
+      "label": "Turn card detail",
+      "type": "choice",
+      "default": "full",
+      "options": [
+        [
+          "full",
+          "Arrow, distance, road, lanes, limit"
+        ],
+        [
+          "standard",
+          "Arrow, distance, road"
+        ],
+        [
+          "minimal",
+          "Arrow and distance only"
         ]
       ]
     },
