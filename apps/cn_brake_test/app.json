@@ -2,7 +2,7 @@
   "id": "cn_brake_test",
   "title": "Brake Test",
   "description": "100-0 与 200-0 制动距离、峰值减速度与热衰减记录",
-  "version": "1.5.22",
+  "version": "1.5.23",
   "vendor": "custom",
   "loggingId": "OA99",
   "iconGlyph": "brake",

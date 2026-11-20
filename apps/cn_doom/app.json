@@ -2,7 +2,7 @@
   "id": "cn_doom",
   "title": "Doom",
   "description": "在 iDrive 上运行 Doom（Freedoom: Phase 1）。主功能表含全部设置；游戏以全分辨率填满整屏，用 iDrive 旋钮操作；按 BACK 返回功能表并自动存档",
-  "version": "1.7.23",
+  "version": "1.7.24",
   "vendor": "custom",
   "loggingId": "OA9F",
   "maxDiskUsage": 104857600,
