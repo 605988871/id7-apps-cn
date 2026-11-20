@@ -103,6 +103,14 @@ static int g_mfx_ver = -1;
  * which has to keep meaning "this is why there is no picture at all". */
 static unsigned long g_soft;
 
+/* What arrived from the tap, and how often a reader attached. A decoder that
+ * is listening and a tap that is writing are not the same thing as a picture:
+ * "0 frames" with 0 bytes means the two never met, and "0 frames" with 40 MB
+ * means they did and the stream is what is wrong. The two need different
+ * answers, and nothing on the car's screen could tell them apart before. */
+static unsigned long long g_in_bytes;
+static unsigned g_connects;
+
 static void note(const char *fmt, ...)
 {
     va_list ap;
@@ -747,24 +755,6 @@ static int have_sps(const unsigned char *p, size_t n)
     return 0;
 }
 
-/* Drop everything before the first start code at or after `from` - the bytes
- * the decoder has already eaten plus whatever the tap joined mid-picture.
- * Scanning from `from` and not from 0 is what makes progress: a start code
- * before it belongs to data already given to the decoder, and returning to it
- * would feed the same bytes again for ever. */
-static void resync(unsigned char *p, size_t *n, size_t from)
-{
-    size_t i;
-    for (i = from; i + 3 < *n; i++) {
-        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
-            memmove(p, p + i, *n - i);
-            *n -= i;
-            return;
-        }
-    }
-    *n = 0;
-}
-
 /* ---------------------------------------------------------------- frames -- */
 
 static Out g_map = { MAP_SOCK, -1, 0, 0, 0 };
@@ -875,6 +865,7 @@ static void write_report(void)
         "state: %s\n"
         "frames: %lu rate %lu fps last %lldms\n"
         "sockets: map=%s(%lu) card=%s(%lu) drops=%lu+%lu\n"
+        "in: %llu bytes, %u connection%s\n"
         "out: map %ux%u card %s\n"
         "crop: map t%.0f b%.0f l%.0f r%.0f %s; card t%.0f b%.0f l%.0f r%.0f %s\n"
         "rect: map %u,%u %ux%u; card %u,%u %ux%u\n"
@@ -887,6 +878,7 @@ static void write_report(void)
         g_map.fd >= 0 ? "on" : "waiting", g_map.frames,
         g_card.fd >= 0 ? "on" : "waiting", g_card.frames,
         g_map.drops, g_card.drops,
+        g_in_bytes, g_connects, g_connects == 1 ? "" : "s",
         (unsigned)g_crop.map_w, (unsigned)g_crop.map_h, card,
         g_crop.map_top, g_crop.map_bottom, g_crop.map_left, g_crop.map_right,
         g_crop.map_stretch ? "stretch" : "fill",
@@ -986,6 +978,7 @@ int main(int argc, char **argv)
             if (c >= 0) {
                 if (client >= 0) close(client);   /* one capture at a time */
                 client = c;
+                g_connects++;
                 ilen = iconsumed = 0;
                 note("stream connected");
             }
@@ -1001,6 +994,7 @@ int main(int argc, char **argv)
                 ssize_t k = read(client, ibuf + ilen, READ_SZ);
                 if (k > 0) {
                     ilen += (size_t)k;
+                    g_in_bytes += (unsigned long long)k;
                 } else if (k == 0 || (errno != EAGAIN && errno != EINTR)) {
                     close(client);
                     client = -1;
@@ -1012,13 +1006,28 @@ int main(int argc, char **argv)
             }
         }
 
-        /* Resynchronise to the first start code: the tap may join the stream in
-         * the middle of a picture, and nothing decodes before a sequence
-         * header anyway. */
+        /* No sequence header yet.
+         *
+         * The tap joins the stream in the middle of a picture, so the first
+         * bytes are the tail of some NAL and nothing can start from them. The
+         * temptation is to drop up to the next start code - which is what this
+         * did, and it is why the decoder sat at "0 frames" with the socket
+         * full: once the buffer is aligned to a start code that is not the
+         * sequence header, "the next start code" is the one already at byte 0,
+         * so nothing moves, nothing is consumed, the buffer fills to MAX_IN and
+         * the reads stop. The sequence header that arrives a moment later is
+         * in the buffer and is never looked at again.
+         *
+         * have_sps() has already searched every byte we hold, so if it says no
+         * then nothing here can start a picture: drop it, keep the last three
+         * bytes in case a start code is split across the next chunk, and wait
+         * for the next one. Progress is what matters, not conservation. */
         if (!header_done && ilen - iconsumed > 4) {
             size_t avail = ilen - iconsumed;
             if (!have_sps(ibuf + iconsumed, avail)) {
-                resync(ibuf, &ilen, iconsumed);
+                size_t keep = avail > 3 ? 3 : avail;
+                memmove(ibuf, ibuf + ilen - keep, keep);
+                ilen = keep;
                 iconsumed = 0;
             } else if (!dec.session && !open_session(&dec)) {
                 header_done = 1;       /* the reason is in the report */

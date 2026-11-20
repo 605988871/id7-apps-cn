@@ -106,8 +106,17 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 |---|---|
 | `not installed (no report)` | 取流件没装成功，或装了但还没重启车机（库只在 carlife 启动时加载） |
 | `in 0.0MB ...` | 库已加载但没读到 USB 数据：手机没连、或 CarLife 没在前台跑导航 |
-| `in 12.4MB ..., H.264, IDR 240` | **取流通了**：画面正从手机经 USB 到车机；下一行 `Decode` 说它有没有变成画面 |
+| `in 12.4MB ..., H.264, SPS 2, IDR 240` | **取流通了**：画面正从手机经 USB 到车机；下一行 `Decode` 说它有没有变成画面 |
 | `out 3.2MB` 也在涨 | 反向（触摸）数据在走，说明链路是双向正常的 |
+| 尾部 `, sink connected 12.3MB/0d` | 取流件**已经把数据写进解码器的套接字**。反过来 `sink no reader` 就是没连上，解码器再正常也收不到东西 |
+| `SPS 0` | 管道里从来没有序列头：解不出来，等多久都一样，要看手机侧为什么不发 |
+
+`out` 是 USB 反向流量，不是"送给解码器多少"——后者是这一行尾部的 `sink`，
+以及下一行 `Decode` 里的 `in`。两个数对不上，卡住的环节就在它们之间。
+
+`sink` 连不上时，下一行 `Tap cmds` 会换成 `Tap sink`，写的是取流件自己拿到的错误：
+`No such file or directory (2)` 是解码器没绑上那个套接字，`Permission denied (13)`
+是它连不进去，`Too many open files (24)` 是 carlife 自己的描述符用完了。
 
 取流件 0.3.0 起，同一行后面还会跟两个词，来自它的协议分诊：
 
@@ -126,7 +135,9 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 | 显示 | 含义 |
 |---|---|
 | `not running (no report)` | 解码服务没起来（`carlife-decode.service`），或工具没装成功。后面跟的那一段来自 `Dec boot` 行，见下 |
-| `0 frames, 0 fps` | 解码器在跑但一个画面都没出来，`error:` 后面就是卡住的那次调用 |
+| `0 frames, 0 fps - waiting for the tap` | 解码器在听，但**没有任何人连上来**：取流件的 `sink` 那半句会说为什么 |
+| `0 frames, 0 fps - stream connected, in 8.0MB/1 conn` | 连上了，字节也到了，却一张都没解出来：流本身的问题（没有 SPS，或参数被拒） |
+| `0 frames ... (3 restarts)` | 报告的 `pid` 在变：服务起来又倒下，`Restart=always` 每 3 秒重来一次 |
 | `812 frames, 15 fps, last 66ms` | **通了**：仪表盘和 HUD 上的画面就是它给的 |
 | `... - MFXVideoDECODE_Init: -15` | 到这一步为止都正常，参数被拒；报告里同时有库名和 API 版本 |
 

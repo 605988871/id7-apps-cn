@@ -243,12 +243,30 @@ libs: mfx=libmfxhw64.so va=libva mfxapi=124
 state: decoding 1920x720
 frames: 812 rate 15 fps last 66ms
 sockets: map=on(812) card=on(812) drops=0+0
+in: 15728640 bytes, 1 connection
 out: map 1088x480 card 480x168
 crop: map t8 b0 l0 r0 fill; card t0 b16 l0 r24 stretch
 rect: map 0,106 1280x564; card 0,0 306x114
 errors: 0
 error: none
 ```
+
+`in` is what reached it from the tap, and `state` says what it is doing with
+it. That pair is what separates the two ways to have no picture: `in: 0 bytes`
+with `state: waiting for the tap` is a socket nobody connected to, while
+`in: 40MB` with `state: decoding` is a stream the decoder has and cannot use.
+
+One rule in there is worth naming, because it explains a silent 0 frames. The
+tap joins CarLife's stream in the middle of a picture and the sequence header
+may be a long way behind, so the decoder has to hold data until it sees one.
+The first version dropped "everything before the next start code" each pass -
+which, once the buffer is aligned, is zero bytes: nothing was consumed, the
+buffer grew to 8 MB, and the packet that finally carried the SPS no longer fit
+and was thrown away with the rest. It now drops everything it has *searched*
+(keeping three bytes, where a start code may be split) the moment the search
+fails, so the header is picked up the packet it arrives in. `test/
+decode_math_test.py` models both rules; the old one loses a header that arrives
+after 10 MB and the new one does not.
 
 `out` is what the app will receive, `crop` is what it read, `rect` is what it
 last cut. A frame at the wrong size is dropped by cluster-render silently, so

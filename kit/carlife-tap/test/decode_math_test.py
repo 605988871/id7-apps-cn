@@ -192,6 +192,7 @@ def main():
     # its V half 200: that is the only way to tell a split atlas from an
     # interleaved one without a screen.
     bad += chroma_checks()
+    bad += header_search_checks()
 
     # the atlas the app checks a frame's length against
     for (w, h) in targets:
@@ -235,6 +236,73 @@ def chroma_checks():
                         break
                 # and nothing outside the atlas
                 assert len(dst) == dw * dh * 3 // 2
+    return bad
+
+
+def header_search_checks():
+    """What the buffer does while the decoder waits for a sequence header.
+
+    The tap joins CarLife's stream in the middle of a picture, so the first
+    bytes are the tail of some NAL and the sequence header may be a long way
+    behind. The old rule dropped "everything before the next start code" -
+    which, once the buffer is aligned to a start code, is zero bytes, so it
+    consumed nothing and the buffer only grew, up to MAX_IN. A header that
+    arrives in a packet too big for what is left is then dropped with the rest
+    of that packet: 0 frames, no error, and a socket the tap keeps filling.
+
+    The numbers are decode.c's: MAX_IN 8 MB, READ_SZ 256 KB. The stream here is
+    deliberately hard - 10 MB of slices before the header, and the header rides
+    inside a full-size packet rather than arriving on its own."""
+    MAX_IN, READ_SZ = 8 * 1024 * 1024, 256 * 1024
+    SLICE = b'\x00\x00\x01\x41' + bytes(60)
+    SPS = b'\x00\x00\x01\x67' + bytes(8)
+    bad = 0
+
+    def have_sps(b):
+        return b.find(b'\x00\x00\x01\x67') >= 0
+
+    def run(new_rule):
+        buf, iconsumed, frames, peak = b'', 0, 0, 0
+        chunks = [SLICE * 4000 for _ in range(40)] + [SLICE * 3200 + SPS]
+        for c in chunks:
+            if not new_rule:
+                if len(buf) + len(c) > MAX_IN:
+                    if iconsumed:
+                        buf = buf[iconsumed:]
+                        iconsumed = 0
+                    if len(buf) + len(c) > MAX_IN:
+                        continue            # the read never happens: full buffer
+            buf += c
+            if not have_sps(buf[iconsumed:]):
+                if new_rule:
+                    keep = min(3, len(buf) - iconsumed)
+                    buf = buf[len(buf) - keep:]
+                    iconsumed = 0
+                else:
+                    i = buf.find(b'\x00\x00\x01', iconsumed)
+                    buf = buf[i:] if i >= 0 else b''
+                    iconsumed = 0
+                peak = max(peak, len(buf))
+            else:
+                frames += 1
+            if new_rule and len(buf) > MAX_IN:
+                return frames, len(buf), peak, "buffer grew past MAX_IN"
+        return frames, len(buf), peak, ""
+
+    got, size, peak, why = run(True)
+    if got < 1:
+        print("HEADER new rule: no sequence header found (%d frames, %d B)" % (got, size))
+        bad += 1
+    if why:
+        print("HEADER " + why)
+        bad += 1
+    if peak > 1024:
+        print("HEADER new rule held %d bytes while waiting: waiting is not consuming" % peak)
+        bad += 1
+    old, _, opeak, _ = run(False)
+    if old >= got:
+        print("HEADER the old rule was not the bug? old=%d new=%d" % (old, got))
+        bad += 1
     return bad
 
 

@@ -557,6 +557,7 @@ async function run(ctx) {
      * not connected), loaded and reading the stream. */
     let tapInfo = 'not read yet';
     let tapCmds = '';
+    let tapSink = '';
     let tapAt = 0;
     function readTap() {
         const now = Date.now();
@@ -571,13 +572,32 @@ async function run(ctx) {
         const u = /^urbs: in=(\d+) \(([\d.]+)MB\).*out=(\d+) \(([\d.]+)MB\).*submits=(\d+)/m.exec(s);
         if (!u) { tapInfo = 'report has no traffic yet'; return tapInfo; }
         let h = '';
-        const a = /^annexb: (\w+).*idr=(\d+)/m.exec(s);
-        if (a) h = ', ' + (a[1] === 'yes' ? 'H.264' : 'no H.264') + ', IDR ' + a[2];
+        const a = /^annexb: (\w+).*sps=(\d+) pps=(\d+) idr=(\d+)/m.exec(s);
+        /* The SPS count is the one that decides whether "0 frames" can ever
+         * change: a stream whose sequence header went past before the decoder
+         * attached has no picture in it for anyone, and no amount of waiting
+         * fixes that. */
+        if (a) h = ', ' + (a[1] === 'yes' ? 'H.264' : 'no H.264') +
+            ', SPS ' + a[2] + ', IDR ' + a[4];
         /* Whether the pipe carries CarLife's own headers, and the size the car
          * asked the phone for - the one number the crop has to be measured
          * against. Both come from the tap's protocol probe. */
         const p = /^proto: (\w+)/m.exec(s);
         if (p) h += ', ' + p[1];
+        /* The tap's own verdict on the socket the decoder is listening on:
+         * "no reader" means it never got a connection, "connected" with bytes
+         * sent means the decoder is the side that is not reading. Between this
+         * and the decoder's `in:` line, "0 frames" stops being a dead end. */
+        const sk = /^sink: ([\w ]+?) sent=([\d.]+)MB drops=(\d+)(?: tries=(\d+))?(?: last="([^"]*)")?/m.exec(s);
+        if (sk) {
+            h += ', sink ' + sk[1].trim() + ' ' + sk[2] + 'MB/' + sk[3] + 'd';
+            /* A failed connect carries the errno now: ENOENT is "the decoder
+             * never bound that socket", EACCES is "this process may not touch
+             * it", EMFILE is "carlife has no descriptors left". Three different
+             * repairs, one word on the report. It goes on the line below,
+             * because this one is already the longest on the page. */
+            tapSink = sk[5] ? sk[1].trim() + ', ' + (sk[4] || '0') + ' tries, ' + sk[5] : '';
+        }
         const m = /^media: (\d+)x(\d+)@(\d+)/m.exec(s);
         if (m) h += ', car wants ' + m[1] + 'x' + m[2];
         tapInfo = 'in ' + u[2] + 'MB out ' + u[4] + 'MB' + h;
@@ -613,6 +633,9 @@ async function run(ctx) {
      * whether the binary is missing, not executable, or simply not started. */
     let decBoot = '';
     let decExec = '';
+    let decState = '';
+    let decPid = 0;
+    let decRestarts = 0;
     let decBootAt = 0;
     function uptime() {
         try {
@@ -690,10 +713,30 @@ async function run(ctx) {
         const e = err && err[1] !== 'none' ? err[1] : '';
         decErr = e ? e.slice(0, 48) : '';
         const age = decoderAge();
+        /* What the decoder itself is doing, and whether anything reached it.
+         * "0 frames" has two completely different causes - the tap never
+         * connected, or it connected and the stream is unreadable - and the
+         * only place that can tell them apart is this report. */
+        const st = /^state: (.*)$/m.exec(s);
+        decState = st ? st[1].trim() : '';
+        const ib = /^in: (\d+) bytes, (\d+) connection/m.exec(s);
+        const got = ib ? Number(ib[1]) : -1;
+        const conns = ib ? Number(ib[2]) : -1;
+        /* A pid that changes between refreshes is a service that keeps
+         * dying: enabled, "active", and restarting every three seconds. */
+        const pi = /\bpid=(\d+)/.exec(s);
+        const pid = pi ? Number(pi[1]) : 0;
+        if (pid && decPid && pid !== decPid) decRestarts++;
+        if (pid) decPid = pid;
         decInfo = (age > 4 ? 'stopped ' + Math.round(age) + 's ago - ' : '') +
             f[1] + ' frames, ' + f[2] + ' fps' +
             (Number(f[3]) >= 0 ? ', last ' + f[3] + 'ms' : '') +
             (e ? ' - ' + e : '');
+        if (f[1] === '0' && !e) {
+            if (decState) decInfo += ' - ' + decState;
+            if (got >= 0) decInfo += ', in ' + (got / 1048576).toFixed(1) + 'MB/' + conns + ' conn';
+            if (decRestarts) decInfo += ' (' + decRestarts + ' restarts)';
+        }
         /* The size it sent and the percentages it used, on one line: what to
          * change when the map is off by a strip. */
         const out = /^out: map (\d+x\d+) card (\S+)/m.exec(s);
@@ -804,7 +847,8 @@ async function run(ctx) {
             (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 257, 22, '#a8d8c0');
         cv.text('HUD card: ' + hudCardInfo(), 40, 284, 21, '#a8d8c0');
         cv.text('USB tap : ' + readTap(), 40, 311, 20, '#e0c88a');
-        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 337, 20, '#e0c88a');
+        cv.text((tapSink ? 'Tap sink: ' : 'Tap cmds: ') + (tapSink || tapCmds || '-'),
+            40, 337, 20, tapSink ? '#e08a8a' : '#e0c88a');
         const dec = readDecode();
         cv.text('Decode  : ' + dec, 40, 363, 20, '#a8d8c0');
         /* The decoder's own crop and output size: the numbers to change when

@@ -202,11 +202,18 @@ static void clock_now(char *b, size_t n)
 static int sink_fd = -1;
 static long sink_next;
 static unsigned long long sink_bytes, sink_drops;
+static unsigned long sink_tries;         /* connect attempts, successful or not */
+static char sink_why[96] = "not tried yet";  /* why the last one failed */
 
 static void sink_close(void)
 {
     if (sink_fd >= 0) syscall(SYS_close, sink_fd);
     sink_fd = -1;
+}
+
+static void sink_say(int e)
+{
+    snprintf(sink_why, sizeof sink_why, "%s (%d)", strerror(e), e);
 }
 
 static int sink_connect(void)
@@ -215,32 +222,60 @@ static int sink_connect(void)
     long now = (long)time(NULL);
     if (now < sink_next) return 0;
     sink_next = now + 1;                 /* one attempt a second, never a loop */
+    sink_tries++;
 
     int fd = (int)syscall(SYS_socket, AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0) return 0;
+    if (fd < 0) { sink_say(errno); return 0; }
     struct sockaddr_un sa;
     memset(&sa, 0, sizeof sa);
     sa.sun_family = AF_UNIX;
     strncpy(sa.sun_path, SINK, sizeof sa.sun_path - 1);
     long r = syscall(SYS_connect, fd, &sa, sizeof sa);
-    if (r != 0 && errno != EINPROGRESS) { syscall(SYS_close, fd); return 0; }
+    if (r != 0 && errno != EINPROGRESS) {
+        /* Kept for the report: "no reader" alone cannot say whether the
+         * socket is missing (the decoder never bound), refused (it died), or
+         * closed to this process (permissions) - and those are three different
+         * repairs. */
+        sink_say(errno);
+        syscall(SYS_close, fd);
+        return 0;
+    }
     sink_fd = fd;
+    sink_why[0] = 0;
     return 1;
 }
 
 /* Non-blocking and without SIGPIPE: if the app is not running, or is slower
  * than the phone, the chunk is dropped. Buffering it would grow carlife's
  * memory, and raising SIGPIPE would kill it - neither is acceptable for an
- * observer. */
+ * observer.
+ *
+ * A short send is continued, not dropped. The socket buffer is a few hundred
+ * kilobytes and a USB chunk can be most of that: sending the first part and
+ * throwing the rest away puts a hole in the middle of a picture, which the
+ * decoder then has to resynchronise across - on a busy unit that is every
+ * chunk. Stopping at EAGAIN keeps the data that fits and credits it. */
 static void sink_write(const void *buf, size_t n)
 {
+    const unsigned char *p = (const unsigned char *)buf;
+    size_t left = n;
+
     if (!on || !n) return;
     if (sink_fd < 0 && !sink_connect()) return;
-    long w = syscall(SYS_sendto, sink_fd, buf, n, 0x4000 /* MSG_NOSIGNAL */, NULL, 0);
-    if (w == (long)n) { __sync_fetch_and_add(&sink_bytes, n); return; }
-    __sync_fetch_and_add(&sink_drops, 1);
-    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) return;
-    sink_close();                        /* reader went away: reconnect later */
+    while (left) {
+        long w = syscall(SYS_sendto, sink_fd, p, left, 0x4000 /* MSG_NOSIGNAL */, NULL, 0);
+        if (w > 0) {
+            __sync_fetch_and_add(&sink_bytes, (unsigned long long)w);
+            p += w;
+            left -= (size_t)w;
+            continue;
+        }
+        __sync_fetch_and_add(&sink_drops, 1);
+        if (w < 0) sink_say(errno);
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) return;
+        sink_close();                    /* reader went away: reconnect later */
+        return;
+    }
 }
 
 /* ---- the stream, as it goes past ---- */
@@ -548,9 +583,13 @@ static void report(void)
     putf("urbs: in=%llu (%.1fMB) out=%llu (%.1fMB) submits=%llu\n",
          in_urbs, (double)in_bytes / (1024.0 * 1024.0),
          out_urbs, (double)out_bytes / (1024.0 * 1024.0), submits);
-    putf("sink: %s sent=%.1fMB drops=%llu\n",
-         sink_fd >= 0 ? "connected" : "no reader",
-         (double)sink_bytes / (1024.0 * 1024.0), sink_drops);
+    if (sink_fd >= 0) {
+        putf("sink: connected sent=%.1fMB drops=%llu tries=%lu\n",
+             (double)sink_bytes / (1024.0 * 1024.0), sink_drops, sink_tries);
+    } else {
+        putf("sink: no reader sent=%.1fMB drops=%llu tries=%lu last=\"%s\"\n",
+             (double)sink_bytes / (1024.0 * 1024.0), sink_drops, sink_tries, sink_why);
+    }
     /* One line for the framing question: does this pipe carry CarLife's
      * headers at all, and are there command packets next to the picture? */
     putf("proto: %s video=%llu/%.1fMB cmd=%llu/%lluB reseek=%llu resync=%llu\n",
