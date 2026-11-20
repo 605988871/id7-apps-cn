@@ -34,27 +34,62 @@ fi
 say "library loads"
 
 # ---- 2. which unit starts CarLife ----
-# Not guessed from a name: whatever starts the binary named carlife is the one
-# to preload into.
+# Where the process actually lives beats what a unit file says: Cinemo starts
+# carlife, carplay and aapd as children of one launcher, so a unit file that
+# never mentions "carlife" can still be the right place to put the preload
+# (children inherit the environment; the library only acts when the executable
+# is carlife, so the siblings are untouched).
+unit_of_pid() {
+    tr '/' '\n' < "/proc/$1/cgroup" 2>/dev/null |
+        sed -n 's/^\(.*\.service\)$/\1/p' | head -1
+}
 UNIT=
-for f in /etc/systemd/system/*.service /lib/systemd/system/*.service \
-         /usr/lib/systemd/system/*.service; do
-    [ -f "$f" ] || continue
-    grep -qE '^(ExecStart|ExecStartPre|Environment)=.*\bcarlife\b' "$f" && { UNIT=$(basename "$f"); break; }
+UNIT_HOW=
+for d in /proc/[0-9]*; do
+    [ -r "$d/cmdline" ] || continue
+    first=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+    first=${first%% *}
+    case "${first##*/}" in
+        carlife) UNIT=$(unit_of_pid "${d#/proc/}")
+                 [ -n "$UNIT" ] && UNIT_HOW="from the running process" && break ;;
+    esac
 done
+
+if [ -z "$UNIT" ]; then
+    for f in /etc/systemd/system/*.service /lib/systemd/system/*.service \
+             /usr/lib/systemd/system/*.service; do
+        [ -f "$f" ] || continue
+        line=$(sed -n 's/^ExecStart=//p' "$f" 2>/dev/null | head -1)
+        line=${line#-}
+        exe=${line%% *}
+        case "${exe##*/}" in
+            carlife) UNIT=$(basename "$f"); UNIT_HOW="from its unit file"; break ;;
+        esac
+    done
+fi
+
 [ -n "$UNIT" ] || {
-    echo "$TAG: no systemd unit mentions carlife; nothing changed"
+    echo "$TAG: no systemd unit starts a binary named carlife; nothing changed"
+    echo "$TAG: open CarLife once, then run this again (the running process names its unit)"
     echo "$TAG: the probe app's report shows how CarLife is started here"
     exit 1
 }
-say "unit $UNIT"
+say "unit $UNIT ($UNIT_HOW)"
 
 # ---- 3. keep whatever the unit already preloads ----
 PREV=$(systemctl show "$UNIT" -p Environment 2>/dev/null |
        tr ' ' '\n' | sed -n 's/^LD_PRELOAD=//p' | tail -1)
-case "$PREV" in
-    *"$SO"*) say "already loaded"; exit 0 ;;
-esac
+# An upgrade puts the library in a new version directory, so a path written by
+# the last install no longer exists: drop ours, keep everything else. Leaving
+# it in would hand the loader a file that is not there.
+LIST=
+OLDIFS=$IFS; IFS=:
+for e in $PREV; do
+    case "$e" in *libcarlife-tap.so) continue ;; esac
+    [ -n "$e" ] && LIST="${LIST:+$LIST:}$e"
+done
+IFS=$OLDIFS
+PREV=$LIST
 if [ -n "$PREV" ]; then
     WANT="$PREV:$SO"
     say "keeping the unit's own preload"
