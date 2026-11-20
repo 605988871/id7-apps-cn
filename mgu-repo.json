@@ -70,7 +70,7 @@
       "id": "carlife-tap",
       "path": "kit/carlife-tap",
       "title": "CarLife 画面取流",
-      "description": "把 CarLife 收到的画面复制一份给 CarLife Map（仪表盘与 HUD）；只读、不改流、不解码，装完下次启动车机生效（iDrive 7）",
+      "description": "把 CarLife 收到的画面复制一份给 CarLife Map（仪表盘与 HUD），并报告车机向手机请求的编码尺寸；只读、不改流、不解码，装完下次启动车机生效（iDrive 7）",
       "uninstallable": true,
       "mguHmi": [
         "ID7"

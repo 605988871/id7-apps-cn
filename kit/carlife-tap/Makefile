@@ -36,11 +36,18 @@ $(T)/carlife-tap-test: test/tap_test.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -o $@ test/tap_test.c
 
+# Two streams, because the probe has two answers to get right: a stream with
+# CarLife's headers around the picture, and one without. The second must be
+# passed through exactly as 0.2 did.
 test: $(T)/libcarlife-tap.so $(T)/carlife-tap-test
 	rm -rf $(abspath $(T))/report.txt $(abspath $(T))/fake-usb
 	CARLIFE_TAP_OUT=$(abspath $(T))/report.txt \
 	CARLIFE_TAP_FAKE=$(abspath $(T))/fake-usb \
-	LD_PRELOAD=$(abspath $(T))/libcarlife-tap.so $(T)/carlife-tap-test
+	LD_PRELOAD=$(abspath $(T))/libcarlife-tap.so $(T)/carlife-tap-test framed
+	rm -rf $(abspath $(T))/report.txt $(abspath $(T))/fake-usb
+	CARLIFE_TAP_OUT=$(abspath $(T))/report.txt \
+	CARLIFE_TAP_FAKE=$(abspath $(T))/fake-usb \
+	LD_PRELOAD=$(abspath $(T))/libcarlife-tap.so $(T)/carlife-tap-test raw
 	$(MAKE) check
 
 check: $(T)/libcarlife-tap.so

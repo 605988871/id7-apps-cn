@@ -49,12 +49,49 @@ usb fd: 27 -> /dev/bus/usb/001/009
 claim: interface 1
 urbs: in=1234 (88.1MB) out=56 (1.5MB) submits=1290
 sink: connected sent=88.1MB drops=0
+proto: framed video=4211/88.0MB cmd=56/1204B reseek=0 resync=0
+media: 1920x720@30  (the car asked the phone for this size)
+cmd 0x00018001 n=1 4B 0801
+cmd 0x00018007 n=1 8B 08800f10d005181e
 in#1 len=24576 0000000...
 annexb: yes  starts=88412 sps=41 pps=41 idr=41 slice=88300
 ```
 
-Sink: `/dev/shm/carlife-map/live.sock`. Every inbound chunk is also written
-there, unchanged, for the CarLife Map app. The socket is optional in every
+## The protocol probe
+
+The bytes copied for the picture also carry CarLife's own framing:
+
+| channel | header | payload |
+|---|---|---|
+| video | `u32 len`, `u32 ts(ms)`, `u32 0x00020001` | that many bytes of Annex B |
+| command | `u16 len`, `u16 pad`, `u32 serviceType` | that many bytes of protobuf |
+
+Packet `0x00018007` (`video encoder init`) is the head unit **asking for a
+size**: protobuf field 1 = width, 2 = height, 3 = frame rate. Whatever the
+phone encodes, it encodes at that size — which is exactly why CarLife has no
+second picture for the cluster, and why any crop setting has to be measured
+against a number the car chose instead of one we guessed.
+
+The library therefore classifies instead of assuming. Once per process it
+decides whether the stream is framed or bare, counts packets per service type,
+keeps the first bytes of each type for a human to read, and decodes those three
+fields. `proto:` is the answer:
+
+| `proto:` | what it means | what follows from it |
+|---|---|---|
+| `framed` | the pipe carries CarLife's headers, command packets included | the size the car asked for is in `media:`, and the copy handed to the app is payload only |
+| `raw` | no framing at the head of the stream | the video payload is the whole pipe; sizes have to come from the H.264 SPS |
+| `undecided` | not enough traffic yet | connect the phone and open CarLife's navigation |
+
+Two details worth knowing. When the stream is framed, the sink gets **payload
+only**, so a decoder never sees a protocol header. And `resync`/`reseek` are
+not errors to hide: a stream that does not frame the way CarLife does after
+8192 misses is treated as bare and handed over byte for byte, exactly as 0.2
+did — the probe is never allowed to cost the picture.
+
+Sink: `/dev/shm/carlife-map/live.sock`. Every inbound chunk — or, when the
+stream is framed, just its payload — is also written there for the CarLife Map
+app. The socket is optional in every
 sense — non-blocking, `MSG_NOSIGNAL` (a closed reader must never raise
 `SIGPIPE` inside carlife and kill it), a full buffer drops the chunk instead of
 buffering it in carlife's memory, and a missing reader costs one connect
@@ -126,10 +163,11 @@ ZIG=/d/zig/zig-x86_64-windows-0.14.1/zig.exe ./build-zig.sh
 
 `-target x86_64-linux-gnu.2.27` is the whole point: `check_elf.py` then reads
 the result back and refuses it unless it is a 64-bit little-endian x86-64
-shared object, needs nothing but `libc.so.6`, names no `GLIBC_` version above
-2.27, and really exports `read` and `ioctl`. A library that asks for a newer
-symbol fails at load time on the unit with "undefined symbol" and no screen
-says why, so the build stops instead.
+shared object, names no `GLIBC_` version above 2.27, and really exports `read`
+and `ioctl`. A library that asks for a newer symbol fails at load time on the
+unit with "undefined symbol" and no screen says why, so the build stops
+instead. Its `NEEDED` entries are `libc.so.6` plus `libpthread.so.0` (zig's
+glibc stub emits the latter; no pthread symbol is actually referenced).
 
 `make target` produces the same ABI through Docker + Ubuntu 18.04 and is what a
 CI job would run; `build-zig.sh` is for a machine without Docker.
@@ -138,14 +176,22 @@ The test needs Linux, because it preloads the library into a process that
 opens, writes and reads a file and calls an unknown usbfs ioctl: the bytes must
 come back unchanged, the ioctl must still return `ENOTTY`, and the report must
 appear. `CARLIFE_TAP_FAKE` stands a path prefix in for the phone's usbfs node
-so the Annex-B parser can be exercised where there is no USB. On Windows the
-library can only be built, not exercised.
+so the parser can be exercised where there is no USB. It runs the library over
+two streams — one with CarLife's headers, one without — because the probe has
+two answers to get right, and the second must still pass through byte for byte.
+On Windows the library can only be built, not exercised.
 
 ## State
 
-0.2.2 — captures, reports, and delivers the stream to the app; installed and
-removed as a `requires` entry of `cn_carlife_map`. `install.sh` finds the unit
-(running process, then `ExecStart`, then file name), keeps the unit's own
-`LD_PRELOAD`, and adds this library; `remove.sh` takes it back out. What it
-does **not** do yet is decode: the app receives H.264 and says so instead of
-showing a picture.
+0.3.0 — captures, classifies the stream, reports the size the car asked for,
+and delivers the picture to the app; installed and removed as a `requires`
+entry of `cn_carlife_map`. `install.sh` finds the unit (running process, then
+`ExecStart`, then file name), keeps the unit's own `LD_PRELOAD`, and adds this
+library; `remove.sh` takes it back out. What it does **not** do yet is decode:
+the app receives H.264 and says so instead of showing a picture.
+
+0.3.0 adds the protocol probe, and with it the one number that was missing
+until now: whether this pipe even carries CarLife's command channel, and at
+what size the car asked the phone to encode. Both answers change what the
+decoder and the crop settings have to do, and neither can be assumed from the
+CarPlay side of the same feature.

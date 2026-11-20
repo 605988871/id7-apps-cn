@@ -22,6 +22,27 @@
  * shim is likely to care about); a usbfs descriptor is recognised by its
  * /proc/self/fd link instead, once, and then remembered.
  *
+ * ---- the protocol, as CarLife frames it ----
+ *
+ * The bytes copied for the picture also carry CarLife's own framing:
+ *
+ *   video    u32 len | u32 ts(ms) | u32 0x00020001 | len bytes of Annex B
+ *   command  u16 len | u16 pad    | u32 serviceType | len bytes of protobuf
+ *
+ * That is what the phone and the head unit exchange, and command packet
+ * 0x00018007 ("video encoder init") is the head unit **asking for a size**:
+ * protobuf field 1 = width, 2 = height, 3 = frame rate. Whatever the phone
+ * encodes, it encodes at that size - which is why CarLife has no second
+ * picture for the cluster, and why the crop settings have to be measured
+ * against a number the car chose, not one we guessed.
+ *
+ * So this library classifies instead of assuming. Once per process it decides
+ * whether the stream is framed (above) or bare Annex B, counts packets per
+ * service type, keeps the first bytes of each type for a human to read, and
+ * decodes those three fields. If the stream is framed the copy handed to the
+ * app carries payload only, so the decoder never sees a protocol header. If
+ * the stream is bare, nothing changes: the chunk goes out as it came in.
+ *
  * Report: /dev/shm/carlife-tap.txt (text, rewritten at most every 2 s).
  * Marker: /dev/shm/carlife-tap.loaded, written by any process that loads this
  * library, so the installing tool can prove the library loads and runs on the
@@ -102,6 +123,16 @@ _Static_assert(sizeof(struct usbdevfs_bulktransfer) == 24, "usbdevfs_bulktransfe
 #define CHUNKS 4
 #define HEAD 24
 
+/* ---- what the protocol probe needs ---- */
+#define MSG_VIDEO_DATA 0x00020001u  /* phone -> car, H.264 payload */
+#define MSG_VIDEO_INIT 0x00018007u  /* car -> phone, the size it wants */
+#define RING (1024u * 1024u)        /* reassembly window: one keyframe fits */
+#define MAXPKT (4u * 1024u * 1024u) /* longer than any packet the phone sends */
+#define TYPE_SLOTS 12
+#define TYPE_HEAD 24
+#define MAX_RESEEK 8192u            /* this many misses and the framing is wrong */
+#define MAXCMD_TIGHT 4096u          /* while resyncing, only this much is believable */
+
 static int on;                 /* watching this process */
 static const char *rep_path = REPORT;
 /* Test only (kit/carlife-tap/test): a path prefix that stands in for the
@@ -125,7 +156,7 @@ static long last_write;
 static int rep_lock;
 
 /* ---- tiny append-only formatter over a static buffer ---- */
-static char out[3072];
+static char out[8192];
 static size_t outn;
 
 static void put(const char *s)
@@ -139,7 +170,7 @@ static void put(const char *s)
 
 static void putf(const char *fmt, ...)
 {
-    char b[320];
+    char b[400];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(b, sizeof b, fmt, ap);
@@ -230,6 +261,237 @@ static void scan_annexb(const unsigned char *b, size_t n)
     }
 }
 
+/* ---- the protocol probe -------------------------------------------------
+ *
+ * Everything below is bookkeeping on bytes that are already in memory: no
+ * packet is allocated, none is held past the reassembly window, and a stream
+ * that does not frame the way CarLife does falls back to the byte-for-byte
+ * passthrough that 0.2 did.
+ */
+static unsigned char ring[RING];
+static size_t ring_len;
+static int framed = -1;                    /* -1 undecided, 0 bare, 1 framed */
+static int proto_lock;
+static unsigned long long reseek, resyncs, pkt_video, vbytes, pkt_cmd, cbytes;
+static unsigned media_w, media_h, media_fps;
+
+struct ctype {
+    unsigned type;
+    unsigned long long n, bytes;
+    unsigned hlen;
+    unsigned char head[TYPE_HEAD];
+};
+static struct ctype types[TYPE_SLOTS];
+static int ntypes;
+
+static unsigned be16(const unsigned char *p)
+{
+    return ((unsigned)p[0] << 8) | (unsigned)p[1];
+}
+
+static unsigned be32(const unsigned char *p)
+{
+    return ((unsigned)p[0] << 24) | ((unsigned)p[1] << 16) | ((unsigned)p[2] << 8) | (unsigned)p[3];
+}
+
+/* 0x0001xxxx: the command channel's service types all live in that range. */
+static int is_cmd_type(unsigned t)
+{
+    return (t >> 16) == 1u;
+}
+
+/* A read does not have to begin on a packet boundary - if this library is
+ * loaded after the session started, the first bytes are the middle of
+ * something. Look for a video header inside the window instead of giving up:
+ * the type word follows a length that has to be believable. */
+static size_t find_video_hdr(const unsigned char *p, size_t n)
+{
+    for (size_t k = 8; k + 4 <= n; k++) {
+        if (p[k] == 0 && p[k + 1] == 2 && p[k + 2] == 0 && p[k + 3] == 1) {
+            unsigned len = be32(p + k - 8);
+            if (len >= 4 && len <= MAXPKT) return k - 8;
+        }
+    }
+    return (size_t)-1;
+}
+
+static int pb_varint(const unsigned char *p, size_t n, size_t *i, unsigned long long *v)
+{
+    unsigned long long r = 0;
+    unsigned shift = 0;
+    while (*i < n && shift < 64) {
+        unsigned char c = p[(*i)++];
+        r |= (unsigned long long)(c & 0x7f) << shift;
+        if (!(c & 0x80)) { *v = r; return 1; }
+        shift += 7;
+    }
+    return 0;
+}
+
+/* The video size request is three varint fields. Anything else in the payload
+ * (wire types 1/2/5) is skipped so a longer message still parses. */
+static void pb_video_size(const unsigned char *p, size_t n)
+{
+    size_t i = 0;
+    while (i < n) {
+        unsigned long long tag, v;
+        if (!pb_varint(p, n, &i, &tag)) return;
+        unsigned field = (unsigned)(tag >> 3), wire = (unsigned)(tag & 7);
+        if (wire == 0) {
+            if (!pb_varint(p, n, &i, &v)) return;
+            if (field == 1) media_w = (unsigned)v;
+            else if (field == 2) media_h = (unsigned)v;
+            else if (field == 3) media_fps = (unsigned)v;
+        } else if (wire == 2) {
+            if (!pb_varint(p, n, &i, &v)) return;
+            if (v > (unsigned long long)(n - i)) return;
+            i += (size_t)v;
+        } else if (wire == 5) {
+            if (n - i < 4) return;
+            i += 4;
+        } else if (wire == 1) {
+            if (n - i < 8) return;
+            i += 8;
+        } else {
+            return;
+        }
+    }
+}
+
+static void proto_cmd(unsigned type, const unsigned char *p, unsigned n)
+{
+    struct ctype *c = NULL;
+    for (int i = 0; i < ntypes; i++) {
+        if (types[i].type == type) { c = &types[i]; break; }
+    }
+    if (!c && ntypes < TYPE_SLOTS) {
+        c = &types[ntypes++];
+        c->type = type;
+        c->n = 0;
+        c->bytes = 0;
+        c->hlen = 0;
+    }
+    if (c) {
+        c->n++;
+        c->bytes += n;
+        if (!c->hlen) {
+            c->hlen = n < TYPE_HEAD ? n : TYPE_HEAD;
+            memcpy(c->head, p, c->hlen);
+        }
+    }
+    if (type == MSG_VIDEO_INIT) pb_video_size(p, n);
+}
+
+static void raw_path(const unsigned char *b, size_t n)
+{
+    scan_annexb(b, n);
+    sink_write(b, n);
+}
+
+static void ring_add(const unsigned char *b, size_t n)
+{
+    if (n > RING) { b += n - RING; n = RING; }   /* keep the newest */
+    if (n > RING - ring_len) {
+        size_t keep = RING - n;
+        if (keep > ring_len) keep = ring_len;
+        memmove(ring, ring + ring_len - keep, keep);
+        ring_len = keep;
+        resyncs++;
+        /* Something arriving is larger than the window: the packet we were
+         * waiting for can never complete now, and waiting forever would mean
+         * no picture at all. Hand the stream over bare instead - a decoder
+         * finds its next start code and the picture survives. */
+        if (framed == 1) framed = 0;
+    }
+    memcpy(ring + ring_len, b, n);
+    ring_len += n;
+}
+
+static void proto_parse(void)
+{
+    size_t pos = 0;
+    while (pos < ring_len) {
+        const unsigned char *p = ring + pos;
+        size_t avail = ring_len - pos;
+        int handled = 0;
+
+        if (framed < 0) {
+            if (avail >= 12 && be32(p + 8) == MSG_VIDEO_DATA) { framed = 1; continue; }
+            if (avail >= 8 && is_cmd_type(be32(p + 4))) { framed = 1; continue; }
+            /* 00 00 01 / 00 00 00 01 at the head: nothing wraps this stream */
+            if (avail >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1))) {
+                framed = 0;
+                break;
+            }
+            if (avail >= 64) {
+                /* the window does not start on a boundary: look inside it */
+                size_t k = find_video_hdr(p, avail);
+                if (k != (size_t)-1) {
+                    reseek += k;
+                    pos += k;
+                    framed = 1;
+                    continue;
+                }
+                framed = 0;
+                break;                              /* no framing to find */
+            }
+            break;                                  /* wait for more bytes */
+        }
+        if (framed == 0) break;
+        /* Both headers are decided from the same window: with fewer than 12
+         * bytes a video header would be half-read, and its length word (whose
+         * top half is zero for a small frame) would pass for a very short
+         * command packet. Wait. */
+        if (avail < 12) break;
+
+        /* A byte that only looks like a header can claim a length that never
+         * arrives. In a clean stream any command length is believable; while
+         * resyncing only a small one is, because that is all the command
+         * channel carries. */
+        if (be32(p + 8) == MSG_VIDEO_DATA && be32(p) <= MAXPKT) {
+            unsigned len = be32(p);
+            if (avail < 12 + (size_t)len) break;        /* packet still arriving */
+            pkt_video++;
+            vbytes += len;
+            scan_annexb(p + 12, len);
+            sink_write(p + 12, len);
+            pos += 12 + (size_t)len;
+            handled = 1;
+        } else if (is_cmd_type(be32(p + 4)) && (!reseek || be16(p) <= MAXCMD_TIGHT)) {
+            unsigned len = be16(p);
+            if (avail < 8 + (size_t)len) break;
+            pkt_cmd++;
+            cbytes += len;
+            proto_cmd(be32(p + 4), p + 8, len);
+            pos += 8 + (size_t)len;
+            handled = 1;
+        }
+        if (!handled) {
+            reseek++;
+            pos++;
+            if (reseek > MAX_RESEEK) { framed = 0; break; }
+        }
+    }
+    if (pos) {
+        memmove(ring, ring + pos, ring_len - pos);
+        ring_len -= pos;
+    }
+}
+
+static void proto_feed(const unsigned char *b, size_t n)
+{
+    if (framed == 0) { raw_path(b, n); return; }
+    while (__sync_lock_test_and_set(&proto_lock, 1)) {
+    }
+    ring_add(b, n);
+    proto_parse();
+    if (framed == 0 && ring_len) {          /* decided against framing: drain */
+        raw_path(ring, ring_len);
+        ring_len = 0;
+    }
+    __sync_lock_release(&proto_lock);
+}
+
 static void tap_in(const void *buf, size_t n)
 {
     __sync_fetch_and_add(&in_urbs, 1);
@@ -243,8 +505,7 @@ static void tap_in(const void *buf, size_t n)
         size_t h = n < HEAD ? n : HEAD;
         memcpy(chunk_head[i], buf, h);
     }
-    scan_annexb((const unsigned char *)buf, n);
-    sink_write(buf, n);
+    proto_feed((const unsigned char *)buf, n);
 }
 
 static void tap_out(size_t n)
@@ -288,6 +549,20 @@ static void report(void)
     putf("sink: %s sent=%.1fMB drops=%llu\n",
          sink_fd >= 0 ? "connected" : "no reader",
          (double)sink_bytes / (1024.0 * 1024.0), sink_drops);
+    /* One line for the framing question: does this pipe carry CarLife's
+     * headers at all, and are there command packets next to the picture? */
+    putf("proto: %s video=%llu/%.1fMB cmd=%llu/%lluB reseek=%llu resync=%llu\n",
+         framed < 0 ? "undecided" : (framed ? "framed" : "raw"),
+         pkt_video, (double)vbytes / (1024.0 * 1024.0), pkt_cmd, cbytes,
+         reseek, resyncs);
+    if (media_w || media_h)
+        putf("media: %ux%u@%u  (the car asked the phone for this size)\n",
+             media_w, media_h, media_fps);
+    for (int i = 0; i < ntypes; i++) {
+        putf("cmd 0x%08x n=%llu %lluB ", types[i].type, types[i].n, types[i].bytes);
+        puthex(types[i].head, types[i].hlen);
+        put("\n");
+    }
     for (int i = 0; i < CHUNKS && i < chunk_n; i++) {
         putf("in#%d len=%u ", i + 1, chunk_len[i]);
         puthex(chunk_head[i], chunk_len[i] < HEAD ? chunk_len[i] : HEAD);

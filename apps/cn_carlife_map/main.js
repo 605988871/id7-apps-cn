@@ -265,8 +265,15 @@ async function run(ctx) {
         const u = /^urbs: in=(\d+) \(([\d.]+)MB\).*out=(\d+) \(([\d.]+)MB\).*submits=(\d+)/m.exec(s);
         if (!u) { tapInfo = 'report has no traffic yet'; return tapInfo; }
         let h = '';
-        const a = /^annexb: (\w+).*idr=(\d+) slice=(\d+)/m.exec(s);
-        if (a) h = ', ' + (a[1] === 'yes' ? 'H.264' : 'no H.264') + ', IDR ' + a[2] + ', slice ' + a[3];
+        const a = /^annexb: (\w+).*idr=(\d+)/m.exec(s);
+        if (a) h = ', ' + (a[1] === 'yes' ? 'H.264' : 'no H.264') + ', IDR ' + a[2];
+        /* Whether the pipe carries CarLife's own headers, and the size the car
+         * asked the phone for - the one number the crop has to be measured
+         * against. Both come from the tap's protocol probe. */
+        const p = /^proto: (\w+)/m.exec(s);
+        if (p) h += ', ' + p[1];
+        const m = /^media: (\d+)x(\d+)@(\d+)/m.exec(s);
+        if (m) h += ', car wants ' + m[1] + 'x' + m[2];
         tapInfo = 'in ' + u[2] + 'MB out ' + u[4] + 'MB' + h;
         return tapInfo;
     }
