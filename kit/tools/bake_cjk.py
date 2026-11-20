@@ -50,7 +50,7 @@ def main():
         raise SystemExit('Chinese atlas exceeds its reserved GPU budget; subset it before publishing')
     cache_key = hashlib.sha256(json.dumps(atlas, separators=(',', ':')).encode()).hexdigest()[:16]
     data = {'family': 'cjk', 'source': 'Noto Sans SC (OFL-1.1)', 'cacheKey': cache_key, 'sizes': [atlas]}
-    out = ROOT / ('kit/localization/fonts/diagnostic-zh-CN.json' if diagnostic else 'kit/runtime/fonts/cjk.json')
+    out = ROOT / ('apps/cn_dtc_scanner/i18n/diagnostic-zh-CN.json' if diagnostic else 'kit/runtime/fonts/cjk.json')
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
     print('cjk:', len(chars), 'glyphs,', atlas['atlasW'], 'x', atlas['atlasH'], 'pixels,', out.stat().st_size, 'bytes')

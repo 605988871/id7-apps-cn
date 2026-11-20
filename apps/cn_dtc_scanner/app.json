@@ -6,6 +6,9 @@
   "vendor": "custom",
   "loggingId": "OA95",
   "iconGlyph": "engine",
+  "buildOnly": [
+    "i18n"
+  ],
   "mguHmi": [
     "ID7",
     "ID8"

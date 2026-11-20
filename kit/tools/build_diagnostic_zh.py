@@ -16,6 +16,21 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCALIZATION = ROOT / 'kit/localization'
+# The full term corpus (~25 MB, Chinese and Russian) is read by this app's build
+# alone. It sits in the app's own folder so a store install of any other app
+# does not download it: mgu-repo.json's build.shared lists kit/localization, and
+# everything under it goes along with every app's install.
+DIAGNOSTIC = ROOT / 'apps/cn_dtc_scanner/i18n'
+
+
+def corpus(name):
+    """The corpus file by name: the app's own folder, else kit/localization
+    (where it lived before the move, for older checkouts)."""
+    for base in (DIAGNOSTIC, LOCALIZATION):
+        path = base / name
+        if path.is_file():
+            return path
+    return DIAGNOSTIC / name
 
 
 def database_strings():
@@ -46,7 +61,7 @@ def normalize(source):
 
 
 def catalog():
-    values = json.loads((LOCALIZATION/'diagnostic-full.zh-CN.json').read_text(encoding='utf-8'))
+    values = json.loads(corpus('diagnostic-full.zh-CN.json').read_text(encoding='utf-8'))
     ui = json.loads((ROOT/'kit/runtime/locales/zh-CN.json').read_text(encoding='utf-8'))
     # Preserve the previously shipped complete diagnostic sentences. UI fragments
     # such as ACC/power/software are never substituted into an unknown sentence.

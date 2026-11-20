@@ -8,13 +8,19 @@ const { Recorder } = require(path.join(stage, 'kit/record'));
 const fonts = require(path.join(stage, 'kit/fonts'));
 const i18n = require(path.join(stage, 'kit/i18n'));
 const language = i18n.getLanguage();
+// The corpus sits in the app's own folder (only this app's build reads it, so it
+// stays out of the shared files every store install downloads); older checkouts
+// still have it under kit/localization.
+const corpusFile = ['../apps/cn_dtc_scanner/i18n', '../localization']
+    .map((dir) => path.resolve(__dirname, dir, 'diagnostic-full.zh-CN.json'))
+    .find((file) => fs.existsSync(file)) || path.resolve(__dirname, '../apps/cn_dtc_scanner/i18n/diagnostic-full.zh-CN.json');
 assert.strictEqual(i18n.setLanguage, undefined, 'No runtime language switching');
 if (language === 'ru') {
     console.log('SKIP ru: Chinese diagnostic checks do not apply to a fixed Russian package');
     process.exit(0); // Test process only; never installed as application code.
 }
 if (language === 'en') {
-    const complete = require('../localization/diagnostic-full.zh-CN.json');
+    const complete = JSON.parse(fs.readFileSync(corpusFile, 'utf8'));
     for (const source of Object.keys(complete)) assert.strictEqual(diagnosticText(source),source);
     assert.strictEqual(diagnosticText('5 possible texts (depends on unit type)'), '5 possible texts (depends on unit type)');
     assert(!fs.existsSync(path.join(stage,'diagnostic_i18n.pack')));
@@ -50,7 +56,7 @@ for (const cv of [new Canvas(1600,520), new Recorder(1600,520)]) {
 // Every generated translation must have all of its Chinese glyphs in the shipped atlas.
 const db = require(path.join(stage,'kit/pack')).open(path.join(stage,'diagnostic_i18n'));
 const translations = db.json(language+'.json');
-const completeFile = path.resolve(__dirname,'../localization/diagnostic-full.zh-CN.json');
+const completeFile = corpusFile;
 if (fs.existsSync(completeFile)) {
     const complete = JSON.parse(fs.readFileSync(completeFile,'utf8'));
     assert.strictEqual(Object.keys(complete).length,86735);

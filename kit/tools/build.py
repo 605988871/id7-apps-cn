@@ -637,6 +637,9 @@ def build(app_id, language='en', preview_only=False):
               open(os.path.join(src, 'config', 'base.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     # app code
     fetch_assets(adir, spec.get('assets', []))
+    # "buildOnly" names folders the build reads but the app never ships (dtc_scanner's
+    # i18n corpus: 25 MB of terminology the diagnostic catalog is generated from).
+    build_only = set(spec.get('buildOnly') or [])
     for f in os.listdir(adir):
         if f.endswith('.js'):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', 'app.js' if f == 'main.js' else f))
@@ -644,6 +647,9 @@ def build(app_id, language='en', preview_only=False):
             # files the app reads as they are (doom: the game as WebAssembly, its data, its licences)
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', f))
         elif os.path.isdir(os.path.join(adir, f)):
+            if f in build_only:
+                print('  %s/ (build input, not shipped)' % f)
+                continue
             # data folders go along as one compressed file, read with kit/runtime/pack.js
             # (e.g. dtc_scanner/dtc_db, the fault text database -> dtc_db.pack)
             raw, size, _ = pack_data.pack(os.path.join(adir, f), os.path.join(src, 'javascript', f + '.pack'))
@@ -707,8 +713,12 @@ def build(app_id, language='en', preview_only=False):
     if language == 'zh-CN':
         # Diagnostic glyphs are Chinese-only; keep the English runtime atlas intact.
         if app_id.endswith('dtc_scanner'):
-            shutil.copy(os.path.join(KIT, 'localization', 'fonts', 'diagnostic-zh-CN.json'),
-                        os.path.join(src, 'javascript', 'kit', 'fonts', 'cjk.json'))
+            # The atlas belongs to this app alone, so it sits in its folder: the
+            # shared files every store install downloads then leave it out.
+            atlas = os.path.join(adir, 'i18n', 'diagnostic-zh-CN.json')
+            if not os.path.exists(atlas):
+                atlas = os.path.join(KIT, 'localization', 'fonts', 'diagnostic-zh-CN.json')
+            shutil.copy(atlas, os.path.join(src, 'javascript', 'kit', 'fonts', 'cjk.json'))
     if credit(language):
         # The translation credit in the installed entry code, as plain comments.
         entry = os.path.join(src, 'javascript', 'app.js')

@@ -18,7 +18,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / 'kit/localization/diagnostic-full.ru.json'
+OUT = ROOT / 'apps/cn_dtc_scanner/i18n/diagnostic-full.ru.json'
 RU_COLUMNS = ('TITLE_RURU', 'TITLE_RU', 'TITLE_RUS')
 
 
