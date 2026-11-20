@@ -1,7 +1,7 @@
 {
   "id": "carlife-probe-root",
   "kind": "tool",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "title": "CarLife probe (root)",
   "description": "Read-only root probe of the CarLife session: its processes and their open file descriptors (a /dev/bus/usb handle is the proof that the video rides on USB, not TCP), the loaded decoder and projection libraries, the Cinemo configuration, the unit's own sockets and what it can build with. Writes /dev/shm/carlife-probe-root.txt for the CarLife Probe app to show. Loads no module, changes no rule and touches no process.",
   "mguHmi": ["ID7"],

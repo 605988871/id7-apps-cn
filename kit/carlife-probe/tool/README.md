@@ -15,8 +15,9 @@ CarLife picture reaches the head unit:
 |---|---|
 | `/proc/<pid>/fd` | a `/dev/bus/usb/*` handle proves the video rides on USB bulk transfers (usbfs), so no TCP proxy can ever see it |
 | `/proc/<pid>/maps` | names the decoder (`libmfx`, `libva`, a vendor codec) and the projection stack (Cinemo, `libNme*`) |
+| `/dev/shm`, dmabuf, `/memfd:` | frames shared with another process would be the cheapest capture of all: no hook, no decoder of our own |
+| `/proc/net/unix` | a frame pipe between the projection stack and the HMI, same reason |
 | `/etc/cinemo/*` | the stack's own configuration: `KOMBI_DISPLAY`, alternate displays, the stream sink |
-| `/proc/net/unix` | a frame pipe between the projection stack and the HMI would be the cheapest capture point of all |
 | toolchain | decides whether a hook (LD_PRELOAD) can be built on the unit itself |
 
 ## What it does
@@ -32,23 +33,46 @@ device: the only file it writes is its report.
   enabled at `multi-user.target`
 
 The `postInstall` step writes a first report at install time, so the app has
-something to show before the next start.
+something to show before the next start; when it replaces a running probe it
+also hands the service over to the new script (`systemctl try-restart`), which
+otherwise would keep writing its old copy from the old inode.
 
-## Reading the report
+## Reading the report (1.0.1)
+
+The report is kept at about 90 lines because the app shows 17 a page and the
+only way it out of the unit is a screenshot. One line per process carries both
+halves of the answer:
 
 ```
---- FDS ---
-carlife fd=31 usb=2 sock=14 gpu=0 pipe=3
+--- FDS + DECODER (per process) ---
+carlife fd=31 usb=2 shm=0 dma=0 so=14 gpu=1 pipe=3
+--- DECODER LIBS (per process) ---
+carlife libcarlife_core,libias-media_transport-avb_ufipc_bridge,libmfxhw64,
 ```
 
-`usb` above zero on a CarLife process means the session goes over USB (AOA,
-interface `ff/42/01`), and the `fdN -> /dev/bus/usb/001/003` lines name the
-node. With `usbmon.ko` absent on kernel 4.14.198-apl, that also means a passive
-capture is closed and the frame path has to be reached inside the process
-(hook) or after it (a socket/file the stack itself writes).
+| line | what it settles |
+|---|---|
+| `usb>0` | the session goes over USB (AOA, interface `ff/42/01`) |
+| `shm>0` / `dma>0`, or a `/dev/shm` segment over 1 MB, or a `/memfd:` in maps | the frames are already decoded and shared: read them, skip the hook **and** the decoder |
+| `so:` names | the sockets between the stack's processes: if CarLife has no decoder library of its own, the H.264 leaves it over one of these, and that socket is the capture point |
+| `libmfx`/`libva` in CarLife itself | it decodes in-process, so the frames can only be reached by hooking it |
+| `--- CINEMO CONFIG ---` | `kombi`/`alternate`/`sink` keys would allow a second output, the way CarPlay's cluster stream is switched on |
+| `--- TOOLCHAIN ---` `gcc`/`cc` | a hook can be built on the unit; without one it has to be cross-built (glibc 2.27, the ABI `idrive-apps` builds for) and shipped readymade |
 
-`--- TOOLCHAIN ---` answers whether such a hook can be built **on the unit**
-(`gcc`/`cc`/`clang`), and `--- LIBS ---` names what it would have to hook.
+With `usbmon.ko` absent on kernel 4.14.198-apl, a passive USB capture is closed
+either way.
+
+`probe-root.sh` with `once` writes a single report (what `postInstall` runs);
+`loop` is the service.
+
+## Testing the parsing off the unit
+
+`test/fake_proc_test.sh` runs the script against a fake `/proc` tree (it
+overrides `readlink`), so changes to the parsing can be checked on a desktop:
+
+```sh
+sh test/fake_proc_test.sh
+```
 
 ## Uninstalling
 
