@@ -1,8 +1,8 @@
 {
   "id": "cn_carlife_map",
   "title": "CarLife Map",
-  "description": "把手机 CarLife 的画面送到 iDrive 7 仪表盘地图区和 HUD。画面由本机服务或网络帧源提供，经 cluster-render 渲染；需先在 MGU Store 安装 Cluster renderer。实验功能",
-  "version": "1.0.0",
+  "description": "把手机 CarLife 的画面送到 iDrive 7 仪表盘地图区和 HUD。画面由本机服务或网络帧源提供，经 cluster-render 渲染；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。实验功能",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -11,8 +11,7 @@
   ],
   "autostart": true,
   "requires": {
-    "idrive7-renderd": "2.1.15",
-    "cluster-render": "0.5.3"
+    "idrive7-renderd": "2.1.15"
   },
   "screens": [
     {
