@@ -1,0 +1,33 @@
+{
+  "id": "cn_carlife_probe",
+  "title": "CarLife Probe",
+  "description": "Read-only CarLife environment probe. Shows processes, TCP ports and decoder tools on screen for a screenshot. No SSH needed.",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OAA8",
+  "iconGlyph": "wrench",
+  "mguHmi": [
+    "ID7"
+  ],
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "CarLife Probe",
+      "buttons": [
+        [
+          "BTN_RESCAN",
+          "Rescan"
+        ],
+        [
+          "BTN_NEXT",
+          "Next"
+        ],
+        [
+          "BTN_PREV",
+          "Prev"
+        ]
+      ]
+    }
+  ]
+}
