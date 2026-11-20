@@ -43,6 +43,39 @@ function fillUV(a, w, h, x, y, rw, rh, u, v) {
 }
 
 /**
+ * Cut a rectangle out of one atlas, into an atlas of the rectangle's own size.
+ *
+ * A video layer draws its frame at the frame's size: a layer rectangle smaller
+ * than the frame does not scale it, the rest is cut off. The cluster's map slot
+ * is 1088x480 and the HUD glass is about 560x200, so a HUD layer fed the map's
+ * frame can only ever show the map's top-left corner — which is mostly
+ * background, and invisible on a projected HUD. The HUD needs a frame of its
+ * own size.
+ *
+ * `dx`/`dy` must be even and `dw` a multiple of 4 with `dh` even: 4:2:0 chroma
+ * is per 2x2 block, and cluster-render takes only those frame sizes.
+ * The rectangle must lie inside the source.
+ */
+function cropAtlas(src, sw, sh, dx, dy, dw, dh, out) {
+    const need = atlasSize(dw, dh);
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    const hw = dw >> 1, hh = dh >> 1;
+    const su = sw * sh;                 // where the chroma planes start
+    const du = dw * dh;
+    for (let y = 0; y < dh; y++) {
+        const s = (dy + y) * sw + dx;
+        src.copy(a, y * dw, s, s + dw);
+    }
+    for (let by = 0; by < hh; by++) {
+        const s = su + ((dy >> 1) + by) * sw + (dx >> 1);
+        const d = du + by * dw;
+        src.copy(a, d, s, s + hw);                              // U
+        src.copy(a, d + hw, s + (sw >> 1), s + (sw >> 1) + hw);  // V
+    }
+    return a;
+}
+
+/**
  * Build a moving, map-like test picture directly in the atlas.
  * `out` may be a reused buffer of the exact size; otherwise one is made.
  * `tick` is a frame counter, so the roads scroll and a marker moves.
@@ -75,4 +108,4 @@ function demoAtlas(out, w, h, tick) {
     return a;
 }
 
-module.exports = { MAP_W, MAP_H, atlasSize, demoAtlas };
+module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas };

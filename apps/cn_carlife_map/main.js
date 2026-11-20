@@ -18,7 +18,7 @@ const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO } = require('./carlife_source');
-const { MAP_W, MAP_H } = require('./atlas');
+const { MAP_W, MAP_H, cropAtlas } = require('./atlas');
 
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudWidth', 'hudX', 'hudY', 'hudKeep'];
@@ -44,6 +44,10 @@ async function run(ctx) {
     let source = null;
     let mapLayer = 0, hudLayer = 0;
     let lastAtlas = null, lastSeq = 0, frames = 0;
+    /* The HUD gets a frame of its own size (see cropAtlas): a layer's frame
+     * must be exactly its vw x vh, and cluster-render drops any frame that is
+     * not, silently. */
+    let hudW = 0, hudH = 0, hudAtlas = null, hudSeq = 0, hudFrames = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
     let wantHud = false, hudBlocked = false;
     const layerState = { map: 'off', hud: 'off' };
@@ -88,10 +92,26 @@ async function run(ctx) {
 
     const wants = (t, which) => t === which || t === 'both';
 
+    /* The HUD draws the middle of the map, at its own size.
+     *
+     * cluster-render takes a frame only when it is exactly the layer's vw x vh,
+     * and a layer rectangle that is smaller than the frame does not scale it —
+     * it cuts, showing only the frame's top-left corner. Fed the map's
+     * 1088x480 frame, the HUD therefore showed the corner of a dark test grid,
+     * which on a projected HUD is nothing at all. Cropping the middle into a
+     * frame the size of the HUD's box is what makes it visible. */
+    const sendHud = safe('hud frame', (atlas) => {
+        if (!cr || !hudLayer || !hudW || !hudH) return;
+        const dx = ((MAP_W - hudW) >> 1) & ~1;
+        const dy = ((MAP_H - hudH) >> 1) & ~1;
+        hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
+        if (cr.frame(hudLayer, hudAtlas, ++hudSeq)) hudFrames++;
+    });
+
     const setLayers = safe('layers', () => {
         const t = settings.get('target') || 'off';
         if (mapLayer) { if (cr) cr.drop(mapLayer); mapLayer = 0; layerState.map = 'off'; }
-        if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; }
+        if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; hudW = hudH = 0; hudAtlas = null; }
 
         wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
@@ -112,8 +132,13 @@ async function run(ctx) {
         }
         if (wants(t, 'hud')) {
             const r = hudRect();
+            hudW = r.w;
+            hudH = r.h;
+            hudAtlas = null;                       /* the size changed: reuse nothing */
             hudLayer = cr.video(Object.assign({}, common, {
+                klass: 'overlay',                  /* above the stock HUD's content layers */
                 target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
+                vw: r.w, vh: r.h,
                 yield: settings.get('hudKeep') ? 0 : 1
             }));
             layerState.hud = hudLayer ? 'waiting' : 'refused';
@@ -121,9 +146,10 @@ async function run(ctx) {
         refreshClaim();
         if (lastAtlas) {
             if (mapLayer) cr.frame(mapLayer, lastAtlas, lastSeq);
-            if (hudLayer) cr.frame(hudLayer, lastAtlas, lastSeq);
+            if (hudLayer) sendHud(lastAtlas);
         }
-        log.info('layers: target ' + t + ', map ' + mapLayer + ', hud ' + hudLayer);
+        log.info('layers: target ' + t + ', map ' + mapLayer + ', hud ' + hudLayer +
+            (hudLayer ? ' at ' + hudW + 'x' + hudH + ' (' + hudRect().x + ',' + hudRect().y + ')' : ''));
     });
 
     const setSource = safe('source', () => {
@@ -143,7 +169,7 @@ async function run(ctx) {
             frames++;
             if (!cr || !cr.ready) return;
             if (mapLayer) cr.frame(mapLayer, atlas, seq);
-            if (hudLayer) cr.frame(hudLayer, atlas, seq);
+            if (hudLayer) sendHud(atlas);
         }));
         source.on('status', safe('source status', (s) => { srcStatus = String(s); }));
         source.start();
@@ -195,7 +221,8 @@ async function run(ctx) {
         cv.text('Render  : ' + renderStatus, 40, 184, 28, '#a8d8c0');
         cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 228, 28, '#a8d8c0');
         cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 272, 28, '#a8d8c0');
-        cv.text('Frames  : ' + frames + '   last seq ' + lastSeq, 40, 316, 28, '#a8d8c0');
+        cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
+            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 316, 28, '#a8d8c0');
         cv.text('Install Cluster renderer from the MGU Store if Render stays empty.', 40, 398, 26, '#8fa3b4');
         cv.text('Settings: source, target, frame rate and HUD size/position.', 40, 442, 26, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);

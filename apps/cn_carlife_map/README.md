@@ -62,7 +62,9 @@ python3 kit/tools/build.py cn_carlife_map
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
 
-应用状态页会显示：当前帧源、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号。
+应用状态页会显示：当前帧源、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号，
+以及 HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`）。HUD 帧数一直是 0，说明帧没送到
+（层被拒或尺寸不符）；帧数在涨但玻璃上没有东西，那就是槽位被锁或让位，看同一行的状态。
 `waiting` 表示层已建好但在等槽位或等第一帧；`shown` 表示已上屏。
 
 ## 帧源
@@ -131,7 +133,15 @@ ffmpeg -i phone_capture.mp4 -vf scale=1088:480 -pix_fmt nv12 -f rawvideo - \
 
 **能成链路的部分：** 仪表盘 `map` 区（1088×480，slot 0x100）默认配置就允许第三方
 `contend:1` 的层从原厂地图手里抢过来，这是 waze-on-cluster 实车验证过的；HUD slot 0x323
-也能收 video 层，尺寸不匹配不会导致拒绝。atlas 字节数、帧率、像素内存都在服务限制内。
+也能收 video 层，atlas 字节数、帧率、像素内存都在服务限制内。
+
+**HUD 的帧必须是它自己的尺寸。** 这一条踩过坑：video 层的帧长度必须正好等于该层的
+`vw × vh`，否则 cluster-render 的 `frame()` 直接返回 false，**静默丢弃**，界面上什么也
+不会说；而层矩形比帧小时不是缩放而是**裁切**，只有帧的左上角那一块会被画出来。把地图的
+1088×480 帧直接喂给 456×200 的 HUD 层，HUD 上就只有地图左上角的深色背景——在投影式
+HUD 上等于什么都没有。所以 HUD 层有自己的 `vw/vh`，画面由 `atlas.js` 的 `cropAtlas()`
+从地图帧中心裁出来，逐帧复用同一块缓冲。HUD 层用 `class: 'overlay'`，压在原厂的
+`content` 层之上。
 
 **必须清楚的限制：**
 
