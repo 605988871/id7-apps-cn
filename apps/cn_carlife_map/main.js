@@ -17,12 +17,15 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
-const { createSource, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
+const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
 const { MAP_W, MAP_H, cropAtlas } = require('./atlas');
 
 const APP = 'cn_carlife_map';
-const KEYS = ['target', 'source', 'fps', 'hudWidth', 'hudX', 'hudY', 'hudKeep'];
+const KEYS = ['target', 'source', 'fps', 'hudWidth', 'hudX', 'hudY', 'hudKeep',
+              'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
+/* Where the decoder is told how much of CarLife's picture is the map. */
+const CROP_FILE = '/dev/shm/carlife-map/crop.json';
 
 async function run(ctx) {
     const { ui, settings, log } = ctx;
@@ -153,6 +156,27 @@ async function run(ctx) {
             (hudLayer ? ' at ' + hudW + 'x' + hudH + ' (' + hudRect().x + ',' + hudRect().y + ')' : ''));
     });
 
+    /* CarLife sends one full-screen picture - its protocol has no map-only
+     * channel, unlike CarPlay, which renders a second display for the cluster.
+     * So the map is cut out of the whole frame, after decoding: the decoder
+     * reads these numbers and outputs an atlas of the cluster's size. The app
+     * owns them because the settings UI is here. */
+    const writeCrop = safe('crop', () => {
+        const pct = (k, d) => {
+            const v = Math.round(Number(settings.get(k)));
+            return isFinite(v) ? Math.min(45, Math.max(0, v)) : d;
+        };
+        const box = {
+            top: pct('mapTop', 8), bottom: pct('mapBottom', 0),
+            left: pct('mapLeft', 0), right: pct('mapRight', 0),
+            fit: settings.get('mapFit') || 'band'
+        };
+        mkdirp('/dev/shm/carlife-map');
+        fs.writeFileSync(CROP_FILE, JSON.stringify(box) + '\n');
+        log.info('map crop: top ' + box.top + '% bottom ' + box.bottom +
+            '% left ' + box.left + '% right ' + box.right + '%, fit ' + box.fit);
+    });
+
     const setSource = safe('source', () => {
         const kind = settings.get('source') || 'demo';
         const fps = Number(settings.get('fps')) || 15;
@@ -184,7 +208,7 @@ async function run(ctx) {
         log.info('picture source: ' + kind + ' @ ' + fps + ' fps');
     });
 
-    const apply = safe('apply', () => { setSource(); setLayers(); });
+    const apply = safe('apply', () => { writeCrop(); setSource(); setLayers(); });
 
     /* ---------- cluster-render ---------- */
     const connect = safe('connect', () => {

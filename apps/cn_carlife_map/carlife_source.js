@@ -453,7 +453,7 @@ function createSource(opts) {
 }
 
 module.exports = {
-    createSource, CarlifeSource,
+    createSource, CarlifeSource, mkdirp,
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT,
     atlasSize
 };

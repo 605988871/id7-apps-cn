@@ -2,7 +2,7 @@
   "id": "cn_carlife_map",
   "title": "CarLife Map",
   "description": "把手机 CarLife 的画面送到 iDrive 7 仪表盘地图区和 HUD，取流组件随应用一同安装。画面经 cluster-render 渲染；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。实验功能",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -146,6 +146,58 @@
       "label": "HUD on top of alerts",
       "type": "bool",
       "default": false
+    },
+    {
+      "key": "mapTop",
+      "label": "Map crop top",
+      "type": "number",
+      "unit": "%",
+      "default": 8,
+      "steps": [0, 4, 8, 12, 16, 20, 24]
+    },
+    {
+      "key": "mapBottom",
+      "label": "Map crop bottom",
+      "type": "number",
+      "unit": "%",
+      "default": 0,
+      "steps": [0, 4, 8, 12, 16, 20, 24]
+    },
+    {
+      "key": "mapLeft",
+      "label": "Map crop left",
+      "type": "number",
+      "unit": "%",
+      "default": 0,
+      "steps": [0, 5, 10, 15, 20, 25, 30]
+    },
+    {
+      "key": "mapRight",
+      "label": "Map crop right",
+      "type": "number",
+      "unit": "%",
+      "default": 0,
+      "steps": [0, 5, 10, 15, 20, 25, 30]
+    },
+    {
+      "key": "mapFit",
+      "label": "Map crop fit",
+      "type": "choice",
+      "default": "band",
+      "options": [
+        [
+          "band",
+          "Fill (cut to shape)"
+        ],
+        [
+          "stretch",
+          "Stretch"
+        ],
+        [
+          "letterbox",
+          "Fit (bars)"
+        ]
+      ]
     }
   ]
 }
