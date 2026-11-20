@@ -19,10 +19,11 @@ const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
 const { MAP_W, MAP_H, cropAtlas, atlasSize } = require('./atlas');
+const { toRgba, parseTarget, parseLayer } = require('./hud_convert');
 
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
-              'hudWidth', 'hudX', 'hudY', 'hudKeep',
+              'hudWidth', 'hudX', 'hudY', 'hudKeep', 'hudPath',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit',
               'cardTop', 'cardBottom', 'cardLeft', 'cardRight', 'cardFit',
               'hudMapX', 'hudMapY'];
@@ -63,9 +64,19 @@ async function run(ctx) {
      * frame must be exactly its vw x vh, and cluster-render drops any frame
      * that is not, silently. */
     let hudW = 0, hudH = 0, hudAtlas = null, hudSeq = 0, hudFrames = 0;
+    /* The HUD as RGBA, only when it goes up as an image layer: the buffer, the
+     * atlas it was made from, and when the last one went. */
+    let hudRgba = null;
+    let hudPrev = null;
+    let hudImgAt = 0;
     let hudCardNote = '';
     /* The turn card is its own picture on its own socket - see setHudSource. */
     let hudSource = null, hudBuf = null, hudSourceKind = '', hudCards = 0;
+    /* The last thing the service refused, and its own account of the HUD's
+     * target - the only two places a HUD that never appears is explained. */
+    let lastRefused = '';
+    let svcText = '';
+    let svcAt = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
     let wantHud = false, hudBlocked = false;
     const layerState = { map: 'off', hud: 'off' };
@@ -129,6 +140,72 @@ async function run(ctx) {
 
     const wants = (t, which) => t === which || t === 'both';
 
+    /* What the HUD layer is made of: the setting, or - on 'auto' - whatever
+     * the last attempt was, so a swap sticks for this size instead of being
+     * undone at the next rebuild. */
+    function wantHudKind() {
+        const p = settings.get('hudPath') || 'auto';
+        if (p === 'image') return 'image';
+        if (p === 'video') return 'video';
+        return hudKind;
+    }
+
+    /* How the HUD layer is fed, and what happened to it last time.
+     *
+     * A video layer is the cheap way: one 4:2:0 atlas per frame, the map's own
+     * path, and what the original Maps-on-cluster project puts on the HUD. But
+     * the display keeps only a couple of video buffers, and a layer the service
+     * does not take leaves the target 'idle' and the layer 'waiting' with no
+     * reason at all - which on the screen looks exactly like a HUD that is
+     * switched off, and cannot be told from one.
+     *
+     * An image layer is the other way: RGBA, uploaded as a picture, and the
+     * path the other HUD app in this repository uses on this same car. So the
+     * setting 'auto' starts with the video and, if it has not been shown after
+     * six seconds, puts the same picture up as an image. 'Out on the road' is
+     * not a place to be editing settings to find out which one this car takes.
+     */
+    let hudKind = 'video';        /* what hudLayer is: 'video' or 'image' */
+    let hudSwapAt = 0;            /* when to try the other kind; 0 = not yet */
+    let hudSwaps = 0;
+    let hudSeenShown = false;
+
+    /* The HUD's layer, on its own, so that changing how it is fed - the video
+     * the display may not take, then a picture - does not take the map down
+     * with it and blink the cluster for a reason nobody asked for. */
+    function makeHud(hudFps) {
+        const r = hudRect();
+        hudW = r.w;
+        hudH = r.h;
+        hudAtlas = null;                       /* the size changed: reuse nothing */
+        hudRgba = null;
+        hudPrev = null;
+        hudImgAt = 0;
+        hudSeenShown = false;
+        hudSwapAt = 0;
+        hudKind = wantHudKind();
+        if (hudKind === 'image') {
+            /* RGBA, so the cluster only has to texture it: the path the other
+             * HUD app in this repository uses on this car. */
+            hudLayer = cr.image({
+                klass: 'overlay',              /* above the stock HUD's content layers */
+                target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
+                iw: r.w, ih: r.h, fps: hudFps, sampling: 'nearest',
+                z: 0, visible: 1, opacity: 1
+            });
+        } else {
+            hudLayer = cr.video({
+                klass: 'overlay',
+                target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
+                vw: r.w, vh: r.h, fps: hudFps,
+                z: 0, visible: 1, opacity: 1, contend: 1,
+                dirty_threshold: 8, settle_ms: 1000, stall_ms: 6000,
+                yield: settings.get('hudKeep') ? 0 : 1
+            });
+        }
+        layerState.hud = hudLayer ? 'waiting' : 'refused';
+    }
+
     /* The HUD's frame, in whichever shape the mode asks for.
      *
      * cluster-render takes a frame only when it is exactly the layer's vw x vh,
@@ -159,7 +236,26 @@ async function run(ctx) {
              * shrunken map would show a shrunken arrow. */
             frame = hudBuf;
         }
-        if (frame && cr.frame(hudLayer, frame, ++hudSeq)) hudFrames++;
+        if (!frame) return;
+        if (hudKind === 'image') {
+            /* A picture is four bytes a pixel - three times the atlas it came
+             * from - so it goes at ten a second at most, and not at all when it
+             * is the same picture as last time. A HUD that shows the last frame
+             * it got is right; a HUD competing with the map for the upload
+             * budget is how the map starts to stutter. */
+            const now = Date.now();
+            if (now - hudImgAt < 100) return;
+            if (hudPrev && hudPrev.length === frame.length && hudPrev.compare(frame) === 0) return;
+            if (!hudRgba || hudRgba.length !== hudW * hudH * 4) hudRgba = Buffer.alloc(hudW * hudH * 4);
+            if (!toRgba(frame, hudW, hudH, hudRgba)) return;
+            if (cr.pixels(hudLayer, null, hudRgba)) {
+                hudFrames++;
+                hudImgAt = now;
+                hudPrev = Buffer.from(frame);
+            }
+        } else if (cr.frame(hudLayer, frame, ++hudSeq)) {
+            hudFrames++;
+        }
     });
 
     /* The turn card has its own stream, because it is not a crop of the map.
@@ -248,6 +344,7 @@ async function run(ctx) {
         const sig = [t, Number(settings.get('fps')) || 15,
                      hw ? [hw.x, hw.y, hw.w, hw.h].join(',') : '-',
                      settings.get('hudKeep') ? 1 : 0,
+                     settings.get('hudPath') || 'auto',
                      (settings.get('hudMode') || 'navi')].join('|');
         if (sig === layerSig && (mapLayer || hudLayer || t === 'off')) return;
         layerSig = sig;
@@ -269,25 +366,14 @@ async function run(ctx) {
             vw: MAP_W, vh: MAP_H, fps: fps,
             dirty_threshold: 8, settle_ms: 1000, stall_ms: 6000
         };
+
         if (wants(t, 'cluster')) {
             mapLayer = cr.video(Object.assign({}, common, {
                 target: 'map', x: 0, y: 0, w: MAP_W, h: MAP_H, guide_hold: 1
             }));
             layerState.map = mapLayer ? 'waiting' : 'refused';
         }
-        if (wants(t, 'hud')) {
-            const r = hudRect();
-            hudW = r.w;
-            hudH = r.h;
-            hudAtlas = null;                       /* the size changed: reuse nothing */
-            hudLayer = cr.video(Object.assign({}, common, {
-                klass: 'overlay',                  /* above the stock HUD's content layers */
-                target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
-                vw: r.w, vh: r.h,
-                yield: settings.get('hudKeep') ? 0 : 1
-            }));
-            layerState.hud = hudLayer ? 'waiting' : 'refused';
-        }
+        if (wants(t, 'hud')) makeHud(fps);
         refreshClaim();
         setHudSource();
         if (lastAtlas) {
@@ -411,7 +497,11 @@ async function run(ctx) {
         cr.on('disconnected', safe('disconnected', () => {
             renderStatus = 'reconnecting';
             layerState.map = 'off'; layerState.hud = 'off';
-            layerSig = '';                         /* the layers went with it */
+            /* The refs are kept: the client makes every layer again with its
+             * last settings when the socket comes back. Dropping the signature
+             * here would make the next 'ready' tear them all down and build
+             * them again - a visible blink on the cluster, and the one blink
+             * this app can avoid. */
             log.warn('cluster-render went away');
         }));
         cr.on('layer', safe('layer', (ref, state, reason) => {
@@ -419,11 +509,21 @@ async function run(ctx) {
             else if (ref === hudLayer) layerState.hud = state + (reason ? ' (' + reason + ')' : '');
         }));
         cr.on('target', safe('target', (name, state, holder, reason) => {
-            targetEvents[name] = state + (holder ? '/' + holder : '');
+            /* The reason is the whole point: 'waiting with no reason' and
+             * 'parked behind stock' look the same on the glass and are fixed in
+             * opposite ways. */
+            targetEvents[name] = state + (holder && holder !== 'none' ? '/' + holder : '') +
+                (reason ? ' ' + reason.slice(0, 40) : '');
         }));
+        /* A layer the service refuses never shows and never changes state, so
+         * without this the status page keeps the optimistic 'waiting' for ever
+         * and says nothing about why. The last refusal is the one that matters:
+         * a wrong layer is refused once, not in a loop. */
         cr.on('refused', safe('refused', (op, ref, why) => {
+            lastRefused = op + ' ' + ref + ': ' + why;
             log.warn('cluster-render refused ' + op + ' ' + ref + ': ' + why);
         }));
+        cr.on('status', safe('status', (text) => { svcText = text || ''; }));
         cr.connect();
         renderStatus = 'connecting';
     });
@@ -537,31 +637,70 @@ async function run(ctx) {
             ' from ' + hudSourceKind + ', ' + (hudCardNote || 'own socket');
     }
 
+    /* The service's own account, shortened: the target line says who holds the
+     * slot, the layer line carries the reason a layer is not shown - the one
+     * thing a black HUD cannot say for itself. */
+    const svcHudTarget = () => parseTarget(svcText, 'hud').slice(0, 120);
+    const svcHudLayer = () => parseLayer(svcText, 'hud', hudLayer).slice(0, 120);
+
     /* ---------- status page ---------- */
     ctx.loop('MAIN', 5, safe('ui', () => {
+        /* A HUD layer that never appears is the one failure this app cannot
+         * see from the inside: the service accepts the layer, the target stays
+         * idle, and nothing says why. So while it is not up: ask the service
+         * for its own account every five seconds, and after six seconds of the
+         * video layer not being shown, put the same picture up as an image. */
+        if (hudLayer && /^shown/.test(layerState.hud)) hudSeenShown = true;
+        if (hudLayer && !hudSeenShown) {
+            if (cr && cr.ready && Date.now() - svcAt > 5000) {
+                svcAt = Date.now();
+                cr.status();
+            }
+            if (hudKind === 'video' && (settings.get('hudPath') || 'auto') === 'auto') {
+                if (!hudSwapAt) hudSwapAt = Date.now() + 6000;
+                else if (Date.now() >= hudSwapAt) {
+                    hudSwaps++;
+                    hudKind = 'image';
+                    log.warn('HUD not shown as a video layer in 6 s: trying an image layer');
+                    if (cr && hudLayer) cr.drop(hudLayer);
+                    hudLayer = 0;
+                    makeHud(Number(settings.get('fps')) || 15);
+                    writeCrop();
+                    if (lastAtlas) sendHud(lastAtlas);
+                }
+            }
+        }
+
         const cv = ctx.canvas(1600, 520).clear('#0b1016');
         const kind = settings.get('source') || 'demo';
         const detail = (() => {
             try { return source && source.detail ? source.detail() : ''; } catch (e) { return ''; }
         })();
-        cv.text('CarLife Map on Cluster', 40, 60, 40, '#ffffff');
-        cv.text('Source  : ' + kind + '  -  ' + srcStatus, 40, 116, 24, '#a8d8c0');
-        cv.text('          ' + (detail || '-'), 40, 146, 22, '#7fbf9f');
-        cv.text('Render  : ' + renderStatus, 40, 180, 24, '#a8d8c0');
-        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 212, 24, '#a8d8c0');
-        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 244, 24, '#a8d8c0');
+        const hudTag = hudLayer && (settings.get('hudPath') || 'auto') !== 'video'
+            ? ' [' + hudKind + (hudSwaps ? ', ' + hudSwaps + ' swap' : '') + ']' : '';
+        cv.text('CarLife Map on Cluster', 40, 58, 38, '#ffffff');
+        cv.text('Source  : ' + kind + '  -  ' + srcStatus, 40, 112, 23, '#a8d8c0');
+        cv.text('          ' + (detail || '-'), 40, 140, 21, '#7fbf9f');
+        cv.text('Render  : ' + renderStatus, 40, 170, 23, '#a8d8c0');
+        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 199, 22, '#a8d8c0');
+        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') +
+            (hudBlocked ? '  (busy)' : '') + hudTag, 40, 228, 22, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
-            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 276, 24, '#a8d8c0');
-        cv.text('HUD card: ' + hudCardInfo(), 40, 306, 22, '#a8d8c0');
-        cv.text('USB tap : ' + readTap(), 40, 336, 21, '#e0c88a');
-        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 364, 21, '#e0c88a');
+            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 257, 22, '#a8d8c0');
+        cv.text('HUD card: ' + hudCardInfo(), 40, 284, 21, '#a8d8c0');
+        cv.text('USB tap : ' + readTap(), 40, 311, 20, '#e0c88a');
+        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 337, 20, '#e0c88a');
         const dec = readDecode();
-        cv.text('Decode  : ' + dec, 40, 392, 21, '#a8d8c0');
+        cv.text('Decode  : ' + dec, 40, 363, 20, '#a8d8c0');
         /* The decoder's own crop and output size: the numbers to change when
          * a picture is off by a strip, and the ones that explain a layer that
          * takes frames and shows none of them. */
-        cv.text('Cut     : ' + (decCrop || '-'), 40, 418, 20, '#7fbf9f');
-        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 448, 20, '#8fa3b4');
+        cv.text('Cut     : ' + (decCrop || '-'), 40, 388, 19, '#7fbf9f');
+        cv.text('HUD slot: ' + (svcHudTarget() || (svcText ? 'no target hud line' : 'not asked yet')), 40, 414, 19, '#c8a8e0');
+        cv.text('HUD lyr : ' + (svcHudLayer() || (svcText ? 'no layer on hud' : 'not asked yet')), 40, 439, 19, '#c8a8e0');
+        cv.text('Refused : ' + (lastRefused ? lastRefused.slice(0, 120) : 'none'), 40, 464, 19,
+            lastRefused ? '#e08a8a' : '#8fa3b4');
+        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 492, 19, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 

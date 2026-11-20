@@ -85,6 +85,7 @@ python3 kit/tools/build.py cn_carlife_map
 | Frame rate | 5–30 fps。地图变化慢，15 fps 通常够，也能减轻簇的上传负担 |
 | HUD width / left-right / up-down | HUD 画面尺寸和位置，用测试画面在车上对齐 |
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
+| HUD picture as | HUD 那层用什么送：Auto（默认，先用视频，6 秒没显示就改成一张图）/ A picture (RGBA) / Video (4:2:0)。画面出不来时先看这一项和状态页的 `HUD lyr` |
 | Map crop top / bottom / left / right | 从 CarLife 整屏画面里裁掉多少才算地图区，按百分比 |
 | Map crop fit | 裁出的地图怎么装进 1088×480：Fill（按形状裁边，推荐）/ Stretch（压扁，会变形） |
 | HUD card crop top / bottom / left / right | 从 CarLife 整屏画面里裁哪一块当 HUD 的导航条，按百分比。默认 上 0 / 下 16 / 左 0 / 右 24 |
@@ -253,6 +254,30 @@ HUD 上先是一个转向箭头和一个距离（外加路名），路口再加�
 | `turn card (full), 0 from carlife, decoder /dev/shm/carlife-map/hud.sock` | 选了实时画面但卡片流还没数据：看 `Cut:` 那行的卡片尺寸和 `Decode:` 的帧数 |
 | `off (no HUD layer)` | 当前 target 不含 HUD，或 HUD 层没建起来 |
 | `map 456x200 from the map, pan 0/0%` | 处于地图模式，可以再用 `Map in HUD` 两档平移 |
+
+### HUD 一直是黑的：看那三行
+
+HUD 层和仪表盘的地图是两回事：地图那层由车机自己画，HUD 那层交给**仪表**去画。所以
+"仪表盘有画面、HUD 没有"不会报错，也不会黑屏——HUD 就是什么也不出现。状态页为此有三行：
+
+```
+HUD     : waiting idle/none [image, 1 swap]
+HUD slot: hud 800x480: idle
+HUD lyr : layer 4 video: waiting - the target is not shown
+Refused : layer 5 video: video smaller than 64x32
+```
+
+- `HUD` 行：层的状态 + 目标的整体状态，方括号里是这层实际用的方式（`video` 或 `image`）和换过
+  几次。`waiting` 长时间不动就是没上去。
+- `HUD slot`：渲染器自己说的 HUD 目标状态。`idle` = 没人要这个槽；`waiting/stock` = 被车机自己
+  占着；`parked behind stock` = 压不住原厂内容。
+- `HUD lyr`：渲染器给这一层的原话，`waiting - ...` 后面就是原因；没有这一行说明层根本没建成。
+- `Refused`：最近的拒绝，通常一句话就够定位（尺寸、内存、目标名）。
+
+`HUD picture as` 默认 `Auto`：先用视频层（和地图同一条路），**6 秒没显示就自动改成一张
+RGBA 图**再送一次。两条路都是这台车验证过的——视频是 Maps-on-cluster 的做法，RGBA 图是
+本仓库另一个 HUD 应用（Redline）的做法。状态页 `[image, 1 swap]` 就说明它换了第二条路并且
+正在用。想固定用哪一条，把这一项设成 `A picture` 或 `Video`。
 
 ### TCP
 
