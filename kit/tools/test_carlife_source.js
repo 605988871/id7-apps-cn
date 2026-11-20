@@ -16,6 +16,9 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { CarlifeSource } = require('../../apps/cn_carlife_map/carlife_source');
 const atlas = require('../../apps/cn_carlife_map/atlas');
 
@@ -106,5 +109,93 @@ ok('a status page never grows the layer: its frame is exactly vw x vh', () => {
     }
 });
 
-if (problems) { console.log(problems + ' problem(s)'); process.exit(1); }
-console.log('carlife source ok: sizes, silence and the pages that break it');
+/* The socket side, which needs real time and a little white-boxing.
+ *
+ * The failure modelled here is the one the car produced. The decoder runs as
+ * root and starts at boot, so it creates /dev/shm/carlife-map with mkdir(0777)
+ * cut down by its umask to 0755 - and creating a unix socket needs write
+ * permission on the directory, not on the socket. The app's listen() then
+ * fails with EACCES, which reads like "the address is in use" and is nothing
+ * of the sort. The old code treated that as final: the decoder went on
+ * decoding 1541 frames next to an app that had stopped listening for ever, and
+ * the cluster said WAITING FOR CARLIFE while the picture was being made a few
+ * centimetres away.
+ *
+ * net.createServer is stubbed because this has to run on the machine the code
+ * is written on, and Windows refuses to bind unix sockets at all - the point
+ * under test is the handler (what is said, and that it tries again), not the
+ * kernel. */
+function fakeListen(failures) {
+    const netMod = require('net');
+    const real = netMod.createServer;
+    const realSI = global.setInterval, realCI = global.clearInterval;
+    const live = new Set();
+    let tries = 0;
+    global.setInterval = (fn, ms) => { const h = realSI(fn, ms); live.add(h); return h; };
+    global.clearInterval = (h) => { live.delete(h); return realCI(h); };
+    netMod.createServer = () => {
+        const srv = new (require('events').EventEmitter)();
+        srv.close = () => {};
+        srv.listen = (p, cb) => {
+            tries++;
+            if (tries <= failures) {
+                const e = new Error('listen EACCES: permission denied ' + p);
+                e.code = 'EACCES';
+                setImmediate(() => srv.emit('error', e));
+            } else {
+                setImmediate(() => cb());
+            }
+        };
+        return srv;
+    };
+    return {
+        tries: () => tries,
+        live: () => live.size,
+        restore: () => {
+            netMod.createServer = real;
+            global.setInterval = realSI;
+            global.clearInterval = realCI;
+        }
+    };
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+async function liveChecks() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clmf-'));
+    const sock = path.join(dir, 'live.sock');
+    const fake = fakeListen(2);              /* two refusals, then it works */
+    const s = new CarlifeSource({ w: 64, h: 32, fps: 5, sockPath: sock });
+    const said = [];
+    s.on('status', (t) => said.push(t));
+    try {
+        s.start();
+        await sleep(200);
+        assert.strictEqual(s.running, true, 'the source gave up: retrying is the fix');
+        assert.ok(/EACCES/.test(said.join(' | ')), 'no errno in the status: ' + said.join(' | '));
+        assert.ok(/is uid/.test(said.join(' | ')), 'no directory owner in the status: ' + said.join(' | '));
+        assert.ok(/^socket not opened/.test(s.detail()), 'detail hid it: ' + s.detail());
+
+        await sleep(1600);
+        assert.ok(fake.tries() > 2, 'it never tried again (' + fake.tries() + ' attempt(s))');
+        assert.strictEqual(s.listenErr, '', 'still failing after the retries: ' + s.listenErr);
+        assert.ok(/^waiting for CarLife/.test(said[said.length - 1]), 'not listening: ' + said[said.length - 1]);
+        /* Two tickers, not two per attempt: a retry must not stack them. */
+        assert.strictEqual(fake.live(), 2, fake.live() + ' intervals alive after ' + fake.tries() + ' attempts');
+
+        s.stop();
+        assert.strictEqual(fake.live(), 0, 'timers left behind after stop');
+    } finally {
+        try { s.stop(); } catch (e) {}
+        fake.restore();
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+    }
+}
+
+liveChecks().then(() => {
+    if (problems) { console.log(problems + ' problem(s)'); process.exit(1); }
+    console.log('carlife source ok: sizes, silence, the pages that break it, and a listen that comes back');
+}).catch((e) => {
+    console.log('FAIL live socket\n     ' + e.message);
+    process.exit(1);
+});

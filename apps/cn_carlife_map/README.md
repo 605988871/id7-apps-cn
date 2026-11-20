@@ -194,6 +194,8 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 | `DECODER WILL NOT RUN: NO LOADER` | 程序里的装载器在车机上不存在 | 装 0.4.5 及以后的取流件；旧版写的是 `/lib64/...`，车机没有这个目录 |
 | `DECODER NOT EXECUTABLE` | 载荷没有执行位 | 重装取流件 |
 | `DECODER UP, NO PICTURE YET` | 解码器在，取流件还没连上 | 打开 CarLife 并跑起导航 |
+| `DECODER OK, NOTHING REACHED THE APP` | 解码器已经解出画面，但一帧都没到应用 | 断在这一侧：看状态页 `Source` 行 |
+| `SOCKET: PERMISSION DENIED` | 应用建不出 `/dev/shm/carlife-map/live.sock` | 那个目录是 root 建的、只给 root 写；装 0.4.7 及以后的取流件（它会 `chmod 0777`），装完不用重启，应用每 4 秒自己重试 |
 | `FRAME 576000 WANT 783360` | 解码器在送，但尺寸不是图层要的 | 这一帧会被 cluster-render 静默丢掉；说明车机上跑的是旧版解码器，重装取流件 |
 
 链路分三种状态，仪表盘各有一张对应的画面，不会都用黑色糊过去：
@@ -212,6 +214,13 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 
 解码器读 `/dev/shm/carlife-map/h264.sock` 的裸流转成两幅 CLMF 图：`live.sock`（1088×480 地图）
 和 `hud.sock`（HUD 卡片，尺寸随 `HUD width` 变）。帧格式与下文的 TCP/FIFO 完全相同。
+
+`/dev/shm/carlife-map` 是**两个用户共用的目录**：解码器以 root 跑，应用不是。建 unix socket
+要的是**目录**的写权限，而 `mkdir(0777)` 会被服务的 umask 砍成 root 的 `0755`，于是应用的
+`listen()` 拿到 `EACCES`——这个词看着像"地址已被占用"，其实完全相反。取流件 0.4.7 起每次启动
+都会把这个目录 `chmod 0777`，应用也把 `listen` 失败从"到此为止"改成每 4 秒重试一次：装完新
+取流件后不用重启车机，几秒内自己接上。超时那一行的措辞也跟着分开了：`socket not opened`
+是自己没能监听，`nothing connected` 是监听好了但没人来。
 
 ### 只显示地图，不显示整屏
 

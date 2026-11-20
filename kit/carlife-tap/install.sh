@@ -331,6 +331,25 @@ for L in /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2; do
 done
 boot "loaders: ${LOADERS:-none found}"
 
+# The decoder and the app meet in /dev/shm/carlife-map, and they are not the
+# same user: the decoder runs as root and listens on h264.sock, the app runs as
+# itself and listens on live.sock. Creating a unix socket needs write
+# permission on the *directory*, so mkdir(0777) cut down by a service umask of
+# 022 leaves a root-owned 0755 directory that only root can bind in - and the
+# app's listen() fails with EACCES, which reads as "the address is in use" and
+# is nothing of the sort. That is the state the app was found in: decoder
+# decoding 1541 frames next to it, cluster still saying WAITING FOR CARLIFE.
+#
+# /dev/shm is emptied on every boot, so this is for now, not for ever: from
+# 0.4.7 the decoder chmods the directory itself every time it creates it.
+SHM=/dev/shm/carlife-map
+if mkdir -p "$SHM" 2>/dev/null; then
+    chmod 0777 "$SHM" 2>/dev/null || true
+    boot "shm: $SHM $(ls -ld "$SHM" 2>/dev/null | cut -c1-10) $(ls -ld "$SHM" 2>/dev/null | awk '{print $3":"$4}')"
+else
+    boot "shm: $SHM cannot be created"
+fi
+
 FOUND=
 for f in /etc/systemd/system/carlife-decode.service \
          /lib/systemd/system/carlife-decode.service \

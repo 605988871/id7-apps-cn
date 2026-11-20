@@ -624,6 +624,10 @@ async function run(ctx) {
     let decInfo = 'not read yet';
     let decCrop = '';
     let decErr = '';
+    /* How many frames the decoder says it has produced. It is the number that
+     * decides where to look: a decoder with frames and an app with none is a
+     * different fault from a decoder with nothing. */
+    let decFrames = 0;
     let decAt = 0;
     /* Why there is no report at all, when that is the case. The install hook
      * (kit/carlife-tap/install.sh) writes what it found when it tried to start
@@ -712,6 +716,7 @@ async function run(ctx) {
         if (!f) { decInfo = 'report has no frames line'; return decInfo; }
         const e = err && err[1] !== 'none' ? err[1] : '';
         decErr = e ? e.slice(0, 48) : '';
+        decFrames = Number(f[1]) || 0;
         const age = decoderAge();
         /* What the decoder itself is doing, and whether anything reached it.
          * "0 frames" has two completely different causes - the tap never
@@ -771,6 +776,15 @@ async function run(ctx) {
      * say it - the source only sees its own socket. */
     function carlifeNote() {
         if (source && typeof source.live === 'number' && source.live > 0) return '';
+        /* The decoder has pictures and this app has none: the break is on this
+         * side of the socket. Saying "no picture yet" about a decoder that has
+         * produced 1500 of them sends the next hour to the wrong process. */
+        if (decFrames > 0) {
+            const le = (source && source.listenErr) || '';
+            if (/EACCES|EPERM/.test(le)) return 'SOCKET: PERMISSION DENIED';
+            if (le) return 'SOCKET NOT OPENED: ' + le.split(' ')[0];
+            return 'DECODER OK, NOTHING REACHED THE APP';
+        }
         const age = decoderAge();
         /* Up but unable to decode is a different thing from up and waiting,
          * and the decoder's own report is the only place that says so. */

@@ -219,6 +219,12 @@ class ClusterRender extends EventEmitter {
         } else if (ev.ev === 'budget') {
             this.emit('budget', ev.cap_kb_per_s, ev.max_kb_per_s, ev.reason);
         } else if (ev.ev === 'error') {
+            /* A layer the service refused to create does not exist there, so
+             * it must not exist here either: keeping it means every later set
+             * and frame is another refusal, and the drop() that removes it
+             * fails too ("no such layer") - three confusing lines for one
+             * refusal that was already reported. */
+            if (ev.op === 'layer' && ev.ref) this.layers.delete(ev.ref);
             this.emit('refused', ev.op, ev.ref, ev.reason);
         } else if (ev.ev === 'status') {
             this.emit('status', ev.text);

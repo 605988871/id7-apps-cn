@@ -253,6 +253,25 @@ function mkdirp(dir) {
     }
 }
 
+/** Who owns the directory a socket would live in.
+ *
+ * Creating a unix socket needs write permission on the directory, not on the
+ * socket - and mkdirp's 0777 is cut down by the umask to 0755, owned by
+ * whoever got there first. The decoder runs as root and starts at boot; the app
+ * does not, so it finds a directory it cannot bind in and gets EACCES, which
+ * sounds like "the address is taken" and is the opposite of it. The owner and
+ * the mode are the whole story, so they are printed with the error. */
+function dirFacts(p) {
+    const dir = pathmod.dirname(p);
+    try {
+        const st = fs.statSync(dir);
+        return dir + ' is uid ' + st.uid +
+            ' mode ' + ('000' + (st.mode & 0o777).toString(8)).slice(-3);
+    } catch (e) {
+        return dir + ': ' + (e.code || e.message);
+    }
+}
+
 /** Is this the start of an Annex B NAL unit (H.264 as CarLife sends it)? */
 function looksLikeH264(b) {
     if (b.length < 3) return false;
@@ -315,6 +334,10 @@ class CarlifeSource extends FrameSource {
          * that turns a working decoder into an empty layer - and it is a
          * number, which is worth printing. */
         this.badLen = 0;
+        /* Why the listening socket could not be opened, if it could not: the
+         * one line that separates "the decoder never came" from "this app was
+         * never able to listen for it". */
+        this.listenErr = '';
         /* One short line for the waiting picture, set by the app from the
          * reports it can read and this one cannot. */
         this.note = '';
@@ -323,6 +346,12 @@ class CarlifeSource extends FrameSource {
     }
 
     _start() {
+        /* A retry runs _start again, and these two intervals are the only
+         * things here that outlive a failed attempt: without this, every
+         * backoff step added another 200 ms ticker and another rate timer,
+         * and the app spent its budget drawing status pages for sockets that
+         * were closed. */
+        this._timers();
         if (this.host) this._connect();
         else this._listen();
         /* Once a second: turn the byte counter into a rate, and say what the
@@ -343,9 +372,13 @@ class CarlifeSource extends FrameSource {
         if (this.actTimer.unref) this.actTimer.unref();
     }
 
-    _stop() {
+    _timers() {
         if (this.countTimer) { clearInterval(this.countTimer); this.countTimer = null; }
         if (this.actTimer) { clearInterval(this.actTimer); this.actTimer = null; }
+    }
+
+    _stop() {
+        this._timers();
         if (this.client) { try { this.client.destroy(); } catch (e) {} this.client = null; }
         if (this.server) {
             try { this.server.close(); } catch (e) {}
@@ -370,8 +403,24 @@ class CarlifeSource extends FrameSource {
             this._attach(s, s.remoteAddress || 'local');
         });
         this.server = srv;
-        srv.on('error', (e) => this._fail('listen ' + this.sockPath + ': ' + e.message));
+        /* Not _fail: a listening socket that cannot be created is usually a
+         * directory owned by someone else, and the tool's install hook (or the
+         * decoder, from 0.4.7 on) fixes exactly that within seconds. Giving up
+         * here means waiting for a reboot to pick up a permission change. */
+        srv.on('error', (e) => {
+            /* Node's own message repeats the path the line already names
+             * ("listen EACCES /dev/shm/..."), so only the errno is kept; for a
+             * permission failure the directory's owner is the part to read,
+             * and it goes on the same line because that is all the screen has
+             * room for. */
+            const denied = e.code === 'EACCES' || e.code === 'EPERM';
+            const why = (e.code || e.message) + (denied ? ', ' + dirFacts(this.sockPath) : '');
+            this.listenErr = why;
+            this._retry('listen ' + this.sockPath + ': ' + why);
+        });
         srv.listen(this.sockPath, () => {
+            this.retry = 0;
+            this.listenErr = '';
             try { fs.chmodSync(this.sockPath, 0o666); } catch (e) {}
             this.emit('status', 'waiting for CarLife (' + this.sockPath + ')');
         });
@@ -525,7 +574,11 @@ class CarlifeSource extends FrameSource {
     /** One line for the status page. */
     detail() {
         if (!this.running) return 'stopped';
-        if (!this.client) return 'no decoder on ' + this.sockPath;
+        /* "No decoder on the socket" and "I could not open the socket" are
+         * different failures with different fixes, and the second one is what
+         * a wrong directory owner looks like from here. */
+        if (this.listenErr) return 'socket not opened (' + this.listenErr + ')';
+        if (!this.client) return 'nothing connected on ' + this.sockPath + ' yet';
         if (this.format === 'h264') {
             return 'H.264 ' + (this.h264Bytes / 1048576).toFixed(1) + 'MB ' +
                 this.h264Idr + ' IDR ' + this.mbps.toFixed(2) + 'MB/s, no decoder';

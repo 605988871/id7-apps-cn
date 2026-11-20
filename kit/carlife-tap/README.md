@@ -200,6 +200,16 @@ carlife (USB) --tap--> /dev/shm/carlife-map/h264.sock --> carlife-decode
 Both carry the same `CLMF` header the app's other frame sources read, so nothing
 in the app needed changing to accept them.
 
+The two programs meet in `/dev/shm/carlife-map` and they are **not the same user**:
+this one runs as root, the app runs as itself. Creating a unix socket needs write
+permission on the *directory*, not on the socket, and `mkdir(0777)` is cut down by
+the service's umask (022) to a root-owned `0755` - a directory only root can bind
+in. The app's `listen()` then fails with `EACCES`, which reads as "the address is
+in use" and is nothing of the sort, and it was found waiting for a picture that was
+being decoded a few centimetres away. So the directory is `chmod 0777`ed on every
+start, and `install.sh` does the same once, so the order the two start in stops
+mattering.
+
 It loads the unit's own Intel MSDK library with `dlopen` — `/usr/lib/libmfxhw64.so`,
 API 1.24, with no dispatcher on this unit — plus `libva`, takes a VA display on
 `/dev/dri/renderD128`, decodes into opaque surfaces and runs one VPP pass per

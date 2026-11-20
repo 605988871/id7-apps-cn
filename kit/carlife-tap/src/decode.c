@@ -156,6 +156,14 @@ static int listen_unix(const char *path)
     int fd;
 
     mkdir(DIR, 0777);
+    /* mkdir's mode is cut down by the umask, and a service's umask is 022: the
+     * directory comes out root-owned 0755, and creating a unix socket in a
+     * directory needs write permission *on the directory*. The app runs as
+     * itself, not as root, so its listen() on live.sock fails with EACCES -
+     * which sounds like "the address is in use" and is nothing of the sort.
+     * chmod explicitly: whoever starts first creates the directory, and it has
+     * to be one the other side can bind in. */
+    chmod(DIR, 0777);
     unlink(path);
     fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
