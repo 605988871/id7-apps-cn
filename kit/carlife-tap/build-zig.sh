@@ -25,18 +25,19 @@ CFLAGS="-O2 -g0 -Wall -Wextra -Werror -std=gnu11"
 MFX=../../third_party/mfx/include
 
 cd "$(dirname "$0")"
-mkdir -p bin
 
 echo "--- zig $("$ZIG" version) ---"
 
 if [ "$WHAT" = all ] || [ "$WHAT" = tap ]; then
     "$ZIG" cc -target "$TARGET" $CFLAGS -fPIC -shared \
-        -o bin/libcarlife-tap.so src/tap.c
-    python3 check_elf.py bin/libcarlife-tap.so
+        -o libcarlife-tap.so src/tap.c
+    chmod 0644 libcarlife-tap.so
+    python3 check_elf.py libcarlife-tap.so
 fi
 
 if [ "$WHAT" = all ] || [ "$WHAT" = decode ]; then
     "$ZIG" cc -target "$TARGET" $CFLAGS -I"$MFX" \
-        -o bin/carlife-decode src/decode.c
-    python3 check_elf.py bin/carlife-decode
+        -o carlife-decode src/decode.c
+    chmod 0755 carlife-decode
+    python3 check_elf.py carlife-decode
 fi

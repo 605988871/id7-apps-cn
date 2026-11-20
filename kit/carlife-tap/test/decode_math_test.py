@@ -7,14 +7,22 @@ mistake is silent - a rectangle one pixel too wide does not fail, it reads the
 row next door, and nobody sees it on a 480-row picture until the map is shifted
 by a hair.
 
-So this is rect_of() and blit() again, in Python, with the same clamps, run over
-the sizes a phone actually asks for (1920x720, 1920x1080, 1280x720) and the
-crops the settings allow. It asserts what the C cannot assert on a build machine:
+So this is rect_of(), blit() and read_crop()'s clamps again, in Python, with the
+same arithmetic, run over the sizes a phone actually asks for (1920x720,
+1920x1080, 1280x720) and the crops and HUD sizes the settings allow. It asserts
+what the C cannot assert on a build machine:
 
   * the crop stays inside the picture
   * with fit=filled the result has the target's aspect, within a pixel
   * every source coordinate blit() would read is inside the plane it reads from
   * the number of bytes written is exactly the atlas the app expects
+  * the chroma it writes is U in the left half of each row and V in the right
+    half, which is what the app's atlas.js and cluster-render's
+    pack_nv12_atlas read - and not the interleaved NV12 that MSDK hands out
+
+The last one is the reason this file exists at all: an interleaved atlas is a
+valid-looking frame of the right length, so nothing on the unit complains - it
+just draws a map in the wrong colours, and the car is the only place to see it.
 
     python3 test/decode_math_test.py
 """
@@ -23,6 +31,13 @@ import sys
 
 MAP_W, MAP_H = 1088, 480
 CARD_W, CARD_H = 480, 168
+# The biggest a crop.json may ask for (decode.c's MAP_MAX_/CARD_MAX_).
+MAP_MAX_W, MAP_MAX_H = 1088, 480
+CARD_MAX_W, CARD_MAX_H = 640, 256
+
+# What the HUD layer can be: hudWidth 40..100% of 560, height from the card's
+# aspect (168/480), capped by the HUD box's 200 rows.
+CARD_SIZES = [(480, 168), (560, 196), (320, 112), (452, 200), (640, 224)]
 
 
 def even(v, lo=0, hi=1 << 20):
@@ -95,12 +110,39 @@ def blit_spans(dw, dh, pitch, pheight, r):
     return worst
 
 
+def blit(dst, dw, dh, sy, spitch, suv, r):
+    """The C function, line for line, including the chroma split it must do."""
+    for y in range(dh):
+        syy = r.y + y * r.h // dh
+        base = syy * spitch + r.x
+        row = y * dw
+        if r.w == dw:
+            dst[row:row + dw] = sy[base:base + dw]
+        else:
+            for x in range(dw):
+                dst[row + x] = sy[base + x * r.w // dw]
+    half_h, half_w = dh // 2, dw // 2
+    duv = dw * dh
+    rw, rh = r.w // 2, r.h // 2
+    for y in range(half_h):
+        syy = r.y // 2 + y * rh // half_h
+        base = syy * spitch + (r.x // 2) * 2
+        ru = duv + y * dw
+        rv = ru + half_w
+        for x in range(half_w):
+            k = x if rw == half_w else x * rw // half_w
+            dst[ru + x] = suv[base + k * 2]          # U
+            dst[rv + x] = suv[base + k * 2 + 1]      # V
+
+
 def main():
     sizes = [(1920, 720), (1920, 1080), (1280, 720), (2360, 1080)]
     crops = [
         (0, 0, 0, 0), (8, 0, 0, 0), (8, 4, 0, 0), (4, 12, 6, 6), (20, 20, 10, 10),
+        (0, 16, 0, 24),
     ]
     fits = [True, False]
+    targets = [(MAP_W, MAP_H)] + CARD_SIZES
     bad = 0
     cases = 0
 
@@ -108,7 +150,7 @@ def main():
         pitch = (pw + 63) & ~63
         for top, bottom, left, right in crops:
             for keep in fits:
-                for (dw, dh) in ((MAP_W, MAP_H), (CARD_W, CARD_H)):
+                for (dw, dh) in targets:
                     cases += 1
                     r = rect_of(pw, ph, top, bottom, left, right, dw, dh, keep)
 
@@ -144,8 +186,15 @@ def main():
                             bad += 1
                             break
 
+    # ---- the atlas blit() writes: colour, not just length ----
+    # A source whose U is 100 everywhere and V is 200 everywhere. Whatever the
+    # rectangle, every byte of the atlas' U half must be 100 and every byte of
+    # its V half 200: that is the only way to tell a split atlas from an
+    # interleaved one without a screen.
+    bad += chroma_checks()
+
     # the atlas the app checks a frame's length against
-    for (w, h) in ((MAP_W, MAP_H), (CARD_W, CARD_H)):
+    for (w, h) in targets:
         n = w * h + (w // 2) * (h // 2) * 2
         assert n == w * h * 3 // 2, "atlas size is not w*h*3/2"
 
@@ -154,6 +203,39 @@ def main():
         return 1
     print("geometry ok: crops inside the picture, even, aspect kept, reads in-plane")
     return 0
+
+
+def chroma_checks():
+    bad = 0
+    U, V = 100, 200
+    for pw, ph in ((1920, 720), (1280, 720)):
+        pitch = (pw + 63) & ~63
+        sy = bytearray(b"\x80" * (pitch * ph))
+        suv = bytearray(pitch * (ph // 2))
+        for i in range(0, len(suv), 2):
+            suv[i] = U
+            suv[i + 1] = V
+        for (dw, dh) in [(MAP_W, MAP_H)] + CARD_SIZES:
+            for r in (rect_of(pw, ph, 0, 0, 0, 0, dw, dh, True),
+                      rect_of(pw, ph, 8, 16, 0, 24, dw, dh, False)):
+                dst = bytearray(dw * dh * 3 // 2)
+                blit(dst, dw, dh, sy, pitch, suv, r)
+                hw, hh = dw // 2, dh // 2
+                for y in range(hh):
+                    row = dw * dh + y * dw
+                    if any(b != U for b in dst[row:row + hw]):
+                        print("CHROMA-U %dx%d %s: U half is not all %d"
+                              % (pw, ph, r, U))
+                        bad += 1
+                        break
+                    if any(b != V for b in dst[row + hw:row + dw]):
+                        print("CHROMA-V %dx%d %s: V half is not all %d"
+                              % (pw, ph, r, V))
+                        bad += 1
+                        break
+                # and nothing outside the atlas
+                assert len(dst) == dw * dh * 3 // 2
+    return bad
 
 
 if __name__ == "__main__":

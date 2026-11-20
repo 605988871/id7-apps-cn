@@ -23,7 +23,9 @@ const { MAP_W, MAP_H, cropAtlas, atlasSize } = require('./atlas');
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
               'hudWidth', 'hudX', 'hudY', 'hudKeep',
-              'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit'];
+              'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit',
+              'cardTop', 'cardBottom', 'cardLeft', 'cardRight', 'cardFit',
+              'hudMapX', 'hudMapY'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* The decoder's own report: whether the stream became a picture. */
 const DECODE_REPORT = '/dev/shm/carlife-decode.txt';
@@ -138,8 +140,17 @@ async function run(ctx) {
         let frame;
         if ((settings.get('hudMode') || 'navi') === 'map') {
             if (!atlas) return;
-            const dx = ((MAP_W - hudW) >> 1) & ~1;
-            const dy = ((MAP_H - hudH) >> 1) & ~1;
+            /* Which piece of the map the glass shows. Centred by default; the
+             * two pan settings move it, as a percentage of the map's own size,
+             * so that a HUD sitting off to one side can show the road and not
+             * the middle of the picture. The window cannot leave the map, and
+             * the offsets are even because 4:2:0 chroma is per 2x2 block. */
+            const px = Number(settings.get('hudMapX')) || 0;
+            const py = Number(settings.get('hudMapY')) || 0;
+            let dx = ((MAP_W - hudW) >> 1) + Math.round(MAP_W * px / 100);
+            let dy = ((MAP_H - hudH) >> 1) + Math.round(MAP_H * py / 100);
+            dx = Math.max(0, Math.min(MAP_W - hudW, dx)) & ~1;
+            dy = Math.max(0, Math.min(MAP_H - hudH, dy)) & ~1;
             hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
             frame = hudAtlas;
         } else {
@@ -201,13 +212,18 @@ async function run(ctx) {
             kind: kind, w: hudW, h: hudH, fps: fps,
             draw: 'arrow',
             card: cardSpec(),
-            host: live ? (override.carlifeHost || null) : (override.host || DEFAULT_HOST),
+            /* The card from CarLife is the decoder's second picture, always on
+             * the local socket: it is not a second connection to whatever the
+             * map's path is, and dialling the map's endpoint for it would
+             * either be refused or steal the map's only connection. */
+            host: live ? null : (override.host || DEFAULT_HOST),
             port: live ? (Number(override.carlifePort) || CARLIFE_PORT) : cardPort,
             sockPath: override.hudSockPath || CARD_SOCK,
             path: override.path || DEFAULT_FIFO,
             tcpListen: kind === 'tcp' ? true : (override.tcpListen === true)
         });
-        hudCardNote = kind === 'tcp' ? 'listening on :' + cardPort : '';
+        hudCardNote = kind === 'tcp' ? 'listening on :' + cardPort
+                    : live ? 'decoder ' + (override.hudSockPath || CARD_SOCK) : '';
         hudSource.on('frame', safe('hud card', (buf) => {
             if (buf.length !== atlasSize(hudW, hudH)) return;
             hudBuf = buf;
@@ -219,15 +235,32 @@ async function run(ctx) {
         log.info('hud card source: ' + kind + ' at ' + hudW + 'x' + hudH);
     });
 
+    /* What the layers were last made for. Changing a crop percentage must not
+     * tear the layers down and build them again: the decoder picks the new
+     * rectangle up on its own, and a layer that is dropped and remade blinks
+     * on the cluster and in the HUD - exactly when someone is looking at it to
+     * tune the crop. */
+    let layerSig = '';
+
     const setLayers = safe('layers', () => {
         const t = settings.get('target') || 'off';
+        const hw = wants(t, 'hud') ? hudRect() : null;
+        const sig = [t, Number(settings.get('fps')) || 15,
+                     hw ? [hw.x, hw.y, hw.w, hw.h].join(',') : '-',
+                     settings.get('hudKeep') ? 1 : 0,
+                     (settings.get('hudMode') || 'navi')].join('|');
+        if (sig === layerSig && (mapLayer || hudLayer || t === 'off')) return;
+        layerSig = sig;
+
         if (mapLayer) { if (cr) cr.drop(mapLayer); mapLayer = 0; layerState.map = 'off'; }
         if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; hudW = hudH = 0; hudAtlas = null; }
 
         wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
+            layerSig = '';                         /* nothing was built: build it when ready */
             refreshClaim();
             setHudSource();                        /* nothing to feed: let it go */
+            writeCrop();
             return;
         }
         const fps = Number(settings.get('fps')) || 15;
@@ -263,22 +296,33 @@ async function run(ctx) {
         }
         log.info('layers: target ' + t + ', map ' + mapLayer + ', hud ' + hudLayer +
             (hudLayer ? ' at ' + hudW + 'x' + hudH + ' (' + hudRect().x + ',' + hudRect().y + ')' : ''));
+        /* The card's size is decided here and named in the crop file, so every
+         * path that makes or drops a layer has to rewrite it - including the
+         * one where cluster-render only becomes ready a moment after start. */
+        writeCrop();
     });
 
     /* CarLife sends one full-screen picture - its protocol has no map-only
      * channel, unlike CarPlay, which renders a second display for the cluster.
      * So the map is cut out of the whole frame, after decoding: the decoder
      * reads these numbers and outputs an atlas of the cluster's size. The app
-     * owns them because the settings UI is here. */
+     * owns them because the settings UI is here.
+     *
+     * Both rectangles are percentages of CarLife's own picture, so they do not
+     * care what size the phone asked for, and both are tunable: the phone's
+     * map and its guidance bar are in different places on different CarLife
+     * versions, and there is no way to ask it where. */
     const writeCrop = safe('crop', () => {
         const pct = (k, d) => {
             const v = Math.round(Number(settings.get(k)));
             return isFinite(v) ? Math.min(45, Math.max(0, v)) : d;
         };
+        /* The decoder clamps to the same numbers (CARD_MAX_W/H): a card wider
+         * than this is a frame the layer will silently refuse. */
+        const cardW = Math.min(640, Math.max(16, hudW || CARD_W)) & ~1;
+        const cardH = Math.min(256, Math.max(16, hudH || CARD_H)) & ~1;
         /* Flat keys, not nested objects: the decoder is C with no JSON
-         * library, and a search for "mapTop" plus a strtod is all it needs.
-         * Both rectangles are percentages of CarLife's own picture, so they do
-         * not care what size the phone asked for. */
+         * library, and a search for "mapTop" plus a strtod is all it needs. */
         const box = {
             mapTop: pct('mapTop', 8), mapBottom: pct('mapBottom', 0),
             mapLeft: pct('mapLeft', 0), mapRight: pct('mapRight', 0),
@@ -287,24 +331,36 @@ async function run(ctx) {
             /* The HUD's card is a second crop of the same picture, delivered on
              * a second socket at its own size. CarLife's guidance strip runs
              * across the top of its picture with the turn arrow at its left
-             * end, so the card is a small box there and nothing else: these are
-             * starting values to be tuned on the car, not measurements. The
-             * bottom edge has to reach the lane row, or the lanes are cut off. */
+             * end, so the card is a box there: 0..24% across and 0..16% down
+             * are starting values, not measurements - the bottom edge has to
+             * reach the lane row or the lanes are cut off. */
             cardMode: (settings.get('hudMode') || 'navi') === 'navi' ? 'navi' : 'off',
-            cardTop: 0, cardBottom: 16, cardLeft: 0, cardRight: 24,
-            cardW: hudW, cardH: hudH
+            cardTop: pct('cardTop', 0), cardBottom: pct('cardBottom', 16),
+            cardLeft: pct('cardLeft', 0), cardRight: pct('cardRight', 24),
+            cardFit: settings.get('cardFit') || 'stretch',
+            cardW: cardW, cardH: cardH
         };
         mkdirp('/dev/shm/carlife-map');
         fs.writeFileSync(CROP_FILE, JSON.stringify(box) + '\n');
         log.info('map crop: top ' + box.mapTop + '% bottom ' + box.mapBottom +
             '% left ' + box.mapLeft + '% right ' + box.mapRight + '%, fit ' + box.mapFit +
-            '; card ' + box.cardMode + ' ' + box.cardW + 'x' + box.cardH);
+            '; card ' + box.cardMode + ' ' + box.cardW + 'x' + box.cardH +
+            ' t' + box.cardTop + ' b' + box.cardBottom +
+            ' l' + box.cardLeft + ' r' + box.cardRight + '%, ' + box.cardFit);
     });
 
+    /* The picture source is only rebuilt when something about the stream
+     * changed. Every crop percentage is a settings change, and each one used to
+     * tear the socket down and build it again - a stutter for every step of the
+     * dial while the crop is being tuned. */
+    let srcKind = '', srcFps = 0;
     const setSource = safe('source', () => {
         const kind = settings.get('source') || 'demo';
         const fps = Number(settings.get('fps')) || 15;
         const live = kind === 'carlife';
+        if (source && srcKind === kind && srcFps === fps) return;
+        srcKind = kind;
+        srcFps = fps;
         if (source) { source.removeAllListeners(); source.stop(); source = null; }
         source = createSource({
             kind: kind, w: MAP_W, h: MAP_H, fps: fps,
@@ -332,7 +388,16 @@ async function run(ctx) {
         log.info('picture source: ' + kind + ' @ ' + fps + ' fps');
     });
 
-    const apply = safe('apply', () => { writeCrop(); setSource(); setLayers(); });
+    /* Layers first, and the crop file written from inside setLayers: the crop
+     * names the card's size, and the card's size is what creating the HUD
+     * layer works out. Written the other way round, a fresh start tells the
+     * decoder to make a 480x168 card while the layer is, say, 560x196 - and
+     * every frame is dropped until the next settings change, with nothing on
+     * the screen to say why. */
+    /* setHudSource and writeCrop are idempotent and run even when setLayers
+     * decides the layers are already right: a HUD detail or a crop percentage
+     * changes without any layer changing shape. */
+    const apply = safe('apply', () => { setSource(); setLayers(); setHudSource(); writeCrop(); });
 
     /* ---------- cluster-render ---------- */
     const connect = safe('connect', () => {
@@ -346,6 +411,7 @@ async function run(ctx) {
         cr.on('disconnected', safe('disconnected', () => {
             renderStatus = 'reconnecting';
             layerState.map = 'off'; layerState.hud = 'off';
+            layerSig = '';                         /* the layers went with it */
             log.warn('cluster-render went away');
         }));
         cr.on('layer', safe('layer', (ref, state, reason) => {
@@ -414,8 +480,14 @@ async function run(ctx) {
 
     /* What the decoder says about itself. The tap report says the stream is
      * there; this one says whether it became a picture, and if not, at which
-     * call it stopped - the one question a black cluster cannot answer. */
+     * call it stopped - the one question a black cluster cannot answer.
+     *
+     * The crop lines matter as much: they say what the decoder actually cut
+     * the two pictures out of, and at what size it sent them. A frame at the
+     * wrong size is dropped by cluster-render without a word, so "the layer
+     * stays black while frames are being produced" is nearly always this. */
     let decInfo = 'not read yet';
+    let decCrop = '';
     let decAt = 0;
     function readDecode() {
         const now = Date.now();
@@ -425,15 +497,29 @@ async function run(ctx) {
         try { s = fs.readFileSync(DECODE_REPORT, 'utf8'); }
         catch (e) {
             decInfo = e.code === 'ENOENT' ? 'not running (no report)' : e.message;
+            decCrop = '';
             return decInfo;
         }
         const f = /^frames: (\d+) rate (\d+) fps last (-?\d+)ms/m.exec(s);
         const err = /^error: (.*)$/m.exec(s);
+        const soft = /^errors: (\d+)/m.exec(s);
         if (!f) { decInfo = 'report has no frames line'; return decInfo; }
         const e = err && err[1] !== 'none' ? err[1] : '';
         decInfo = f[1] + ' frames, ' + f[2] + ' fps' +
             (Number(f[3]) >= 0 ? ', last ' + f[3] + 'ms' : '') +
             (e ? ' - ' + e : '');
+        /* The size it sent and the percentages it used, on one line: what to
+         * change when the map is off by a strip. */
+        const out = /^out: map (\d+x\d+) card (\S+)/m.exec(s);
+        const cr = /^crop: map t(\d+) b(\d+) l(\d+) r(\d+).*card t(\d+) b(\d+) l(\d+) r(\d+)/m.exec(s);
+        const rc = /^rect: map (\d+),(\d+) (\d+x\d+)/m.exec(s);
+        decCrop = out
+            ? 'out ' + out[1] + ' + card ' + out[2] +
+              (cr ? ' | crop m' + cr[1] + '/' + cr[2] + '/' + cr[3] + '/' + cr[4] +
+                    ' c' + cr[5] + '/' + cr[6] + '/' + cr[7] + '/' + cr[8] : '') +
+              (rc ? ' | map rect ' + rc[3] + ' at ' + rc[1] + ',' + rc[2] : '') +
+              (soft && soft[1] !== '0' ? ' | ' + soft[1] + ' soft' : '')
+            : '';
         return decInfo;
     }
 
@@ -441,7 +527,11 @@ async function run(ctx) {
      * still a piece of the map?". */
     function hudCardInfo() {
         const mode = settings.get('hudMode') || 'navi';
-        if (mode === 'map') return 'map crop, middle of the picture';
+        if (mode === 'map') {
+            return 'map ' + hudW + 'x' + hudH + ' from the map, pan ' +
+                (Number(settings.get('hudMapX')) || 0) + '/' +
+                (Number(settings.get('hudMapY')) || 0) + '%';
+        }
         if (!hudSource) return 'off (no HUD layer)';
         return 'turn card (' + cardSpec().detail + '), ' + hudCards +
             ' from ' + hudSourceKind + ', ' + (hudCardNote || 'own socket');
@@ -454,19 +544,24 @@ async function run(ctx) {
         const detail = (() => {
             try { return source && source.detail ? source.detail() : ''; } catch (e) { return ''; }
         })();
-        cv.text('CarLife Map on Cluster', 40, 68, 42, '#ffffff');
-        cv.text('Source  : ' + kind + '  -  ' + srcStatus, 40, 128, 26, '#a8d8c0');
-        cv.text('          ' + (detail || '-'), 40, 164, 24, '#7fbf9f');
-        cv.text('Render  : ' + renderStatus, 40, 208, 26, '#a8d8c0');
-        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 248, 26, '#a8d8c0');
-        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 288, 26, '#a8d8c0');
+        cv.text('CarLife Map on Cluster', 40, 60, 40, '#ffffff');
+        cv.text('Source  : ' + kind + '  -  ' + srcStatus, 40, 116, 24, '#a8d8c0');
+        cv.text('          ' + (detail || '-'), 40, 146, 22, '#7fbf9f');
+        cv.text('Render  : ' + renderStatus, 40, 180, 24, '#a8d8c0');
+        cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 212, 24, '#a8d8c0');
+        cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') + (hudBlocked ? '  (busy, giving way)' : ''), 40, 244, 24, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
-            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 328, 26, '#a8d8c0');
-        cv.text('HUD card: ' + hudCardInfo(), 40, 368, 24, '#a8d8c0');
-        cv.text('USB tap : ' + readTap(), 40, 396, 22, '#e0c88a');
-        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 428, 22, '#e0c88a');
-        cv.text('Decode  : ' + readDecode(), 40, 460, 22, '#a8d8c0');
-        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 476, 22, '#8fa3b4');
+            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 276, 24, '#a8d8c0');
+        cv.text('HUD card: ' + hudCardInfo(), 40, 306, 22, '#a8d8c0');
+        cv.text('USB tap : ' + readTap(), 40, 336, 21, '#e0c88a');
+        cv.text('Tap cmds: ' + (tapCmds || '-'), 40, 364, 21, '#e0c88a');
+        const dec = readDecode();
+        cv.text('Decode  : ' + dec, 40, 392, 21, '#a8d8c0');
+        /* The decoder's own crop and output size: the numbers to change when
+         * a picture is off by a strip, and the ones that explain a layer that
+         * takes frames and shows none of them. */
+        cv.text('Cut     : ' + (decCrop || '-'), 40, 418, 20, '#7fbf9f');
+        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 448, 20, '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 

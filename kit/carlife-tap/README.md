@@ -108,7 +108,7 @@ It is not installed on its own: it is a `requires` entry of the app
 `cn_carlife_map`, so the Store installs it with the app and takes it away with
 the app. Installing it from the tools list still works and does the same thing.
 
-`install.sh` runs as root after every install (component.json `activate`) and
+`install.sh` runs as root after every install (component.json `postInstall`) and
 does three things:
 
 1. **Proves the library loads** on this unit before anything else happens. A
@@ -116,24 +116,31 @@ does three things:
    dies, which is a very bad way to find out.
 2. **Finds the unit that starts carlife** — from the running process's cgroup
    first, because Cinemo starts carlife as a child of a launcher whose unit file
-   never names it; then from `ExecStart`; then from a unit named after it. A
-   failed `activate` fails the whole install, so this has to be hard to miss.
+   never names it; then from `ExecStart`; then from a unit named after it.
 3. **Appends to the unit's own `LD_PRELOAD`**, never replaces it: the unit
    already preloads `/usr/lib/libschedeconfig.so.1` into carlife, and
    overwriting that value would silently take it away. The drop-in is
-   `/etc/systemd/system/<unit>.d/50-carlife-tap.conf`.
+   `/etc/systemd/system/<unit>.d/50-carlife-tap.conf`, and the path it names is
+   `/var/opt/carlife-tap/current/libcarlife-tap.so` — the Store's stable path,
+   so an upgrade does not leave the unit pointing at a directory that has just
+   been deleted.
 
 Because CarLife has to be running for step 2 to read its unit, install while
-CarLife is open. When the unit cannot be found at all, the install fails and
-says so — a tool that silently attaches to nothing is worse.
+CarLife is open. When the unit cannot be found, the install **succeeds** and
+says so on its last line; the library is simply not preloaded yet, and the next
+install after one CarLife session finishes the job. Failing here would roll the
+app and the decoder back with it over a step that fixes itself.
 
 It does **not** restart anything. CarLife picks the library up at the unit's
 next start, so a head-unit restart is what makes it live; restarting just
 carlife while the rest of the Cinemo stack keeps running is the less predictable
 option for no gain.
 
-`remove.sh` (component.json `deactivate`) deletes only the drop-in, the report
-and the marker — nothing else, and no unit or payload of the Store's.
+`remove.sh` deletes only the drop-in, the report and the marker — nothing else,
+and no unit or payload of the Store's. The Store has no uninstall hook here, so
+this is a script to run by hand before uninstalling if the drop-in is to go:
+left behind, it names a path that no longer exists, which the loader warns about
+and skips — CarLife still starts.
 
 Undo by hand, if ever needed:
 
@@ -174,18 +181,22 @@ what size the phone was asked for:
 {"mapTop":8,"mapBottom":0,"mapLeft":0,"mapRight":0,"mapFit":"fill",
  "mapW":1088,"mapH":480,
  "cardMode":"navi","cardTop":0,"cardBottom":16,"cardLeft":0,"cardRight":24,
- "cardW":480,"cardH":168}
+ "cardFit":"stretch","cardW":480,"cardH":168}
 ```
 
 `/dev/shm/carlife-map/crop.json`, written by the app when its settings change and
-re-read by the decoder every second — the settings take effect without a restart.
-Flat keys on purpose: the decoder is C with no JSON library, and a `strstr` plus a
-`strtod` is all that needs.
+re-read by the decoder every half second — the settings take effect without a
+restart. Flat keys on purpose: the decoder is C with no JSON library, and a
+`strstr` plus a `strtod` is all that needs.
 
-`fit=filled` trims the longer side so the layer is not stretched; `stretch` uses
-the rectangle as it is. Both the rectangle and its origin are forced even, because
-NV12 chroma is a quarter of the picture and an odd centring puts the colour one
-column into its neighbour.
+`cardW`/`cardH` are the HUD layer's size, so the app writes them from `HUD width`;
+anything else there is a frame the layer will refuse without a word. They are
+clamped to 640x256 and forced even, as `mapW`/`mapH` are to 1088x480.
+
+`mapFit=filled` and `cardFit=filled` trim the longer side so the layer is not
+stretched; `stretch` uses the rectangle as it is. Both the rectangle and its
+origin are forced even, because NV12 chroma is a quarter of the picture and an odd
+centring puts the colour one column into its neighbour.
 
 Everything the decoder knows about itself goes to `/dev/shm/carlife-decode.txt`,
 which the app shows on its status page — the car's screen is the only screen the
@@ -198,14 +209,27 @@ libs: mfx=libmfxhw64.so va=libva mfxapi=124
 state: decoding 1920x720
 frames: 812 rate 15 fps last 66ms
 sockets: map=on(812) card=on(812) drops=0+0
+out: map 1088x480 card 480x168
+crop: map t8 b0 l0 r0 fill; card t0 b16 l0 r24 stretch
+rect: map 0,106 1280x564; card 0,0 306x114
+errors: 0
 error: none
 ```
 
+`out` is what the app will receive, `crop` is what it read, `rect` is what it
+last cut. A frame at the wrong size is dropped by cluster-render silently, so
+`out` disagreeing with the layer's size is the first thing to look at when the
+cluster keeps count of frames and shows none. `errors` counts the pictures lost
+to a damaged slice or a busy engine - those restart the session at the next
+sequence header and do not stop the process.
+
 ## Build
 
-`bin/libcarlife-tap.so` is committed, because the Store packs the tool from the
-repository tree. It is built with **zig**, which carries the unit's glibc
-headers and stub libraries, so no container and no compiler install is needed:
+`libcarlife-tap.so` and `carlife-decode` are committed at the top of this
+directory, because the Store packs the tool from the repository tree and its
+file list names payload by `path` only — one flat name per file, no subdirectory,
+no `from`. It is built with **zig**, which carries the unit's glibc headers and
+stub libraries, so no container and no compiler install is needed:
 
 ```sh
 ZIG=/d/zig/zig-x86_64-windows-0.14.1/zig.exe ./build-zig.sh

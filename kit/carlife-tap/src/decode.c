@@ -61,22 +61,46 @@
 #define CROP_FILE  DIR "/crop.json"
 #define REPORT     "/dev/shm/carlife-decode.txt"
 
+/* The map layer's size (cluster-render takes a frame only at exactly the
+ * layer's vw x vh) and the most a crop.json may ask for. They are separate so
+ * that a bigger HUD setting cannot make the decoder hand out a frame the app
+ * never asked for: the app clamps, and so does this. */
 #define MAP_W 1088u
 #define MAP_H  480u
+#define MAP_MAX_W 1088u
+#define MAP_MAX_H  480u
+/* The HUD layer is whatever the app's hudWidth makes it: 480x168 at the
+ * default 86%, up to 560x200 at 100%. The default below is only what an
+ * unreadable crop.json falls back to. */
 #define CARD_W 480u
 #define CARD_H 168u
+#define CARD_MAX_W 640u
+#define CARD_MAX_H 256u
 
 #define MAX_IN   (8u * 1024u * 1024u)   /* bigger than this and the stream is not what we think */
 #define READ_SZ  (256u * 1024u)
 #define POOL_MAX 32
+/* MSDK waits are bounded: a GPU hang must not hang the process that the
+ * cluster's picture comes from, and a hang shows on the screen either way. */
+#define SYNC_MS  1000
+#define BUSY_MAX 1000
+/* How long one frame may take to reach a reader before it is dropped. Long
+ * enough for a reader that is a frame behind, short enough not to become the
+ * decoder's own latency. */
+#define SEND_WAIT_MS 50
 
 /* ---------------------------------------------------------------- report -- */
 
-static char g_why[512];          /* the first failure, kept for the report */
+static char g_why[512];          /* the first failure that stopped a setup */
 static char g_note[256];         /* what is happening now */
 static const char *g_mfx_lib = "-";
 static const char *g_va_lib = "-";
 static int g_mfx_ver = -1;
+/* Failures that cost a picture but not the process: a chunk the tap dropped
+ * mid-slice, a busy engine. They are counted, and a run of them restarts the
+ * session at the next sequence header; they are not the report's `error`,
+ * which has to keep meaning "this is why there is no picture at all". */
+static unsigned long g_soft;
 
 static void note(const char *fmt, ...)
 {
@@ -98,6 +122,14 @@ static void fail(const char *fmt, ...)
 static void mfx_why(const char *call, mfxStatus sts)
 {
     fail("%s: %d", call, (int)sts);
+}
+
+/* A failure that is recovered from: counted, shown as what is happening, and
+ * never mistaken for the reason there is no picture. */
+static void soft_why(const char *call, mfxStatus sts)
+{
+    g_soft++;
+    note("%s: %d (#%lu)", call, (int)sts, g_soft);
 }
 
 static long long now_ms(void)
@@ -168,20 +200,42 @@ static void out_write(Out *o, const unsigned char *p, size_t n)
     unsigned char hdr[12];
     uint32_t magic = 0x464d4c43u, len = (uint32_t)n, seq = (uint32_t)++o->seq;
     size_t done = 0;
+    int waited = 0;
 
     memcpy(hdr + 0, &magic, 4);
     memcpy(hdr + 4, &len, 4);
     memcpy(hdr + 8, &seq, 4);
-    if (o->fd < 0) o->fd = connect_unix(o->path);
+    if (o->fd < 0) {
+        o->fd = connect_unix(o->path);
+        if (o->fd >= 0) {
+            /* A frame is most of a megabyte and the socket's default buffer is
+             * a fifth of that: without this every frame is written in pieces,
+             * and the reader has to keep up between two write calls. */
+            int sz = 4 * 1024 * 1024;
+            setsockopt(o->fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof sz);
+        }
+    }
     if (o->fd < 0) { o->drops++; return; }
     if (write(o->fd, hdr, sizeof hdr) != (ssize_t)sizeof hdr) { out_shut(o); o->drops++; return; }
     while (done < n) {
         ssize_t k = write(o->fd, p + done, n - done);
         if (k > 0) { done += (size_t)k; continue; }
         if (k < 0 && errno == EINTR) continue;
-        /* EAGAIN: the reader is slower than the decoder. Dropping this frame is
-         * right - the next one is 60 ms away, and buffering in the decoder
-         * would only add latency to a picture that is already late. */
+        /* EAGAIN: the reader is a little behind. Wait for it, but only once
+         * per frame and only briefly - a decoder that waits for its slowest
+         * reader is a decoder that adds its latency to a picture that is
+         * already late. A frame abandoned half way is not a lost frame: the
+         * close makes the reader drop what it had of it and start at the next
+         * header. */
+        if (k < 0 && errno == EAGAIN && waited < SEND_WAIT_MS) {
+            struct pollfd pf;
+            pf.fd = o->fd;
+            pf.events = POLLOUT;
+            pf.revents = 0;
+            int ms = poll(&pf, 1, SEND_WAIT_MS - waited);
+            if (ms > 0) continue;
+            waited = SEND_WAIT_MS;
+        }
         out_shut(o);
         o->drops++;
         return;
@@ -196,6 +250,7 @@ typedef struct {
     double card_top, card_bottom, card_left, card_right, card_w, card_h;
     int card_off;
     int map_stretch;
+    int card_stretch;
 } Crop;
 
 static double json_num(const char *s, const char *key, double dflt)
@@ -224,6 +279,15 @@ static const char *json_str(const char *s, const char *key, const char *dflt)
     return p + 1;
 }
 
+/* A percentage that a rectangle can be built from: never negative (a negative
+ * one would be cast to unsigned and become four billion), never so large that
+ * the rectangle is empty, and never so large that top and bottom overlap. */
+static double pct(double v, double hi)
+{
+    if (!(v > 0)) return 0;          /* also catches NaN */
+    return v > hi ? hi : v;
+}
+
 /* The app writes flat keys - mapTop, cardW, ... - so that this parser can stay
  * a search and a strtod: a nested JSON reader would be more code than the rest
  * of the program. Defaults are the picture as it comes. */
@@ -237,35 +301,44 @@ static void read_crop(Crop *c)
     c->map_w = MAP_W; c->map_h = MAP_H;
     c->card_w = CARD_W; c->card_h = CARD_H;
     c->card_bottom = 16.0;
+    c->card_right = 24.0;
     if (!f) return;
     n = fread(buf, 1, sizeof buf - 1, f);
     fclose(f);
     buf[n] = 0;
 
-    c->map_top    = json_num(buf, "mapTop", 0);
-    c->map_bottom = json_num(buf, "mapBottom", 0);
-    c->map_left   = json_num(buf, "mapLeft", 0);
-    c->map_right  = json_num(buf, "mapRight", 0);
+    c->map_top    = pct(json_num(buf, "mapTop", 0), 60);
+    c->map_bottom = pct(json_num(buf, "mapBottom", 0), 60);
+    c->map_left   = pct(json_num(buf, "mapLeft", 0), 45);
+    c->map_right  = pct(json_num(buf, "mapRight", 0), 45);
     c->map_w      = json_num(buf, "mapW", MAP_W);
     c->map_h      = json_num(buf, "mapH", MAP_H);
-    c->card_top    = json_num(buf, "cardTop", 0);
-    c->card_bottom = json_num(buf, "cardBottom", 16);
-    c->card_left   = json_num(buf, "cardLeft", 0);
-    c->card_right  = json_num(buf, "cardRight", 24);
+    c->card_top    = pct(json_num(buf, "cardTop", 0), 60);
+    c->card_bottom = pct(json_num(buf, "cardBottom", 16), 60);
+    c->card_left   = pct(json_num(buf, "cardLeft", 0), 45);
+    c->card_right  = pct(json_num(buf, "cardRight", 24), 45);
     c->card_w      = json_num(buf, "cardW", CARD_W);
     c->card_h      = json_num(buf, "cardH", CARD_H);
-    if (json_str(buf, "cardMode", "navi")[0] == 'o') c->card_off = 1;  /* "off" */
-    if (json_str(buf, "mapFit", "fill")[0] == 's') c->map_stretch = 1; /* "stretch" */
+    if (json_str(buf, "cardMode", "navi")[0] == 'o') c->card_off = 1;    /* "off" */
+    if (json_str(buf, "mapFit", "fill")[0] == 's') c->map_stretch = 1;   /* "stretch" */
+    if (json_str(buf, "cardFit", "stretch")[0] == 'f') c->card_stretch = 0;
+    else c->card_stretch = 1;
     /* The buffers are the layers' sizes and nothing else: a stale or edited
      * file must not be able to make the decoder write past them. */
-    if (c->map_w > MAP_W) c->map_w = MAP_W;
-    if (c->map_h > MAP_H) c->map_h = MAP_H;
-    if (c->card_w > CARD_W) c->card_w = CARD_W;
-    if (c->card_h > CARD_H) c->card_h = CARD_H;
+    if (c->map_w > MAP_MAX_W) c->map_w = MAP_MAX_W;
+    if (c->map_h > MAP_MAX_H) c->map_h = MAP_MAX_H;
+    if (c->card_w > CARD_MAX_W) c->card_w = CARD_MAX_W;
+    if (c->card_h > CARD_MAX_H) c->card_h = CARD_MAX_H;
     if (c->map_w < 16) c->map_w = MAP_W;
     if (c->map_h < 16) c->map_h = MAP_H;
     if (c->card_w < 16) c->card_w = CARD_W;
     if (c->card_h < 16) c->card_h = CARD_H;
+    /* 4:2:0 again: an odd atlas width would put every chroma row a byte out of
+     * step with the one before it, and a layer takes only its own size. */
+    c->map_w  = (double)((unsigned)c->map_w & ~1u);
+    c->map_h  = (double)((unsigned)c->map_h & ~1u);
+    c->card_w = (double)((unsigned)c->card_w & ~1u);
+    c->card_h = (double)((unsigned)c->card_h & ~1u);
 }
 
 /* --------------------------------------------------------------- scaling -- */
@@ -341,24 +414,31 @@ static void blit(unsigned char *dst, unsigned dw, unsigned dh,
         }
     }
 
-    /* Chroma is half resolution in both directions: sample it the same way,
-     * two bytes at a time (NV12 keeps U and V interleaved). */
+    /* Chroma is half resolution in both directions. Two layouts meet here and
+     * only one of them can be right: MSDK's VPP hands out NV12, with U and V
+     * interleaved two bytes a sample, while the atlas the app draws keeps U in
+     * the left half of each chroma row and V in the right half (atlas.js's
+     * fillUV and cluster-render's pack_nv12_atlas both read it that way). So
+     * the split happens here, not there: interleaved bytes copied straight
+     * into the atlas are an atlas whose every chroma sample is a U next to a V,
+     * which on the screen is a picture in the wrong colours - the one failure
+     * that looks like broken hardware rather than a bug. */
     {
         unsigned half_h = dh / 2, half_w = dw / 2;
-        unsigned char *duv = dst + (size_t)dw * dh;
+        unsigned char *du = dst + (size_t)dw * dh;
+        unsigned char *dv = du + half_w;
         unsigned rx = r.x / 2, ry = r.y / 2, rw = r.w / 2, rh = r.h / 2;
+
         for (y = 0; y < half_h; y++) {
             unsigned syy = ry + (unsigned)((unsigned long long)y * rh / half_h);
             const unsigned char *src = suv + (size_t)syy * sxp + (size_t)rx * 2;
-            unsigned char *row = duv + (size_t)y * dw;
-            if (rw == half_w) {
-                memcpy(row, src, (size_t)half_w * 2);
-            } else {
-                for (x = 0; x < half_w; x++) {
-                    unsigned k = (unsigned)((unsigned long long)x * rw / half_w) * 2;
-                    row[x * 2] = src[k];
-                    row[x * 2 + 1] = src[k + 1];
-                }
+            unsigned char *ru = du + (size_t)y * dw;
+            unsigned char *rv = dv + (size_t)y * dw;
+            for (x = 0; x < half_w; x++) {
+                unsigned k = rw == half_w ? x
+                           : (unsigned)((unsigned long long)x * rw / half_w);
+                ru[x] = src[k * 2];
+                rv[x] = src[k * 2 + 1];
             }
         }
     }
@@ -524,7 +604,12 @@ static int open_session(Dec *d)
     }
     if (d->display) {
         sts = g_api.set_handle(d->session, MFX_HANDLE_VA_DISPLAY, d->display);
-        if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoCORE_SetHandle", sts); return 0; }
+        if (sts < MFX_ERR_NONE) {
+            mfx_why("MFXVideoCORE_SetHandle", sts);
+            g_api.close(d->session);
+            d->session = NULL;
+            return 0;
+        }
     }
     if (g_api.query_version(d->session, &ver) >= MFX_ERR_NONE)
         g_mfx_ver = ver.Major * 100 + ver.Minor;
@@ -552,9 +637,20 @@ static int dec_start(Dec *d, mfxVideoParam *from_header)
     d->dec.mfx.DecodedOrder = 1;      /* each picture as soon as it is decoded */
 
     in = d->dec.mfx.FrameInfo;
-    d->w = in.CropW;
-    d->h = in.CropH;
-    if (!d->w || !d->h) { fail("the SPS gives no picture size"); return 0; }
+    /* A stream without a cropping rectangle in its SPS carries its picture at
+     * the coded size: CropW/CropH are then 0, and the size is Width/Height. */
+    d->w = in.CropW ? in.CropW : in.Width;
+    d->h = in.CropH ? in.CropH : in.Height;
+    if (!d->w || !d->h) { fail("the SPS gives no picture size"); dec_stop(d); return 0; }
+    /* 4:2:0 is a 2x2 block per chroma sample: an odd picture cannot be cut into
+     * even rectangles, and the last row and column would have no colour. The
+     * even size goes back into the frame info the surfaces and VPP are set up
+     * with, or the two would disagree about where the chroma row ends. */
+    d->w &= ~1u;
+    d->h &= ~1u;
+    in.CropX = in.CropY = 0;
+    in.CropW = (mfxU16)d->w;
+    in.CropH = (mfxU16)d->h;
 
     memset(&d->vpp, 0, sizeof d->vpp);
     d->vpp.AsyncDepth = 1;
@@ -579,9 +675,9 @@ static int dec_start(Dec *d, mfxVideoParam *from_header)
     memset(&dec_req, 0, sizeof dec_req);
     memset(vpp_req, 0, sizeof vpp_req);
     sts = g_api.dec_query(d->session, &d->dec, &dec_req);
-    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoDECODE_QueryIOSurf", sts); return 0; }
+    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoDECODE_QueryIOSurf", sts); dec_stop(d); return 0; }
     sts = g_api.vpp_query(d->session, &d->vpp, vpp_req);
-    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoVPP_QueryIOSurf", sts); return 0; }
+    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoVPP_QueryIOSurf", sts); dec_stop(d); return 0; }
 
     n = (unsigned)dec_req.NumFrameSuggested + (unsigned)vpp_req[0].NumFrameSuggested + 2;
     if (n > POOL_MAX) n = POOL_MAX;
@@ -609,11 +705,15 @@ static int dec_start(Dec *d, mfxVideoParam *from_header)
     d->vpp.NumExtParam = 1;
 
     sts = g_api.dec_init(d->session, &d->dec);
-    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoDECODE_Init", sts); return 0; }
+    /* A failed init leaves the session unusable: close it here, so that the
+     * next sequence header starts from nothing rather than from half a
+     * pipeline whose error the report already names. */
+    if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoDECODE_Init", sts); dec_stop(d); return 0; }
     sts = g_api.vpp_init(d->session, &d->vpp);
     if (sts < MFX_ERR_NONE) {
         g_api.dec_close(d->session);
         mfx_why("MFXVideoVPP_Init", sts);
+        dec_stop(d);
         return 0;
     }
 
@@ -621,7 +721,7 @@ static int dec_start(Dec *d, mfxVideoParam *from_header)
     d->vheight = out.Height;
     bytes = (size_t)d->pitch * d->vheight * 3 / 2;
     d->vmem = aligned_alloc(4096, (bytes + 4095) & ~(size_t)4095);
-    if (!d->vmem) { fail("no memory for the VPP output"); return 0; }
+    if (!d->vmem) { fail("no memory for the VPP output"); dec_stop(d); return 0; }
     memset(d->vmem, 0, bytes);
     memset(&d->vout, 0, sizeof d->vout);
     d->vout.Info = out;
@@ -646,10 +746,15 @@ static int have_sps(const unsigned char *p, size_t n)
     return 0;
 }
 
-static void resync(unsigned char *p, size_t *n)
+/* Drop everything before the first start code at or after `from` - the bytes
+ * the decoder has already eaten plus whatever the tap joined mid-picture.
+ * Scanning from `from` and not from 0 is what makes progress: a start code
+ * before it belongs to data already given to the decoder, and returning to it
+ * would feed the same bytes again for ever. */
+static void resync(unsigned char *p, size_t *n, size_t from)
 {
     size_t i;
-    for (i = 0; i + 3 < *n; i++) {
+    for (i = from; i + 3 < *n; i++) {
         if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
             memmove(p, p + i, *n - i);
             *n -= i;
@@ -664,40 +769,78 @@ static void resync(unsigned char *p, size_t *n)
 static Out g_map = { MAP_SOCK, -1, 0, 0, 0 };
 static Out g_card = { CARD_SOCK, -1, 0, 0, 0 };
 static unsigned char *g_mapbuf, *g_cardbuf;
+static size_t g_mapbuf_sz, g_cardbuf_sz;
 static long long g_last_frame_ms;
 static unsigned long g_frames, g_rate, g_rate_at_frames;
 static long long g_rate_at_ms;
+/* The crop the pictures are being cut with, and the rectangles the last frame
+ * came from: the report prints both, because on the car's screen the only way
+ * to tell "the settings are not being read" from "they are read and wrong" is
+ * to see what the decoder made of them. */
+static Crop g_crop;
+static Rect g_map_rect, g_card_rect;
+static int g_have_rects;
+static long long g_crop_read_ms;
+
+/* An atlas buffer of exactly this size, remade when a setting changes its
+ * size. Never reused across a size change: a frame is taken only at its
+ * layer's size, and a buffer that is the wrong size is a frame that is
+ * silently dropped. */
+static unsigned char *buf_for(unsigned char **buf, size_t *have, size_t need)
+{
+    if (*buf && *have == need) return *buf;
+    free(*buf);
+    *buf = malloc(need);
+    *have = *buf ? need : 0;
+    return *buf;
+}
 
 static void produce(const Dec *d)
 {
-    Crop c;
     Rect r;
     long long t = now_ms();
+    unsigned mw, mh, cw, ch;
 
-    read_crop(&c);
+    /* The app rewrites the file when a setting changes and cannot tell this
+     * program so: read it again, but not once per frame - a picture every
+     * 60 ms is faster than anyone turns a dial. */
+    if (!g_crop_read_ms || t - g_crop_read_ms >= 500) {
+        g_crop_read_ms = t;
+        read_crop(&g_crop);
+    }
 
-    if (!g_mapbuf) g_mapbuf = malloc((size_t)MAP_W * MAP_H * 3 / 2);
-    if (!g_cardbuf) g_cardbuf = malloc((size_t)CARD_W * CARD_H * 3 / 2);
-    if (!g_mapbuf || !g_cardbuf) { fail("no memory for the pictures"); return; }
+    mw = (unsigned)g_crop.map_w;
+    mh = (unsigned)g_crop.map_h;
+    cw = (unsigned)g_crop.card_w;
+    ch = (unsigned)g_crop.card_h;
+    if (!buf_for(&g_mapbuf, &g_mapbuf_sz, (size_t)mw * mh * 3 / 2)) {
+        fail("no memory for the map");
+        return;
+    }
+    if (!g_crop.card_off && !buf_for(&g_cardbuf, &g_cardbuf_sz, (size_t)cw * ch * 3 / 2)) {
+        fail("no memory for the card");
+        return;
+    }
 
     /* The map: the part of CarLife's picture that is the map, filled out so
      * the cluster's layer is not stretched. */
-    r = rect_of(d->w, d->h, c.map_top, c.map_bottom, c.map_left, c.map_right,
-                (unsigned)c.map_w, (unsigned)c.map_h, !c.map_stretch);
-    blit(g_mapbuf, (unsigned)c.map_w, (unsigned)c.map_h,
-         d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, r);
-    out_write(&g_map, g_mapbuf, (size_t)c.map_w * (unsigned)c.map_h * 3 / 2);
+    r = rect_of(d->w, d->h, g_crop.map_top, g_crop.map_bottom, g_crop.map_left,
+                g_crop.map_right, mw, mh, !g_crop.map_stretch);
+    blit(g_mapbuf, mw, mh, d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, r);
+    out_write(&g_map, g_mapbuf, (size_t)mw * mh * 3 / 2);
+    g_map_rect = r;
 
     /* The HUD: the guidance strip at the top of the picture, straight across.
      * CarLife draws its arrow, its road name and its lanes there, so cutting
      * rather than redrawing is the only thing that can be honest about them. */
-    if (!c.card_off) {
-        r = rect_of(d->w, d->h, c.card_top, c.card_bottom, c.card_left, c.card_right,
-                    (unsigned)c.card_w, (unsigned)c.card_h, 0);
-        blit(g_cardbuf, (unsigned)c.card_w, (unsigned)c.card_h,
-             d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, r);
-        out_write(&g_card, g_cardbuf, (size_t)c.card_w * (unsigned)c.card_h * 3 / 2);
+    if (!g_crop.card_off) {
+        r = rect_of(d->w, d->h, g_crop.card_top, g_crop.card_bottom, g_crop.card_left,
+                    g_crop.card_right, cw, ch, !g_crop.card_stretch);
+        blit(g_cardbuf, cw, ch, d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, r);
+        out_write(&g_card, g_cardbuf, (size_t)cw * ch * 3 / 2);
+        g_card_rect = r;
     }
+    g_have_rects = 1;
 
     g_frames++;
     g_last_frame_ms = t;
@@ -713,10 +856,16 @@ static void produce(const Dec *d)
 static void write_report(void)
 {
     char buf[2048];
+    char card[32];
     time_t t = time(NULL);
     struct tm tm;
     long long age = g_last_frame_ms ? (now_ms() - g_last_frame_ms) : -1;
     int n;
+
+    if (g_crop.card_off)
+        snprintf(card, sizeof card, "off");
+    else
+        snprintf(card, sizeof card, "%ux%u", (unsigned)g_crop.card_w, (unsigned)g_crop.card_h);
 
     localtime_r(&t, &tm);
     n = snprintf(buf, sizeof buf,
@@ -725,6 +874,10 @@ static void write_report(void)
         "state: %s\n"
         "frames: %lu rate %lu fps last %lldms\n"
         "sockets: map=%s(%lu) card=%s(%lu) drops=%lu+%lu\n"
+        "out: map %ux%u card %s\n"
+        "crop: map t%.0f b%.0f l%.0f r%.0f %s; card t%.0f b%.0f l%.0f r%.0f %s\n"
+        "rect: map %u,%u %ux%u; card %u,%u %ux%u\n"
+        "errors: %lu\n"
         "error: %s\n",
         tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid(),
         g_mfx_lib, g_va_lib[0] == '-' ? " (none)" : "", g_va_lib, g_mfx_ver,
@@ -733,12 +886,29 @@ static void write_report(void)
         g_map.fd >= 0 ? "on" : "waiting", g_map.frames,
         g_card.fd >= 0 ? "on" : "waiting", g_card.frames,
         g_map.drops, g_card.drops,
+        (unsigned)g_crop.map_w, (unsigned)g_crop.map_h, card,
+        g_crop.map_top, g_crop.map_bottom, g_crop.map_left, g_crop.map_right,
+        g_crop.map_stretch ? "stretch" : "fill",
+        g_crop.card_top, g_crop.card_bottom, g_crop.card_left, g_crop.card_right,
+        g_crop.card_stretch ? "stretch" : "fill",
+        g_have_rects ? g_map_rect.x : 0, g_have_rects ? g_map_rect.y : 0,
+        g_have_rects ? g_map_rect.w : 0, g_have_rects ? g_map_rect.h : 0,
+        g_have_rects ? g_card_rect.x : 0, g_have_rects ? g_card_rect.y : 0,
+        g_have_rects ? g_card_rect.w : 0, g_have_rects ? g_card_rect.h : 0,
+        g_soft,
         g_why[0] ? g_why : "none");
 
     {
-        int fd = open(REPORT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int fd;
+        ssize_t k;
+        /* snprintf returns what it would have written, which is more than the
+         * buffer when a line does not fit: writing that many bytes would read
+         * past it. */
+        if (n > (int)sizeof buf - 1) n = (int)sizeof buf - 1;
+        if (n < 0) n = 0;
+        fd = open(REPORT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd >= 0) {
-            ssize_t k = write(fd, buf, (size_t)n);
+            k = write(fd, buf, (size_t)n);
             (void)k;
             close(fd);
         }
@@ -761,6 +931,10 @@ int main(void)
     dec.dri = -1;
 
     if (!load_mfx()) { write_report(); return 1; }
+    /* Once before anything is decoded, so that the report can say what it is
+     * set up to cut even while it waits for the tap. */
+    read_crop(&g_crop);
+    g_crop_read_ms = now_ms();
     lfd = listen_unix(IN_SOCK);
     if (lfd < 0) { fail("cannot listen on %s: %s", IN_SOCK, strerror(errno)); write_report(); return 1; }
     ibuf = malloc(MAX_IN);
@@ -819,7 +993,7 @@ int main(void)
         if (!header_done && ilen - iconsumed > 4) {
             size_t avail = ilen - iconsumed;
             if (!have_sps(ibuf + iconsumed, avail)) {
-                resync(ibuf, &ilen);
+                resync(ibuf, &ilen, iconsumed);
                 iconsumed = 0;
             } else if (!dec.session && !open_session(&dec)) {
                 header_done = 1;       /* the reason is in the report */
@@ -827,6 +1001,10 @@ int main(void)
                 mfxBitstream bs;
                 memset(&bs, 0, sizeof bs);
                 memset(&par, 0, sizeof par);
+                /* The decoder fills it in from the SPS; naming the codec is
+                 * what the reference implementation on this unit does, and it
+                 * costs nothing. */
+                par.mfx.CodecId = MFX_CODEC_AVC;
                 bs.Data = ibuf + iconsumed;
                 bs.DataLength = (mfxU32)avail;
                 bs.MaxLength = (mfxU32)avail;
@@ -834,8 +1012,17 @@ int main(void)
                 if (sts == MFX_ERR_MORE_DATA) {
                     if (avail >= MAX_IN / 2) { fail("no sequence header in %u bytes", (unsigned)avail); }
                 } else if (sts < MFX_ERR_NONE) {
-                    fail("MFXVideoDECODE_DecodeHeader: %d", (int)sts);
-                    iconsumed++;           /* step over it and look again */
+                    /* This NAL cannot start a sequence: step past it and look
+                     * for the next one, rather than reading the same bytes
+                     * again on every loop. */
+                    size_t skip = 4;
+                    soft_why("MFXVideoDECODE_DecodeHeader", sts);
+                    while (skip + 3 < avail &&
+                           !(ibuf[iconsumed + skip] == 0 &&
+                             ibuf[iconsumed + skip + 1] == 0 &&
+                             ibuf[iconsumed + skip + 2] == 1))
+                        skip++;
+                    iconsumed += skip < avail ? skip : avail;
                 } else if (dec_start(&dec, &par)) {
                     header_done = 1;
                     note("decoding %ux%u", dec.w, dec.h);
@@ -846,7 +1033,9 @@ int main(void)
         }
 
         if (header_done && dec.up) {
-            for (;;) {
+            int stop = 0, busy = 0;
+
+            while (!stop) {
                 mfxBitstream bs;
                 mfxFrameSurface1 *work = NULL, *out = NULL;
                 mfxSyncPoint sync = NULL;
@@ -866,12 +1055,32 @@ int main(void)
                 sts = g_api.decode(dec.session, &bs, work, &out, &sync);
                 iconsumed += bs.DataOffset;
                 if (!bs.DataOffset && !sync) {
-                    if (++stalls > 8) { note("decoder takes no input"); break; }
+                    /* The decoder took nothing and gave nothing: it will not
+                     * start moving again on its own. Waiting would leave the
+                     * picture stopped for good, so this is a restart like any
+                     * other failed picture. */
+                    if (++stalls > 8) {
+                        soft_why("MFXVideoDECODE_DecodeFrameAsync (no progress)", sts);
+                        stop = 1;
+                        continue;
+                    }
                 } else {
                     stalls = 0;
                 }
 
-                if (sts == MFX_WRN_DEVICE_BUSY) { usleep(1000); continue; }
+                if (sts == MFX_WRN_DEVICE_BUSY) {
+                    /* Bounded: a device that stays busy is a hung device, and
+                     * spinning on it forever would stop the picture without
+                     * ever saying why. */
+                    if (++busy > BUSY_MAX) {
+                        soft_why("MFXVideoDECODE_DecodeFrameAsync (busy)", sts);
+                        stop = 1;
+                    } else {
+                        usleep(1000);
+                    }
+                    continue;
+                }
+                busy = 0;
                 if (sts == MFX_ERR_MORE_DATA) break;
                 if (sts == MFX_ERR_INCOMPATIBLE_VIDEO_PARAM) {
                     /* Another sequence (a phone rotated, a resolution change):
@@ -883,21 +1092,47 @@ int main(void)
                     break;
                 }
                 if (sts < MFX_ERR_NONE && sts != MFX_ERR_MORE_SURFACE) {
-                    mfx_why("MFXVideoDECODE_DecodeFrameAsync", sts);
-                    break;
+                    /* A picture the decoder cannot use - a slice the tap
+                     * dropped half of, most often. It costs this picture and
+                     * the ones that refer to it, not the process: the session
+                     * goes, and the next sequence header starts a new one. */
+                    soft_why("MFXVideoDECODE_DecodeFrameAsync", sts);
+                    stop = 1;
+                    continue;
                 }
                 if (!sync) continue;
 
-                sts = g_api.sync(dec.session, sync, MFX_INFINITE);
-                if (sts != MFX_ERR_NONE) { mfx_why("MFXVideoCORE_SyncOperation", sts); break; }
+                sts = g_api.sync(dec.session, sync, SYNC_MS);
+                if (sts != MFX_ERR_NONE) {
+                    soft_why("MFXVideoCORE_SyncOperation", sts);
+                    stop = 1;
+                    continue;
+                }
 
                 sts = g_api.vpp_run(dec.session, out, &dec.vout, NULL, &sync);
-                if (sts == MFX_WRN_DEVICE_BUSY) { usleep(1000); continue; }
+                if (sts == MFX_WRN_DEVICE_BUSY) {
+                    if (++busy > BUSY_MAX) {
+                        soft_why("MFXVideoVPP_RunFrameVPPAsync (busy)", sts);
+                        stop = 1;
+                    } else {
+                        usleep(1000);
+                    }
+                    continue;
+                }
+                busy = 0;
                 if (sts == MFX_ERR_MORE_DATA) continue;   /* VPP keeps the input */
-                if (sts < MFX_ERR_NONE) { mfx_why("MFXVideoVPP_RunFrameVPPAsync", sts); break; }
+                if (sts < MFX_ERR_NONE) {
+                    soft_why("MFXVideoVPP_RunFrameVPPAsync", sts);
+                    stop = 1;
+                    continue;
+                }
                 if (!sync) continue;
-                sts = g_api.sync(dec.session, sync, MFX_INFINITE);
-                if (sts != MFX_ERR_NONE) { mfx_why("MFXVideoCORE_SyncOperation (VPP)", sts); break; }
+                sts = g_api.sync(dec.session, sync, SYNC_MS);
+                if (sts != MFX_ERR_NONE) {
+                    soft_why("MFXVideoCORE_SyncOperation (VPP)", sts);
+                    stop = 1;
+                    continue;
+                }
 
                 produce(&dec);
             }
@@ -906,6 +1141,11 @@ int main(void)
                 memmove(ibuf, ibuf + iconsumed, ilen - iconsumed);
                 ilen -= iconsumed;
                 iconsumed = 0;
+            }
+            if (stop) {
+                dec_stop(&dec);
+                header_done = 0;           /* the next sequence header restarts */
+                stalls = 0;
             }
         }
 

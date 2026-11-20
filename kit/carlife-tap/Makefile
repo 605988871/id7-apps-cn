@@ -5,11 +5,14 @@
 #
 #   make test     host build + the library's own behaviour (a process that
 #                 preloads it must not change, and it must write its report)
-#   make target   build and test in Docker, then copy the library to
-#                 bin/libcarlife-tap.so, which is what the tool installs
+#   make target   build and test in Docker, then copy the library beside this
+#                 Makefile, which is where the tool installs it from
 #
-# bin/ is committed: the Store packs the tool from the repository tree, so the
-# binary has to be there before anyone can install it.
+# The two binaries sit at the top of this directory and are committed: the Store
+# packs a tool from the repository tree, and every tool here keeps its payload
+# at the component's root with only "path" in its file list - a "from" pointing
+# into a subdirectory is not part of that format, and an install that names one
+# fails before the script ever runs.
 
 CC     ?= cc
 CFLAGS ?= -O2 -g0 -Wall -Wextra -Werror -std=gnu11
@@ -76,12 +79,11 @@ target:
 	$(MAKE) bin
 
 bin: $(T)/libcarlife-tap.so $(T)/carlife-decode
-	@mkdir -p bin
-	cp -f $(T)/libcarlife-tap.so bin/libcarlife-tap.so
-	cp -f $(T)/carlife-decode bin/carlife-decode
-	@chmod 0644 bin/libcarlife-tap.so
-	@chmod 0755 bin/carlife-decode
-	@ls -l bin/libcarlife-tap.so bin/carlife-decode
+	cp -f $(T)/libcarlife-tap.so libcarlife-tap.so
+	cp -f $(T)/carlife-decode carlife-decode
+	@chmod 0644 libcarlife-tap.so
+	@chmod 0755 carlife-decode
+	@ls -l libcarlife-tap.so carlife-decode
 
 clean:
 	rm -rf $(BUILD)

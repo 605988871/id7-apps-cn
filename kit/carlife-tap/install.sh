@@ -12,12 +12,26 @@
 # Overwriting that value would silently take the unit's own preload away.
 set -e
 
-SO="$(pwd)/libcarlife-tap.so"
+# Where this script is, not where it was started from. The Store runs a
+# postInstall from the version directory it just unpacked, but "the directory
+# of $0" is the one answer that stays right in every layout - a run from / or
+# from /var/opt/carlife-tap would otherwise look for the library in the wrong
+# place and report it missing.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LOCAL="$HERE/libcarlife-tap.so"
+
+# What the unit is told to preload is the Store's stable path, not this
+# version's: an upgrade unpacks into a new directory and deletes the old one,
+# so a per-version path is stale the moment the next version lands. Through
+# "current" the same line keeps working across upgrades, and after an
+# uninstall it is a dangling entry the loader warns about and skips - CarLife
+# still starts, which is what matters most.
+SO=/var/opt/carlife-tap/current/libcarlife-tap.so
 TAG=carlife-tap
 
 say() { echo "$TAG: $*"; }
 
-[ -f "$SO" ] || { echo "$TAG: $SO is missing"; exit 1; }
+[ -f "$LOCAL" ] || { echo "$TAG: $LOCAL is missing from the package"; exit 1; }
 
 # ---- 1. does the library load at all, without touching CarLife ----
 # A library that cannot resolve shows up in CarLife as a process that starts
@@ -26,12 +40,16 @@ say() { echo "$TAG: $*"; }
 # the ELF is loadable on this unit and its constructors run.
 MARKER=/dev/shm/carlife-tap.loaded
 rm -f "$MARKER"
-if ! LD_PRELOAD="$SO" CARLIFE_TAP=0 /bin/sh -c 'exit 0' 2>/dev/null; then
+if ! LD_PRELOAD="$LOCAL" CARLIFE_TAP=0 /bin/sh -c 'exit 0' 2>/dev/null; then
     echo "$TAG: the library does not load on this unit's loader"
     exit 1
 fi
-[ -s "$MARKER" ] || { echo "$TAG: the library loads but its constructor never ran"; exit 1; }
-say "library loads"
+# With no /dev/shm there is nowhere to leave the marker, and its absence would
+# say nothing about the library: skip the check rather than fail on it.
+if [ -d /dev/shm ]; then
+    [ -s "$MARKER" ] || { echo "$TAG: the library loads but its constructor never ran"; exit 1; }
+    say "library loads"
+fi
 
 # ---- 2. which unit starts CarLife ----
 # Where the process actually lives beats what a unit file says: Cinemo starts
@@ -82,11 +100,15 @@ if [ -z "$UNIT" ]; then
 fi
 
 [ -n "$UNIT" ] || {
-    echo "$TAG: no systemd unit starts a binary named carlife; nothing changed"
-    echo "$TAG: the probe app's report shows how CarLife is started here"
+    # Not a failed install: the preload goes into whichever unit starts CarLife,
+    # and on a unit where Cinemo starts it that unit is only visible while the
+    # process runs. Exiting non-zero here would roll the whole install back -
+    # the app and the decoder included - over a step that the next install
+    # after one CarLife session fixes. So: say it, keep the rest, exit 0.
+    echo "$TAG: no systemd unit starts a binary named carlife, so nothing was preloaded yet"
     # the Store quotes the last line it read: keep the actionable one last
-    echo "$TAG: open CarLife once, then install again (a running process names its unit)"
-    exit 1
+    echo "$TAG: open CarLife once, then install this again - a running process names its unit"
+    exit 0
 }
 say "unit $UNIT ($UNIT_HOW)"
 

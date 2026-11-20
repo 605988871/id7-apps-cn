@@ -87,6 +87,9 @@ python3 kit/tools/build.py cn_carlife_map
 | HUD on top of alerts | HUD 是否压在宝马自己的提示框之上；默认让位 |
 | Map crop top / bottom / left / right | 从 CarLife 整屏画面里裁掉多少才算地图区，按百分比 |
 | Map crop fit | 裁出的地图怎么装进 1088×480：Fill（按形状裁边，推荐）/ Stretch（压扁，会变形） |
+| HUD card crop top / bottom / left / right | 从 CarLife 整屏画面里裁哪一块当 HUD 的导航条，按百分比。默认 上 0 / 下 16 / 左 0 / 右 24 |
+| HUD card crop fit | 这块怎么装进 HUD：Stretch（默认，内容全在，箭头会胖一点）/ Fill（保住箭头形状，边会被裁掉） |
+| Map in HUD: left / right, up / down | 地图模式下，HUD 玻璃里显示地图的哪一块（按地图的百分比平移，0 是正中间） |
 
 应用状态页会显示：当前帧源及其细节、cluster-render 连接状态、map/HUD 层的状态、累计帧数和帧序号、
 HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB tap` 一行——取流件写在
@@ -150,15 +153,17 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 | 状态 | 仪表盘 | 中控状态页 |
 |---|---|---|
 | 取流件没连上 | `WAITING FOR CARLIFE` + 呼吸点 | `waiting for capture (...)` |
-| 流到了但没有解码器 | `CARLIFE LIVE` + 已收到的 MB / IDR 数 / 速率 | `H.264 ..., no decoder` |
+| 流到了但解码器没起来 | `CARLIFE LIVE` + 已收到的 MB / IDR 数 / 速率 | `H.264 ..., no decoder` |
+| 解码器在跑但没有帧 | 同上 | `Decode : 0 frames, 0 fps - MFXVideoDECODE_Init: -15` |
 | 有解码后的帧 | 真实画面 | `decoded frames from ...` |
 
-**当前限制：中间那条就是现状。** CarLife 发的是 H.264，车机上没有现成的解码器，应用收到的
-是裸流，所以看到的是"流已到达"的数据画面而不是导航画面。这证明的是取流链路（USB → carlife
-进程 → 应用 → cluster-render → 仪表盘）已经全通，缺的只是解码这一步。
+`carlife-tap` 从 0.4.0 起自带解码器（`carlife-decode`，独立 systemd 单元），所以正常情况下
+应该直接到最后一档。中间两档是"取流通了、解码没通"，`Decode:` 一行会指名停在哪个调用——
+这就是车机上唯一能看到解码失败原因的入口。解码器在车机上**尚未实测过**（本机编译、ABI 已校验，
+但第一次真正跑它的是车），所以这两档是真实可能出现的。
 
-帧格式与下文的 TCP/FIFO 相同（`CLMF` 头 + 一块 1088×480 的 YUV 4:2:0 atlas），没有第二个格式：
-将来把解码器接上，把解码结果按这个格式写进同一个 socket 就行，应用这一侧不用再改。
+解码器读 `/dev/shm/carlife-map/h264.sock` 的裸流转成两幅 CLMF 图：`live.sock`（1088×480 地图）
+和 `hud.sock`（HUD 卡片，尺寸随 `HUD width` 变）。帧格式与下文的 TCP/FIFO 完全相同。
 
 ### 只显示地图，不显示整屏
 
@@ -172,13 +177,23 @@ CarLife 协议里**只有一路视频**：手机把中控那块屏整块编码�
 - `Fill`（默认）：把地图区裁成 1088:480（约 2.27:1）的一条，横向视野完整、纵向少一些。地图
   这种东西纵向少一点不影响导航，所以它是默认。
 - `Stretch`：整块压进去，视野全但要变形。
-- `Fit`：整块缩小留黑边，不变形但字更小。
 
 代价说清楚：**仪表盘上的纵向视野会比手机上少**。CarPlay 那一路是手机照着仪表盘的长宽比渲染的，
 不需要从中裁一条，这是两者无法完全对齐的地方。
 
-参数由应用写在 `/dev/shm/carlife-map/crop.json`，解码器每次读到变化就按新框输出。解码器还没接上
-（见上面的"当前限制"），所以这些参数现在只是写进文件，还不会影响画面。
+参数由应用写在 `/dev/shm/carlife-map/crop.json`，解码器每 0.5 秒重读一次，所以改设置当场生效，不用
+重启。同一个文件里还有 HUD 导航条的两个参数：`cardTop/cardBottom/cardLeft/cardRight`（裁哪一块）和
+`cardW/cardH`（输出多大——这个由 `HUD width` 决定，应用写，不要手改）。
+
+怎么知道自己调对了：状态页的 `Cut:` 一行是解码器自己报的账，例如
+
+```
+Cut     : out 1088x480 + card 480x168 | crop m8/0/0/0 c0/16/0/24 | map rect 1280x564 at 0,106
+```
+
+`out` 是它实际发出去的两幅图尺寸，`crop` 是它读到的百分比，`map rect` 是它最后真正裁的那块像素
+矩形。**画面偏一条、或者有黑边，先看这三个数对不对**：`out` 和图层尺寸不一致时 cluster-render 会
+静默丢帧（帧数在涨，屏幕上没有东西）。
 
 `carlife.json` 里可以用 `carlifeHost` / `carlifePort` 让应用主动去连（手机上跑取流件时用），
 `sockPath` 改本地路径。
@@ -226,17 +241,18 @@ HUD 上先是一个转向箭头和一个距离（外加路名），路口再加�
 
 接真画面时，卡片不是"从地图裁"，而是**从 CarLife 整屏画面的导航条裁**：导航条横在画面顶部，
 箭头在它左端，车道排和路名也在这一条里。所以 `strip` 的下沿要够到车道排（默认 16%），否则
-车道会被切掉。这块位置写在 `crop.json` 的 `hud` 段里（`strip` 百分比 + `out` 尺寸 + `sock`），
-解码器按它输出第二路。`mode` 为 `map` 时该段不生效。
+车道会被切掉。这块位置就是 `HUD card crop top/bottom/left/right` 四个设置，写在 `crop.json` 的
+`cardTop/cardBottom/cardLeft/cardRight` 里，解码器按它输出第二路（`cardW/cardH` 由 `HUD width` 定）。
+`What the HUD shows` 为 `A piece of the map` 时该段不生效（`cardMode: "off"`）。
 
 `HUD card:` 一行是判断依据：
 
 | 显示 | 含义 |
 |---|---|
 | `turn card (full), 37 from demo, own socket` | 卡片正在出图，37 帧来自测试图案 |
-| `turn card (full), 0 from carlife, own socket` | 选了实时画面但卡片流还没数据（解码器未接或未输出第二路） |
+| `turn card (full), 0 from carlife, decoder /dev/shm/carlife-map/hud.sock` | 选了实时画面但卡片流还没数据：看 `Cut:` 那行的卡片尺寸和 `Decode:` 的帧数 |
 | `off (no HUD layer)` | 当前 target 不含 HUD，或 HUD 层没建起来 |
-| `map crop, middle of the picture` | 处于地图模式 |
+| `map 456x200 from the map, pan 0/0%` | 处于地图模式，可以再用 `Map in HUD` 两档平移 |
 
 ### TCP
 
@@ -269,8 +285,8 @@ len 字节的 4:2:0 atlas
 ```
 
 HUD 的卡片流是同一格式、另一个尺寸：480×168 时 `len = 480 * 252 = 120960`，
-写在 `/dev/shm/carlife-map/hud.sock`。尺寸跟着 `HUD width` 变，解码器按 `crop.json` 的
-`hud.out` 出图。
+写在 `/dev/shm/carlife-map/hud.sock`。尺寸跟着 `HUD width` 变（480×168 是 86% 时的默认，
+100% 就是 560×196），解码器按 `crop.json` 的 `cardW/cardH` 出图——这两个数由应用写，手改没有意义。
 
 atlas 布局：
 

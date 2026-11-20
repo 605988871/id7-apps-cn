@@ -1,10 +1,15 @@
 #!/bin/sh
 # Take the tap library back out.
 #
-# Run as root by the Store before a version is removed (component.json
-# deactivate). It only removes what this tool added: its own drop-ins, the
-# report and the marker. Units, their enablement and the payload are the
-# Store's business.
+# Run by hand before uninstalling: the Store's tool format has no uninstall
+# hook, so nothing calls this on its own. It only removes what this tool added:
+# its own drop-ins, the report and the marker. Units, their enablement and the
+# payload are the Store's business.
+#
+# Leaving the drop-in behind is survivable - it names
+# /var/opt/carlife-tap/current/libcarlife-tap.so, which after an uninstall is a
+# missing file that the loader warns about and skips - but it would print that
+# warning at every CarLife start, so it is worth removing.
 set -e
 
 say() { echo "carlife-tap: $*"; }
