@@ -27,11 +27,12 @@
  * library, so the installing tool can prove the library loads and runs on the
  * unit without touching CarLife.
  *
- * Build: kit/carlife-tap/build.md (zig cc, x86_64-linux-gnu.2.27, the unit's
- * glibc).
+ * Build: kit/carlife-tap/build-zig.sh (zig cc, x86_64-linux-gnu.2.27, the
+ * unit's glibc).
  */
 
 #define _GNU_SOURCE
+#include <fcntl.h>      /* AT_FDCWD and the O_* the report file is opened with */
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -105,8 +106,12 @@ static unsigned int chunk_len[CHUNKS];
 static unsigned char chunk_head[CHUNKS][HEAD];
 static unsigned long long starts, n_sps, n_pps, n_idr, n_slice;
 static unsigned char p0, p1;
-static volatile long last_write;
-static volatile int rep_lock;
+/* Plain longs, not volatile: every access below goes through the __sync
+ * builtins, which are the ordering. volatile here would only make GCC warn
+ * about a qualifier the builtin does not take (and -Werror turns that into a
+ * failed build). */
+static long last_write;
+static int rep_lock;
 
 /* ---- tiny append-only formatter over a static buffer ---- */
 static char out[3072];

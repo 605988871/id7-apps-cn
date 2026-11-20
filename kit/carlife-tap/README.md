@@ -60,20 +60,29 @@ runs — without touching CarLife.
 ## Build
 
 `bin/libcarlife-tap.so` is committed, because the Store packs the tool from the
-repository tree. `.github/workflows/carlife-tap.yml` rebuilds it in the unit's
-ABI (Ubuntu 18.04, glibc 2.27) and runs its test on every change to this
-directory.
+repository tree. It is built with **zig**, which carries the unit's glibc
+headers and stub libraries, so no container and no compiler install is needed:
 
 ```sh
-make test      # host build and the library's own test
-make target    # build and test in Docker, then bin/libcarlife-tap.so
+ZIG=/d/zig/zig-x86_64-windows-0.14.1/zig.exe ./build-zig.sh
 ```
 
-The test preloads the library into a process that opens, writes and reads a
-file and calls an unknown usbfs ioctl: the bytes must come back unchanged, the
-ioctl must still return `ENOTTY`, and the report must appear. `CARLIFE_TAP_FAKE`
-stands a path prefix in for the phone's usbfs node so the Annex-B parser can be
-exercised where there is no USB.
+`-target x86_64-linux-gnu.2.27` is the whole point: `check_elf.py` then reads
+the result back and refuses it unless it is a 64-bit little-endian x86-64
+shared object, needs nothing but `libc.so.6`, names no `GLIBC_` version above
+2.27, and really exports `read` and `ioctl`. A library that asks for a newer
+symbol fails at load time on the unit with "undefined symbol" and no screen
+says why, so the build stops instead.
+
+`make target` produces the same ABI through Docker + Ubuntu 18.04 and is what a
+CI job would run; `build-zig.sh` is for a machine without Docker.
+
+The test needs Linux, because it preloads the library into a process that
+opens, writes and reads a file and calls an unknown usbfs ioctl: the bytes must
+come back unchanged, the ioctl must still return `ENOTTY`, and the report must
+appear. `CARLIFE_TAP_FAKE` stands a path prefix in for the phone's usbfs node
+so the Annex-B parser can be exercised where there is no USB. On Windows the
+library can only be built, not exercised.
 
 ## State
 
