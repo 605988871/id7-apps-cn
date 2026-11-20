@@ -8,10 +8,15 @@
  *
  * Round 1 on an MGU (iDrive 7) found: /usr/bin/carlife runs as uid 13005, the
  * CarLife family is uid 13000-13099, and a connected session showed no socket
- * on the CarLife TCP ports at all - so the video may not travel over TCP here.
- * This round answers that: the process's own network namespace, its file
- * descriptors (a /dev/bus/usb handle would prove a USB carrier), the USB tree,
- * and whether the kernel offers usbmon for a passive capture.
+ * on the CarLife TCP ports at all - so the video does not travel over TCP here.
+ * Round 2 found a vivo iQOO 12 Pro on the USB bus as an AOA accessory
+ * (interface ff/42/01, driven through usbfs) and no usbmon module, but the app
+ * cannot read another uid's /proc/<pid>/fd or maps (hidepid).
+ *
+ * Round 3 therefore shows the report of the root tool carlife-probe-root,
+ * which can: the descriptors of every CarLife process (a /dev/bus/usb handle is
+ * the proof of the USB carrier), the loaded decoder and projection libraries,
+ * the Cinemo configuration, the unit's own sockets and the build tools.
  */
 
 const fs = require('fs');
@@ -282,6 +287,22 @@ function secLibs(pid) {
 var lines = [];
 var page = 0;
 var scannedAt = '';
+var source = '';
+
+/* The root tool's report: it can read what the app cannot (another uid's
+ * /proc/<pid>/fd and maps on a hidepid unit). Live copy first, the copy the
+ * tool keeps under /var/opt second. */
+var ROOT_REPORT = ['/dev/shm/carlife-probe-root.txt', '/var/opt/carlife-probe-root/report.txt',
+    '/tmp/carlife-probe-root.txt'];
+var ROOT_LIMIT = 150;
+
+function readRoot() {
+    for (var i = 0; i < ROOT_REPORT.length; i++) {
+        var t = readFile(ROOT_REPORT[i]);
+        if (t && t.replace(/\s+/g, '').length) return { path: ROOT_REPORT[i], text: t };
+    }
+    return null;
+}
 
 function clock() {
     var d = new Date();
@@ -290,23 +311,38 @@ function clock() {
 }
 
 function rescan() {
-    var found = findCarlife();
-    var pid = found.main ? found.main.pid : null;
     var out = [];
-    out = out.concat(secProc(found));
-    out = out.concat(secFds(pid));
-    out = out.concat(secNetns(pid));
-    out = out.concat(secUsb());
-    out = out.concat(secUsbMon());
-    out = out.concat(secRuntime());
-    out = out.concat(secLibs(pid));
+    var root = readRoot();
+    if (root) {
+        out.push('=== ROOT REPORT ' + root.path + ' ===');
+        var body = root.text.split('\n');
+        for (var i = 0; i < body.length && out.length < ROOT_LIMIT; i++) {
+            var s = body[i].replace(/\s+$/, '');
+            if (s.length) out.push(s);
+        }
+        if (body.length > ROOT_LIMIT) out.push('(report cut at ' + ROOT_LIMIT + ' lines)');
+        source = 'root report';
+    } else {
+        var found = findCarlife();
+        var pid = found.main ? found.main.pid : null;
+        out.push('=== NO ROOT REPORT: install "CarLife probe (root)" ===');
+        out.push('(Head-unit tools; until then only ports and USB are readable)');
+        out = out.concat(secProc(found));
+        out = out.concat(secFds(pid));
+        out = out.concat(secNetns(pid));
+        out = out.concat(secUsb());
+        out = out.concat(secUsbMon());
+        out = out.concat(secRuntime());
+        out = out.concat(secLibs(pid));
+        source = 'app only';
+    }
     lines = out;
     scannedAt = clock();
     page = 0;
     return out.length;
 }
 
-var PER = 15;
+var PER = 17;
 function pageCount() { return Math.max(1, Math.ceil(lines.length / PER)); }
 
 mgu.run({
@@ -324,18 +360,18 @@ mgu.run({
 
         ctx.loop('MAIN', 5, () => {
             const cv = ctx.canvas(1600, 520).clear('#0b1016');
-            cv.text('CarLife Probe  ' + (page + 1) + '/' + pageCount() + '  @ ' + scannedAt,
-                40, 52, 30, '#ffffff');
-            cv.text('Connect CarLife on the HU first, then Rescan; screenshot every page',
-                40, 84, 19, '#8fa3b4');
+            cv.text('CarLife Probe  ' + (page + 1) + '/' + pageCount() + '  @ ' + scannedAt +
+                '  [' + source + ']', 40, 50, 28, '#ffffff');
+            cv.text('Connect CarLife, wait 15 s, Rescan; screenshot every page',
+                40, 82, 18, '#8fa3b4');
             const start = page * PER;
             for (let i = 0; i < PER && start + i < lines.length; i++) {
                 const s = String(lines[start + i]);
                 const color = s.indexOf('===') === 0 ? '#7fb2ff' :
                     (s.indexOf('<==') >= 0 || s.indexOf('HIT ') === 0 ? '#ffd76e' :
                         (s.indexOf('UNREADABLE') >= 0 || s.indexOf('absent') >= 0 ||
-                            s.indexOf('UNREADABLE/absent') >= 0 ? '#ff8f8f' : '#a8d8c0'));
-                cv.text(s.slice(0, 150), 40, 116 + i * 25, 19, color);
+                            s.indexOf('NO ROOT REPORT') >= 0 ? '#ff8f8f' : '#a8d8c0'));
+                cv.text(s.slice(0, 170), 40, 112 + i * 23, 17, color);
             }
             return ui.image('MAIN_GFX', cv);
         });
