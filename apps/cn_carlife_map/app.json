@@ -1,0 +1,146 @@
+{
+  "id": "cn_carlife_map",
+  "title": "CarLife Map",
+  "description": "把手机 CarLife 的画面送到 iDrive 7 仪表盘地图区和 HUD。画面由本机服务或网络帧源提供，经 cluster-render 渲染；需先在 MGU Store 安装 Cluster renderer。实验功能",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OAA6",
+  "iconGlyph": "gauge",
+  "mguHmi": [
+    "ID7"
+  ],
+  "autostart": true,
+  "requires": {
+    "idrive7-renderd": "2.1.15"
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "CarLife Map",
+      "buttons": [
+        [
+          "BTN_SETTINGS",
+          "Settings"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "target",
+      "label": "Show map on",
+      "type": "choice",
+      "default": "cluster",
+      "options": [
+        [
+          "off",
+          "Off"
+        ],
+        [
+          "cluster",
+          "Cluster only"
+        ],
+        [
+          "hud",
+          "HUD only"
+        ],
+        [
+          "both",
+          "Cluster and HUD"
+        ]
+      ]
+    },
+    {
+      "key": "source",
+      "label": "Picture source",
+      "type": "choice",
+      "default": "demo",
+      "options": [
+        [
+          "demo",
+          "Demo (test picture)"
+        ],
+        [
+          "tcp",
+          "Network (TCP)"
+        ],
+        [
+          "fifo",
+          "Local pipe (FIFO)"
+        ]
+      ]
+    },
+    {
+      "key": "fps",
+      "label": "Frame rate",
+      "type": "number",
+      "unit": "fps",
+      "default": 15,
+      "steps": [
+        5,
+        10,
+        15,
+        20,
+        30
+      ]
+    },
+    {
+      "key": "hudWidth",
+      "label": "HUD width",
+      "type": "number",
+      "unit": "%",
+      "default": 57,
+      "steps": [
+        40,
+        50,
+        57,
+        65,
+        75,
+        85
+      ]
+    },
+    {
+      "key": "hudX",
+      "label": "HUD left / right",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        -160,
+        -120,
+        -80,
+        -40,
+        0,
+        40,
+        80,
+        120,
+        160
+      ]
+    },
+    {
+      "key": "hudY",
+      "label": "HUD up / down",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        -80,
+        -60,
+        -40,
+        -20,
+        0,
+        20,
+        40,
+        60,
+        80
+      ]
+    },
+    {
+      "key": "hudKeep",
+      "label": "HUD on top of alerts",
+      "type": "bool",
+      "default": false
+    }
+  ]
+}

@@ -2605,5 +2605,18 @@
   "After an upshift, on knock, after a standing start; Shake: on the limiter. And the downshift arrows": "升挡后、爆震时、静止起步后触发；震动：在限转时。以及降挡指示",
   "IterioDev's Comfort tool is running: it writes the ambient lights too, so the colours jump between the two apps": "IterioDev 的舒适软件正在运行：其也在写入氛围灯，使颜色在两个应用间跳变",
   "Take a photo when it says DONE. Settings > Scan unit picks the unit. Replies are saved in the app's data folder (scan_07.json).": "当显示“完成”时存图。设置 > 扫描控制单元 可选择单元。应答保存在应用数据文件夹（scan_07.json）。",
-  "IterioDev's Comfort tool is running. It changes the ambient lights too, so the colours jump between the two apps. Uninstall it in the Store (Installed, Head-unit tools, Comfort) and use one ambient app at a time.": "IterioDev 的舒适软件正在运行，其也会更改氛围灯，使颜色在两个应用间跳变。请在应用中心中移除其（已安装 > 主机软件 > 舒适），一次只使用一个氛围灯应用。"
+  "IterioDev's Comfort tool is running. It changes the ambient lights too, so the colours jump between the two apps. Uninstall it in the Store (Installed, Head-unit tools, Comfort) and use one ambient app at a time.": "IterioDev 的舒适软件正在运行，其也会更改氛围灯，使颜色在两个应用间跳变。请在应用中心中移除其（已安装 > 主机软件 > 舒适），一次只使用一个氛围灯应用。",
+  "CarLife Map": "CarLife 地图",
+  "Show map on": "地图显示位置",
+  "Picture source": "画面来源",
+  "HUD width": "HUD 宽度",
+  "HUD left / right": "HUD 左移",
+  "HUD up / down": "HUD 上移",
+  "HUD on top of alerts": "HUD 保持在前",
+  "Cluster only": "仅仪表",
+  "HUD only": "仅HUD",
+  "Cluster and HUD": "仪表和HUD",
+  "Demo (test picture)": "演示 测试画面",
+  "Network (TCP)": "网络 TCP",
+  "Local pipe (FIFO)": "本机管道 FIFO"
 }
