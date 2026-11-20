@@ -39,6 +39,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <gnu/libc-version.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -915,7 +916,7 @@ static void write_report(void)
     }
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     Dec dec;
     static unsigned char *ibuf;
@@ -925,6 +926,19 @@ int main(void)
     mfxStatus sts;
     int header_done = 0, restarts = 0, stalls = 0;
     long long last_report = 0;
+
+    /* One line, then out. The install hook runs this before the unit is
+     * started, so that "the program does not run on this unit" is a sentence
+     * on the status page instead of systemd's "Failed at step EXEC spawning
+     * /var/opt/..." - which names a file that is present, executable and
+     * innocent, and leaves the actual reason (the loader the toolchain asked
+     * for is not on the unit) invisible. Nothing is opened and nothing is
+     * changed: this must be safe to run at any time, including mid-install. */
+    if (argc > 1 && strcmp(argv[1], "--selftest") == 0) {
+        printf("selftest ok, glibc %s\n", gnu_get_libc_version());
+        fflush(stdout);
+        return 0;
+    }
 
     signal(SIGPIPE, SIG_IGN);
     memset(&dec, 0, sizeof dec);

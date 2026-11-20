@@ -612,6 +612,7 @@ async function run(ctx) {
      * "not running (no report)" is a dead end: nothing on the car can say
      * whether the binary is missing, not executable, or simply not started. */
     let decBoot = '';
+    let decExec = '';
     let decBootAt = 0;
     function uptime() {
         try {
@@ -624,19 +625,33 @@ async function run(ctx) {
         if (now - decBootAt < 5000) return decBoot;
         decBootAt = now;
         let s;
-        try { s = fs.readFileSync(DECODE_BOOT, 'utf8'); } catch (e) { decBoot = ''; return decBoot; }
+        try { s = fs.readFileSync(DECODE_BOOT, 'utf8'); } catch (e) { decBoot = ''; decExec = ''; return decBoot; }
         const lines = s.split('\n').filter(Boolean);
         const state = lines.find((l) => /^state:/.test(l));
-        const exec = lines.find((l) => /^exec:/.test(l) && /(missing|not executable)/.test(l));
+        const exec = lines.find((l) => /^exec:/.test(l) &&
+            /(missing|not executable|will not run)/.test(l));
         const unit = lines.find((l) => /^unit:/.test(l) && /not installed/.test(l));
-        const bad = lines.find((l) => /(Failed|failed|No such|not found|denied)/.test(l));
+        /* systemd's own account of why the unit is down: a journal line,
+         * "Nov 20 15:13:35 mgu systemd[12991]: carlife-decode.service: Failed
+         * at step EXEC spawning /var/opt/...". Sliced as-is it used up the
+         * whole line on the timestamp and the host name, so the part that
+         * says what happened was the part that got cut off. Strip the prefix,
+         * then the unit's name, and keep what follows. */
+        const raw = lines.find((l) => /^[A-Z][a-z]{2} +\d+ [\d:]+ /.test(l) ||
+            /Failed at step|error while loading/.test(l));
+        decExec = raw
+            ? raw.replace(/^[A-Z][a-z]{2} +\d+ [\d:]+ \S+ /, '')
+                .replace(/^systemd\[\d+\]: /, '')
+                .replace(/^carlife-decode\.service: /, '')
+                .slice(0, 110)
+            : '';
         /* An install from before this boot has been overtaken: systemd started
          * the unit at boot, and the hook's account of a unit that was not
          * running then is history, not a diagnosis. */
         const was = parseFloat((/^uptime: ([\d.]+)/m.exec(s) || [])[1]);
         const up = uptime();
         const stale = isFinite(was) && up > 0 && up < was;
-        const parts = [stale ? 'from before this boot' : '', state, exec, unit, bad].filter(Boolean);
+        const parts = [stale ? 'from before this boot' : '', state, exec, unit].filter(Boolean);
         decBoot = parts.join(' | ').replace(/^state: /, '').slice(0, 110);
         return decBoot;
     }
@@ -718,8 +733,17 @@ async function run(ctx) {
          * and the decoder's own report is the only place that says so. */
         if (age >= 0 && age <= 4) return decErr ? 'DECODER: ' + decErr : 'DECODER UP, NO PICTURE YET';
         const b = readDecBoot();
+        /* systemd's sentence is the only exact account there is, so the
+         * cluster gets a short form of it rather than another vague "did not
+         * start": a missing loader and a missing execute bit are different
+         * faults that need different fixes. */
+        if (decExec) {
+            if (/No such file/.test(decExec)) return 'DECODER WILL NOT RUN: NO LOADER';
+            if (/ermission|denied/.test(decExec)) return 'DECODER NOT EXECUTABLE';
+            return 'DECODER FAILED TO START';
+        }
         if (/missing|not executable/.test(b)) return 'DECODER NOT EXECUTABLE';
-        if (/failed|Failed|denied/.test(b)) return 'DECODER FAILED TO START';
+        if (/will not run/.test(b)) return 'DECODER WILL NOT RUN';
         if (age > 4) return 'DECODER STOPPED';
         return 'DECODER NOT RUNNING';
     }
@@ -794,7 +818,12 @@ async function run(ctx) {
         cv.text('HUD lyr : ' + (svcHudLayer() || (svcText ? 'no layer on hud' : 'not asked yet')), 40, 439, 19, '#c8a8e0');
         cv.text('Refused : ' + (lastRefused ? lastRefused.slice(0, 120) : 'none'), 40, 464, 19,
             lastRefused ? '#e08a8a' : '#8fa3b4');
-        cv.text('CarLife needs the tap tool and a decoder; see the app README.', 40, 492, 19, '#8fa3b4');
+        /* When the unit would not start, systemd's own sentence takes the last
+         * line. It has been the only account of the failure that reached the
+         * screen, and until now it reached it cut off in the middle. */
+        cv.text(decExec ? 'Exec err: ' + decExec
+                        : 'CarLife needs the tap tool and a decoder; see the app README.',
+            40, 492, 19, decExec ? '#e08a8a' : '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
 

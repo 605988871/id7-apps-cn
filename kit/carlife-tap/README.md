@@ -288,6 +288,26 @@ library, so `check_elf.py` holds it to the other rule: it may need only the C
 runtime, because it finds MSDK and libva itself. Its MSDK headers are in
 `third_party/mfx` (Intel's, MIT, the 1.x subset the unit's 1.24 library takes).
 
+A program also names the **loader** the kernel has to start it with, and that
+is the one thing a library never has to get right. Zig — like every toolchain
+that grew up on a desktop distribution — asks for `/lib64/ld-linux-x86-64.so.2`.
+This unit has no `/lib64`: its loader is `/lib/ld-linux-x86-64.so.2`, which is
+what `kit/renderd` links against and its `check_target.sh` enforces. The
+failure that causes is uniquely hard to read, because nothing about the file is
+wrong: it is present, it has its execute bit, `stat` and `test -x` both say so,
+and `execve` still returns `ENOENT` — the *interpreter* is missing. systemd
+reports it as `Failed at step EXEC spawning /var/opt/carlife-tap/current/
+carlife-decode` and stops there. That was 0.4.4's one and only bug: the tap
+loaded, the stream arrived, and the decoder never ran a line of code.
+
+So `build-zig.sh` and the Makefile both pass
+`-Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2`, `check_elf.py` refuses a
+program that names anything else, and `install.sh` no longer trusts `-x`: it
+runs `carlife-decode --selftest` (which prints one line and exits) and writes
+the answer, or the error, to the boot file the status page prints. A program
+that cannot start is now a sentence on the car's screen instead of a rebuild
+and a guess.
+
 `test/decode_math_test.py` is the decoder's arithmetic again, in Python: the
 decoder cannot run on a build machine (it needs the unit's MSDK and a VA display),
 but its rectangles can be checked anywhere. It runs the crop settings over the

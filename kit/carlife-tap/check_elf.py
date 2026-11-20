@@ -25,6 +25,10 @@ ET_DYN = 3
 ET_EXEC = 2
 EM_X86_64 = 62
 MAX_GLIBC = (2, 27)
+PT_INTERP = 3
+# The unit has no /lib64; this is where its loader actually is, and what
+# kit/renderd links its binary against.
+UNIT_LD = "/lib/ld-linux-x86-64.so.2"
 
 
 class Bad(Exception):
@@ -123,6 +127,25 @@ def glibc_versions(d):
     return seen
 
 
+def interp(d):
+    """The ELF interpreter the kernel will ask for, or "" for a shared library.
+
+    A library is loaded by another program's loader, so it has none and cannot
+    be wrong about it. A program does, and a missing one is invisible: execve
+    returns ENOENT, so every check that looks at the file itself - does it
+    exist, is it executable - answers yes while nothing runs."""
+    phoff = struct.unpack_from("<Q", d, 32)[0]
+    phentsize = struct.unpack_from("<H", d, 54)[0]
+    phnum = struct.unpack_from("<H", d, 56)[0]
+    for i in range(phnum):
+        off = phoff + i * phentsize
+        if struct.unpack_from("<I", d, off)[0] == PT_INTERP:
+            at = struct.unpack_from("<Q", d, off + 8)[0]
+            size = struct.unpack_from("<Q", d, off + 32)[0]
+            return d[at:at + size].rstrip(b"\0").decode("ascii", "replace")
+    return ""
+
+
 def main(path):
     lib = path.endswith(".so")
     d = open(path, "rb").read()
@@ -135,6 +158,8 @@ def main(path):
     print("soname    %s" % (soname or "(none)"))
     print("needs     %s" % ", ".join(needed))
     print("glibc     %s" % (", ".join(sorted(vers)) or "(none)"))
+    if not lib:
+        print("loader    %s" % (interp(d) or "(none - would never start)"))
 
     bad = []
     for v in vers:
@@ -159,7 +184,16 @@ def main(path):
         extra = [n for n in needed if n not in allowed]
         if extra:
             raise Bad("needs %s; the unit has only the C runtime" % ", ".join(extra))
-        print("runtime   C library only")
+        # And it has to name a loader the unit actually has. Asking for
+        # /lib64/... is the default of every toolchain that grew up on a
+        # desktop distribution, and on this unit it is the difference between
+        # a running decoder and "Failed at step EXEC spawning" over a file
+        # that is there, executable, and blameless.
+        want = interp(d)
+        if want != UNIT_LD:
+            raise Bad("asks for loader '%s'; the unit has no /lib64 - link with "
+                      "-Wl,--dynamic-linker=%s" % (want or "(none)", UNIT_LD))
+        print("runtime   C library only, loader %s" % want)
 
     for fn in ("malloc", "free", "pthread_create", "dlsym"):
         if fn in needed:                    # nonsensical, but cheap to guard

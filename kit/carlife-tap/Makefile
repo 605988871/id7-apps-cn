@@ -19,6 +19,13 @@ CFLAGS ?= -O2 -g0 -Wall -Wextra -Werror -std=gnu11
 BUILD  ?= build
 JOBS   ?= $(shell nproc 2>/dev/null || echo 2)
 
+# The unit's loader is /lib/ld-linux-x86-64.so.2 and it has no /lib64 - the
+# same reason kit/renderd's Makefile passes this. Without it the binary is
+# built against /lib64/..., which is absent on the unit, and execve fails with
+# ENOENT before anything runs: systemd says "Failed at step EXEC spawning ..."
+# about a file that is plainly there and executable.
+UNIT_LD = -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2
+
 IMAGE  := carlife-tap-build:$(shell cksum < docker/Dockerfile | cut -d' ' -f1)
 DOCKER_IMAGE = docker image inspect $(IMAGE) >/dev/null 2>&1 || \
 	docker build -q --platform linux/amd64 -t $(IMAGE) docker
@@ -39,7 +46,7 @@ MFX = ../../third_party/mfx/include
 
 $(T)/carlife-decode: src/decode.c
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -I$(MFX) -o $@ src/decode.c
+	$(CC) $(CFLAGS) $(UNIT_LD) -I$(MFX) -o $@ src/decode.c
 
 # Named *carlife* on purpose: the library only reports inside a process whose
 # executable is carlife's, and the test has to reach that path.

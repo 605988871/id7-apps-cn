@@ -24,6 +24,26 @@ TARGET=x86_64-linux-gnu.2.27
 CFLAGS="-O2 -g0 -Wall -Wextra -Werror -std=gnu11"
 MFX=../../third_party/mfx/include
 
+# The unit has no /lib64: its loader is /lib/ld-linux-x86-64.so.2, which is the
+# path kit/renderd links against and its check_target.sh enforces. Zig's
+# x86_64-linux-gnu target asks for /lib64/ld-linux-x86-64.so.2 instead, and the
+# failure that causes is uniquely confusing: the file is there, has its execute
+# bit, and stat says so - execve still fails with ENOENT because the *loader*
+# is missing, and systemd reports it as "Failed at step EXEC spawning ..." with
+# no errno on screen. So: name the loader. A shared library has no PT_INTERP,
+# which is why the preload keeps working while a program built the same way
+# does not.
+UNIT_LD="-Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2"
+
+# Git Bash rewrites anything that looks like a path in an argument into a
+# Windows path, including the one inside -Wl,...: the binary then asks the
+# kernel for D:/Program Files/.../ld-linux-x86-64.so.2, which is exactly the
+# failure UNIT_LD exists to prevent, only stranger. These two say "pass the
+# arguments through untouched".
+MSYS_NO_PATHCONV=1
+MSYS2_ARG_CONV_EXCL='*'
+export MSYS_NO_PATHCONV MSYS2_ARG_CONV_EXCL
+
 cd "$(dirname "$0")"
 
 echo "--- zig $("$ZIG" version) ---"
@@ -36,7 +56,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = tap ]; then
 fi
 
 if [ "$WHAT" = all ] || [ "$WHAT" = decode ]; then
-    "$ZIG" cc -target "$TARGET" $CFLAGS -I"$MFX" \
+    "$ZIG" cc -target "$TARGET" $CFLAGS -I"$MFX" $UNIT_LD \
         -o carlife-decode src/decode.c
     chmod 0755 carlife-decode
     python3 check_elf.py carlife-decode

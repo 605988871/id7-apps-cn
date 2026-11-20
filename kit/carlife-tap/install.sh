@@ -277,11 +277,59 @@ if read -r UP _ < /proc/uptime 2>/dev/null; then boot "uptime: $UP"; fi
 for b in "$HERE/carlife-decode" "$CUR/carlife-decode"; do
     [ -f "$b" ] && chmod 0755 "$b" 2>/dev/null || true
 done
-if [ ! -x "$CUR/carlife-decode" ]; then
-    boot "exec: $CUR/carlife-decode is missing or not executable"
+
+# Run it, do not look at it. A program is not runnable just because the file is
+# there and has its execute bit: the kernel also needs the ELF interpreter named
+# inside it, and a toolchain that grew up on a desktop distribution names
+# /lib64/ld-linux-x86-64.so.2 - which this unit does not have. execve then fails
+# with ENOENT and systemd says "Failed at step EXEC spawning <path>" about a
+# file that is present, executable and blameless. That is what the decoder did
+# on its first install, and nothing on the screen said why.
+#
+# The version that unpacked here is the one to ask, not whatever "current"
+# points at: during an upgrade the two differ, and an older payload has no
+# --selftest - it would start decoding instead of answering, and hold the
+# install open while it waits for a stream. So a timeout wraps it as well, in
+# case a future payload ever answers slowly.
+DEC="$HERE/carlife-decode"
+RC=0
+OUT=
+if [ ! -x "$DEC" ]; then
+    boot "exec: $DEC is missing or not executable"
 else
-    boot "exec: $CUR/carlife-decode"
+    if command -v timeout >/dev/null 2>&1; then
+        OUT=$(timeout 10 "$DEC" --selftest 2>&1) || RC=$?
+    else
+        OUT=$("$DEC" --selftest 2>&1) || RC=$?
+    fi
+    if [ "$RC" = 0 ]; then
+        boot "exec: $DEC runs ($OUT)"
+    else
+        # A payload with no --selftest runs as a decoder instead of answering,
+        # and 124 is the timeout saying so - worth naming, because it reads as
+        # "the program is fine, the payload is old".
+        WHAT=$(printf '%s' "$OUT" | head -1)
+        [ -n "$WHAT" ] || WHAT="no answer (an older payload without --selftest?)"
+        boot "exec: $DEC will not run (rc $RC): $WHAT"
+    fi
 fi
+# Is the thing the unit starts the same file that was just tested? An upgrade
+# unpacks beside the running one; a "current" that still points at the old
+# directory is a decoder that keeps running the old bug.
+if [ ! -x "$CUR/carlife-decode" ]; then
+    boot "deployed: $CUR/carlife-decode is missing"
+elif command -v cmp >/dev/null 2>&1 && ! cmp -s "$DEC" "$CUR/carlife-decode" 2>/dev/null; then
+    boot "deployed: current is a different file than this version"
+else
+    boot "deployed: $CUR/carlife-decode"
+fi
+# Which loaders this unit actually has, so a mismatch is one line to read
+# rather than a rebuild to guess at.
+LOADERS=
+for L in /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2; do
+    [ -e "$L" ] && LOADERS="${LOADERS:+$LOADERS }$L"
+done
+boot "loaders: ${LOADERS:-none found}"
 
 FOUND=
 for f in /etc/systemd/system/carlife-decode.service \

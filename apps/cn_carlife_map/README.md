@@ -136,10 +136,23 @@ HUD 收下的帧数与它当前的尺寸（`HUD 37 (456x200)`），以及 `USB t
 
 | `Dec boot` | 含义 |
 |---|---|
-| `active` 但仍无报告 | 进程起来了又立刻退出，看同一行后面的 systemd 原文 |
+| `active` 但仍无报告 | 进程起来了又立刻退出，看下面 `Exec err` 行的 systemd 原文 |
 | `... is missing or not executable` | 载荷里的执行位丢了；重装一次工具即可（钩子会 `chmod 0755`） |
+| `... runs (selftest ok, glibc 2.27)` | 钩子真的把它跑起来过：执行位、装载器、C 库都没问题 |
+| `... will not run: ...` | 跑不起来，后面是它自己的第一句错话；载荷是坏的，重装工具 |
 | `unit: ... was not installed` | 商店没落单元文件；工具与应用的依赖关系没对上，重装应用 |
 | `failed` / `No such file or directory` | 单元在，`ExecStart` 指向的路径不存在：`/var/opt/carlife-tap/current` 没建起来 |
+
+起不来时，那一行下面会多一行 `Exec err:`，是 systemd 自己那句话去掉了时间戳和主机名：
+
+```
+Exec err: Failed at step EXEC spawning /var/opt/carlife-tap/current/carlife-decode: No such file or directory
+```
+
+**`No such file or directory` 配上一个确实存在的文件**，说的是 ELF 里写的装载器不在这台车机上，
+不是文件不在（0.4.4 就是这样：程序写的是 `/lib64/ld-linux-x86-64.so.2`，而车机只有
+`/lib/ld-linux-x86-64.so.2`）。`...: Permission denied` 才是执行位。取流件 0.4.5 起装载器
+已按车机改好，`loaders:` 一行会列出这台车机上实际有哪几个。
 
 解码在车机侧做，因为 CarLife 只送一路整屏 H.264，协议里既没有"只含地图"的第二路，
 也没有转向/车道/限速这些数据（官方车机端 SDK 的导航模块只有 `IDLE` 和 `START` 两个状态）。
@@ -166,7 +179,9 @@ cluster-render、槽位、HUD 位置都正常，不依赖任何外部程序。
 | 画面上那行 | 意思 | 要做什么 |
 |---|---|---|
 | `DECODER NOT RUNNING` | 解码单元没跑（最常见） | 看状态页 `Dec boot` 行；重装一次取流件即可，钩子会 `chmod` 并 `systemctl restart` |
-| `DECODER FAILED TO START` | 单元在但起不来 | 同一行后面有 systemd 的原文 |
+| `DECODER FAILED TO START` | 单元在但起不来 | 状态页最下面 `Exec err` 行有 systemd 的原文 |
+| `DECODER WILL NOT RUN: NO LOADER` | 程序里的装载器在车机上不存在 | 装 0.4.5 及以后的取流件；旧版写的是 `/lib64/...`，车机没有这个目录 |
+| `DECODER NOT EXECUTABLE` | 载荷没有执行位 | 重装取流件 |
 | `DECODER UP, NO PICTURE YET` | 解码器在，取流件还没连上 | 打开 CarLife 并跑起导航 |
 | `FRAME 576000 WANT 783360` | 解码器在送，但尺寸不是图层要的 | 这一帧会被 cluster-render 静默丢掉；说明车机上跑的是旧版解码器，重装取流件 |
 

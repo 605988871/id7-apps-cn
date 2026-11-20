@@ -1,7 +1,7 @@
 {
   "id": "carlife-tap",
   "kind": "tool",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "title": "CarLife 取流与解码",
   "description": "把 CarLife 收到的画面取出来并解码，裁成 CarLife Map 要的两幅图：仪表盘的地图（1088x480）和 HUD 的导航条（大小由应用设定）。手机只送一路 H.264，车机侧没有第二路可取，所以只能在这里解码后再裁。取流只读、一个字节都不改；解码跑在自己的进程里，崩了也不会带走 CarLife（iDrive 7）",
   "mguHmi": [
