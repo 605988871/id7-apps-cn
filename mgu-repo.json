@@ -75,6 +75,16 @@
       "mguHmi": [
         "ID7"
       ]
+    },
+    {
+      "id": "turn-cam",
+      "path": "kit/turn-cam",
+      "title": "转向影像取流与解码",
+      "description": "车机摄像头在 AVB 总线上的 H.264 取下来并解码成仪表盘地图区域那一块画面；随「转向影像」应用一同安装，不请求摄像头，不与行车记录仪抢设备（iDrive 7）",
+      "uninstallable": true,
+      "mguHmi": [
+        "ID7"
+      ]
     }
   ]
 }

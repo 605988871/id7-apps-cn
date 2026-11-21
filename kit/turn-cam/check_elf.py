@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Check that a built libcarlife-tap.so will actually load on the unit.
+
+The unit is x86_64 with glibc 2.27. A library that asks for a newer symbol
+version fails at load time with "undefined symbol" and nothing on the car
+screen says why, so the build has to refuse to hand one over.
+
+Pure stdlib ELF parsing: the build machine (Windows) has no readelf, and the
+container does not always have binutils either.
+
+    python3 check_elf.py bin/libcarlife-tap.so
+
+Exit status 1 and a reason on stderr if anything is off.
+"""
+
+import struct
+import sys
+
+SHT_SYMTAB = 2
+SHT_STRTAB = 3
+SHT_DYNAMIC = 6
+SHT_DYNSYM = 11
+DT_NEEDED = 1
+ET_DYN = 3
+ET_EXEC = 2
+EM_X86_64 = 62
+MAX_GLIBC = (2, 27)
+PT_INTERP = 3
+# The unit has no /lib64; this is where its loader actually is, and what
+# kit/renderd links its binary against.
+UNIT_LD = "/lib/ld-linux-x86-64.so.2"
+
+
+class Bad(Exception):
+    pass
+
+
+def sections(d):
+    if d[:4] != b"\x7fELF":
+        raise Bad("not an ELF file")
+    if d[4] != 2:
+        raise Bad("not 64-bit (the unit is x86_64)")
+    if d[5] != 1:
+        raise Bad("not little-endian")
+    e_type = struct.unpack_from("<H", d, 16)[0]
+    e_machine = struct.unpack_from("<H", d, 18)[0]
+    if e_type not in (ET_DYN, ET_EXEC):
+        raise Bad("not an object the loader takes (e_type=%d)" % e_type)
+    if e_machine != EM_X86_64:
+        raise Bad("wrong machine (e_machine=%d, want %d)" % (e_machine, EM_X86_64))
+
+    shoff = struct.unpack_from("<Q", d, 40)[0]
+    shentsize = struct.unpack_from("<H", d, 58)[0]
+    shnum = struct.unpack_from("<H", d, 60)[0]
+    shstrndx = struct.unpack_from("<H", d, 62)[0]
+    if not shoff or not shnum:
+        raise Bad("no section headers (stripped too hard to inspect)")
+
+    out = []
+    for i in range(shnum):
+        off = shoff + i * shentsize
+        (name, typ, flags, addr, offset, size,
+         link, info, align, entsize) = struct.unpack_from("<IIQQQQIIQQ", d, off)
+        out.append(dict(name=name, type=typ, offset=offset, size=size,
+                        link=link, entsize=entsize))
+
+    strtab = out[shstrndx]
+    for s in out:
+        end = d.index(b"\0", strtab["offset"] + s["name"])
+        s["sname"] = d[strtab["offset"] + s["name"]:end].decode("ascii", "replace")
+    return out
+
+
+def cstr(d, off):
+    return d[off:d.index(b"\0", off)].decode("ascii", "replace")
+
+
+def dyn_needed(d, secs):
+    dyn = next((s for s in secs if s["type"] == SHT_DYNAMIC), None)
+    if not dyn:
+        raise Bad("no .dynamic section")
+    strtab = secs[dyn["link"]]
+    needed, soname = [], None
+    for off in range(dyn["offset"], dyn["offset"] + dyn["size"], 16):
+        tag, val = struct.unpack_from("<qQ", d, off)
+        if tag == 0:
+            break
+        if tag == DT_NEEDED:
+            needed.append(cstr(d, strtab["offset"] + val))
+        elif tag == 14:                     # DT_SONAME
+            soname = cstr(d, strtab["offset"] + val)
+    return needed, soname
+
+
+def exported(d, secs):
+    """Global defined symbols in .dynsym."""
+    sym = next((s for s in secs if s["type"] == SHT_DYNSYM), None)
+    if not sym:
+        raise Bad("no .dynsym (nothing would be interposable)")
+    strtab = secs[sym["link"]]
+    out = set()
+    for off in range(sym["offset"], sym["offset"] + sym["size"], sym["entsize"] or 24):
+        st_name, st_info, st_other, st_shndx, st_value, st_size = \
+            struct.unpack_from("<IBBHQQ", d, off)
+        bind = st_info >> 4
+        if st_name and bind in (1, 2) and st_shndx != 0:   # GLOBAL, WEAK, defined
+            out.add(cstr(d, strtab["offset"] + st_name))
+    return out
+
+
+def glibc_versions(d):
+    """Every GLIBC_2.x named anywhere in the file: .gnu.version_r and the
+    version strings live in string tables, and a plain scan cannot miss one."""
+    seen, i = set(), 0
+    needle = b"GLIBC_2."
+    while True:
+        i = d.find(needle, i)
+        if i < 0:
+            break
+        j = i + len(needle)
+        num = b""
+        while j < len(d) and (d[j:j + 1].isdigit() or d[j:j + 1] == b"."):
+            num += d[j:j + 1]
+            j += 1
+        seen.add("2." + num.decode())
+        i = j
+    return seen
+
+
+def interp(d):
+    """The ELF interpreter the kernel will ask for, or "" for a shared library.
+
+    A library is loaded by another program's loader, so it has none and cannot
+    be wrong about it. A program does, and a missing one is invisible: execve
+    returns ENOENT, so every check that looks at the file itself - does it
+    exist, is it executable - answers yes while nothing runs."""
+    phoff = struct.unpack_from("<Q", d, 32)[0]
+    phentsize = struct.unpack_from("<H", d, 54)[0]
+    phnum = struct.unpack_from("<H", d, 56)[0]
+    for i in range(phnum):
+        off = phoff + i * phentsize
+        if struct.unpack_from("<I", d, off)[0] == PT_INTERP:
+            at = struct.unpack_from("<Q", d, off + 8)[0]
+            size = struct.unpack_from("<Q", d, off + 32)[0]
+            return d[at:at + size].rstrip(b"\0").decode("ascii", "replace")
+    return ""
+
+
+def main(path):
+    lib = path.endswith(".so")
+    d = open(path, "rb").read()
+    secs = sections(d)
+    needed, soname = dyn_needed(d, secs)
+    syms = exported(d, secs) if lib else set()
+    vers = glibc_versions(d)
+
+    print("file      %s (%.1f KB)" % (path, len(d) / 1024.0))
+    print("soname    %s" % (soname or "(none)"))
+    print("needs     %s" % ", ".join(needed))
+    print("glibc     %s" % (", ".join(sorted(vers)) or "(none)"))
+    if not lib:
+        print("loader    %s" % (interp(d) or "(none - would never start)"))
+
+    bad = []
+    for v in vers:
+        # "2.2.5" is the x86_64 baseline and is three parts; only the first
+        # two decide whether the unit's glibc is new enough.
+        parts = v.split(".")
+        major, minor = int(parts[0]), int(parts[1])
+        if (major, minor) > MAX_GLIBC:
+            bad.append(v)
+    if bad:
+        raise Bad("asks for GLIBC %s; the unit has %d.%d"
+                  % (", ".join(sorted(bad)), *MAX_GLIBC))
+    if lib:
+        for fn in ("read", "ioctl"):
+            if fn not in syms:
+                raise Bad("%s() is not exported: that call would not be interposed" % fn)
+        print("interpose read, ioctl  ok")
+    else:
+        # A program that loads its libraries itself must not drag in anything
+        # the unit may not have: only the C runtime is allowed.
+        allowed = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1"}
+        extra = [n for n in needed if n not in allowed]
+        if extra:
+            raise Bad("needs %s; the unit has only the C runtime" % ", ".join(extra))
+        # And it has to name a loader the unit actually has. Asking for
+        # /lib64/... is the default of every toolchain that grew up on a
+        # desktop distribution, and on this unit it is the difference between
+        # a running decoder and "Failed at step EXEC spawning" over a file
+        # that is there, executable, and blameless.
+        want = interp(d)
+        if want != UNIT_LD:
+            raise Bad("asks for loader '%s'; the unit has no /lib64 - link with "
+                      "-Wl,--dynamic-linker=%s" % (want or "(none)", UNIT_LD))
+        print("runtime   C library only, loader %s" % want)
+
+    for fn in ("malloc", "free", "pthread_create", "dlsym"):
+        if fn in needed:                    # nonsensical, but cheap to guard
+            raise Bad("needs %s? that is not a library name" % fn)
+    print("OK")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit("usage: check_elf.py <library.so>")
+    try:
+        main(sys.argv[1])
+    except Bad as e:
+        sys.stderr.write("FAIL: %s\n" % e)
+        sys.exit(1)
+    except FileNotFoundError:
+        sys.exit("FAIL: %s does not exist" % sys.argv[1])

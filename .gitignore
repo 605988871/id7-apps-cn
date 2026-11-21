@@ -47,3 +47,6 @@ kit/tools/.font-cache/
 /apps/zf8hp/data/
 egs-snapshot*.json
 kit/carlife-tap/build/
+# the C unit tests' local build output (test_rtp.exe on Windows)
+kit/turn-cam/test/test_rtp*
+!kit/turn-cam/test/test_rtp.c

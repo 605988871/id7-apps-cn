@@ -56,12 +56,17 @@
 
 #include "mfx/mfxvideo.h"
 
-#define DIR        "/dev/shm/carlife-map"
-#define IN_SOCK    DIR "/h264.sock"
-#define MAP_SOCK   DIR "/live.sock"
-#define CARD_SOCK  DIR "/hud.sock"
-#define CROP_FILE  DIR "/crop.json"
-#define REPORT     "/dev/shm/carlife-decode.txt"
+/* The folder the sockets and crop.json live in, and the report's own path.
+ * Both are runtime state rather than macros because a second app (Turn View)
+ * runs the same decoder beside CarLife Map: one binary, `--dir` for the other
+ * app's folder, so neither app's tap takes the other's socket. The default is
+ * exactly what CarLife Map has always used. */
+#define DIR_DEFAULT "/dev/shm/carlife-map"
+static char g_in_sock[192]   = DIR_DEFAULT "/h264.sock";
+static char g_map_sock[192]  = DIR_DEFAULT "/live.sock";
+static char g_card_sock[192] = DIR_DEFAULT "/hud.sock";
+static char g_crop_file[192] = DIR_DEFAULT "/crop.json";
+static char g_report[192]    = "/dev/shm/carlife-decode.txt";
 
 /* The map layer's size (cluster-render takes a frame only at exactly the
  * layer's vw x vh) and the most a crop.json may ask for. They are separate so
@@ -161,16 +166,23 @@ static int listen_unix(const char *path)
 {
     struct sockaddr_un a;
     int fd;
+    char dir[192];
+    const char *slash = strrchr(path, '/');
 
-    mkdir(DIR, 0777);
     /* mkdir's mode is cut down by the umask, and a service's umask is 022: the
      * directory comes out root-owned 0755, and creating a unix socket in a
      * directory needs write permission *on the directory*. The app runs as
      * itself, not as root, so its listen() on live.sock fails with EACCES -
      * which sounds like "the address is in use" and is nothing of the sort.
      * chmod explicitly: whoever starts first creates the directory, and it has
-     * to be one the other side can bind in. */
-    chmod(DIR, 0777);
+     * to be one the other side can bind in. The folder is taken from the
+     * socket's own path, so `--dir` moves it without a second variable. */
+    if (slash && (size_t)(slash - path) < sizeof dir) {
+        memcpy(dir, path, (size_t)(slash - path));
+        dir[slash - path] = 0;
+        mkdir(dir, 0777);
+        chmod(dir, 0777);
+    }
     unlink(path);
     fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
@@ -339,7 +351,7 @@ static double pct(double v, double hi)
 static void read_crop(Crop *c)
 {
     char buf[2048];
-    FILE *f = fopen(CROP_FILE, "rb");
+    FILE *f = fopen(g_crop_file, "rb");
     size_t n = 0;
 
     memset(c, 0, sizeof *c);
@@ -799,8 +811,8 @@ static size_t find_sps(const unsigned char *p, size_t n)
 
 /* ---------------------------------------------------------------- frames -- */
 
-static Out g_map = { MAP_SOCK, -1, 0, 0, 0 };
-static Out g_card = { CARD_SOCK, -1, 0, 0, 0 };
+static Out g_map = { g_map_sock, -1, 0, 0, 0 };
+static Out g_card = { g_card_sock, -1, 0, 0, 0 };
 static unsigned char *g_mapbuf, *g_cardbuf;
 static size_t g_mapbuf_sz, g_cardbuf_sz;
 static long long g_last_frame_ms;
@@ -974,13 +986,36 @@ static void write_report(void)
          * past it. */
         if (n > (int)sizeof buf - 1) n = (int)sizeof buf - 1;
         if (n < 0) n = 0;
-        fd = open(REPORT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        fd = open(g_report, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd >= 0) {
             k = write(fd, buf, (size_t)n);
             (void)k;
             close(fd);
         }
     }
+}
+
+/* Run the same decoder for another app: its own folder for the sockets and
+ * crop.json, and its own report beside them. The folder is made world-writable
+ * here as well as in the install hook, because a folder that only root can
+ * write is the failure that looks like "the tap is not running": bind fails
+ * with EACCES before a single frame is read. */
+static void set_dir(const char *d)
+{
+    char report[192];
+    const char *base;
+
+    if (!d || !*d) return;
+    mkdir(d, 0777);
+    chmod(d, 0777);
+    snprintf(g_in_sock, sizeof g_in_sock, "%s/h264.sock", d);
+    snprintf(g_map_sock, sizeof g_map_sock, "%s/live.sock", d);
+    snprintf(g_card_sock, sizeof g_card_sock, "%s/hud.sock", d);
+    snprintf(g_crop_file, sizeof g_crop_file, "%s/crop.json", d);
+    base = strrchr(d, '/');
+    base = (base && base[1]) ? base + 1 : d;
+    snprintf(report, sizeof report, "/dev/shm/%s-decode.txt", base);
+    memcpy(g_report, report, sizeof report);
 }
 
 int main(int argc, char **argv)
@@ -1006,6 +1041,8 @@ int main(int argc, char **argv)
         fflush(stdout);
         return 0;
     }
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc) set_dir(argv[++i]);
 
     signal(SIGPIPE, SIG_IGN);
     memset(&dec, 0, sizeof dec);
@@ -1027,8 +1064,8 @@ int main(int argc, char **argv)
      * set up to cut even while it waits for the tap. */
     read_crop(&g_crop);
     g_crop_read_ms = now_ms();
-    lfd = listen_unix(IN_SOCK);
-    if (lfd < 0) { fail("cannot listen on %s: %s", IN_SOCK, strerror(errno)); write_report(); return 1; }
+    lfd = listen_unix(g_in_sock);
+    if (lfd < 0) { fail("cannot listen on %s: %s", g_in_sock, strerror(errno)); write_report(); return 1; }
     ibuf = malloc(MAX_IN);
     if (!ibuf) { fail("no memory for the stream"); write_report(); return 1; }
     note("waiting for the tap");
