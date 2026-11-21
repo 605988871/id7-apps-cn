@@ -33,5 +33,7 @@ for source in sources:
                 raise SystemExit('%s:%d: plural row needs one|other and %s form(s)' % (source.name, n, want))
         words[english] = translated
     target = source.with_suffix('.json')
-    target.write_text(json.dumps(words, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    # LF, as .gitattributes asks of every text file here: text mode would write CRLF on Windows.
+    with open(target, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(json.dumps(words, ensure_ascii=False, indent=2) + '\n')
     print('%s: %d translations' % (source.stem, len(words)))

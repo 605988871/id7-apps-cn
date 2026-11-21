@@ -2,7 +2,12 @@
   "id": "cn_redline",
   "title": "Redline",
   "description": "全屏转速表，含换挡灯、挡位、换挡评分与冷车转速保护；HUD 由 @biscotit 提供",
-  "version": "2.0.47",
+  "texts": {
+    "zh-CN": {
+      "title": "换挡转速"
+    }
+  },
+  "version": "2.0.48",
   "vendor": "custom",
   "loggingId": "OA97",
   "iconGlyph": "rpm",

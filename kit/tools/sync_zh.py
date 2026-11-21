@@ -14,5 +14,6 @@ for n, line in enumerate((directory / 'zh-CN.tsv').read_text(encoding='utf-8').s
     if english in words and words[english] != chinese:
         raise SystemExit('Conflicting translation at line %d: %s' % (n, english))
     words[english] = chinese
-(directory / 'zh-CN.json').write_text(json.dumps(words, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+with open(directory / 'zh-CN.json', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(json.dumps(words, ensure_ascii=False, indent=2) + '\n')
 print('Synced %d Chinese translations' % len(words))
