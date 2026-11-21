@@ -13,7 +13,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'others-'));
 const sock = path.join(dir, 'ctl.sock'), data = path.join(dir, 'data.json');
 process.env.MGU_AMBIENT_COMFORT = sock;
 process.env.MGU_AMBIENT_COMFORT_DATA = data;
-const { Others } = require(path.join(__dirname, '..', '..', 'apps', 'ambient_config', 'others'));
+const { Others } = require(path.join(__dirname, '..', '..', 'apps', 'cn_ambient_config', 'others'));
 
 let fails = 0, checks = 0;
 const ok = (c, msg) => { checks++; if (!c) { fails++; console.log('FAIL ' + msg); } };

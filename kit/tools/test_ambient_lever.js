@@ -3,7 +3,7 @@
  * that starts too soon after the beam was on, pulls too far apart, or a set in the pause after one. */
 const assert = require('assert');
 const path = require('path');
-const { Lever, beamOf, ARM_MS, PULSE_MS, GAP_MS, COOL_MS } = require(path.join(__dirname, '..', '..', 'apps', 'ambient_config', 'lever.js'));
+const { Lever, beamOf, ARM_MS, PULSE_MS, GAP_MS, COOL_MS } = require(path.join(__dirname, '..', '..', 'apps', 'cn_ambient_config', 'lever.js'));
 
 let n = 0;
 const ok = (c, m) => { assert(c, m); n++; console.log('ok   ' + m); };

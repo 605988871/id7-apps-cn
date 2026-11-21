@@ -1,4 +1,4 @@
-[English](README.en.md) | **简体中文（默认）**
+[English](README.en.md) | **简体中文（默认）** | [繁體中文](README.zh-TW.md)
 
 <h1 align="center">MGU 自定义应用</h1>
 
@@ -209,6 +209,7 @@ Windows PowerShell 也可执行这些命令，内置 scp 和 tar；请将 `x_cal
 python3 kit/tools/build.py            # 全部应用，默认简体中文 -> dist/<id>@<ver>.mgu / .tgz
 python3 kit/tools/build.py redline    # 仅一个应用，默认简体中文
 python3 kit/tools/build.py --language en    # 英文 -> dist/<id>@<ver>.mgu
+python3 kit/tools/build.py --language zh-TW # 繁体中文 -> dist/<id>@<ver>-zh.tw.1.mgu
 node kit/tools/preview.js dist/redline preview wait=10   # 在电脑上预览 -> preview/*.png
 ```
 

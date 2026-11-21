@@ -4,7 +4,7 @@
 // written for a colour the car shows already, and the set struct naming only the slot.
 //   node kit/tools/test_ambient_config.js
 const path = require('path');
-const { Ambient, modeOf, slotOf, request } = require(path.join(__dirname, '..', '..', 'apps', 'ambient_config', 'ambient'));
+const { Ambient, modeOf, slotOf, request } = require(path.join(__dirname, '..', '..', 'apps', 'cn_ambient_config', 'ambient'));
 
 let fails = 0, checks = 0;
 const ok = (c, msg) => { checks++; if (!c) { fails++; console.log('FAIL ' + msg); } };

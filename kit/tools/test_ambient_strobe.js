@@ -5,7 +5,7 @@
 // flash checked, the session kept with 3E 00, and the lamps handed back however it ends.
 //   node kit/tools/test_ambient_strobe.js
 const path = require('path');
-const { Strobe, MAX_MS, gateChecks, gateWhy } = require(path.join(__dirname, '..', '..', 'apps', 'ambient_config', 'strobe'));
+const { Strobe, MAX_MS, gateChecks, gateWhy } = require(path.join(__dirname, '..', '..', 'apps', 'cn_ambient_config', 'strobe'));
 
 let fails = 0, checks = 0;
 const ok = (c, msg) => { checks++; if (!c) { fails++; console.log('FAIL ' + msg); } };
