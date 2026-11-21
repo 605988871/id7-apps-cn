@@ -116,4 +116,22 @@ GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 \
 ## 为什么不在 GitHub 网页上直接合并
 
 网页上的合并、或者 `git pull upstream`，都要求两边有共同祖先。本仓库没有，
-所以只能按上面的方式在本地做一次「嫁接 + 合并」。做完这一次，以后就正常了。
+所以只能按上面的方式在本地做一次「嫁接 + 合并」。
+
+## 推送被拒：token 没有 workflow 权限
+
+上游一改 `.github/workflows/` 下的文件，推送就会报：
+
+```
+refusing to allow a Personal Access Token to create or update workflow
+`.github/workflows/xxx.yml` without `workflow` scope
+```
+
+两条路：给 token 勾上 `workflow` 权限（以后 CI 文件也能跟着上游走），
+或者把这次带进来的 workflow 文件从提交里去掉再推（本仓库的 CI 本来也没跑）：
+
+```sh
+git reset --soft HEAD~1
+git rm --cached .github/workflows/<新增的那个>.yml && rm .github/workflows/<新增的那个>.yml
+git commit -c ORIG_HEAD
+```
