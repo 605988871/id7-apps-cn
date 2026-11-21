@@ -136,11 +136,13 @@ _Static_assert(sizeof(struct usbdevfs_bulktransfer) == 24, "usbdevfs_bulktransfe
 #define MAX_RESEEK 8192u            /* this many misses and the framing is wrong */
 
 /* How long the tap will wait for room on the sink socket before giving up on
- * the tail of one chunk. A USB chunk is a few hundred KB and the decoder reads
- * it in slices; on a busy unit the socket fills faster than it drains. A short
- * wait lets the decoder catch up instead of cutting a NAL in half, which is
- * what a garbled picture is. Kept small: this runs inside carlife's read hook. */
-#define SINK_WAIT_MS 15
+ * the tail of one chunk. This runs *inside* carlife's read hook: every
+ * millisecond spent here is a millisecond the phone's own navigation is
+ * stalled, and with a healthy decoder the 4 MB buffer absorbs a whole chunk
+ * without ever needing the wait. Keep it to a brief grace period, not a
+ * queue: a frame that arrives a moment late is worth less than a carlife
+ * that stops reading its own USB stream. */
+#define SINK_WAIT_MS 2
 #define SINK_SNDBUF  (4u * 1024u * 1024u)
 #define MAXCMD_TIGHT 4096u          /* while resyncing, only this much is believable */
 

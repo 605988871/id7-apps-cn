@@ -96,6 +96,10 @@ async function run(ctx) {
     /* The last thing the service refused, and its own account of the HUD's
      * target - the only two places a HUD that never appears is explained. */
     let lastRefused = '';
+    /* A video HUD the service has refused cannot become shown by waiting.
+     * Remember it so the fallback in the UI loop is immediate, not six seconds
+     * of empty glass. */
+    let hudRefused = false;
     let svcText = '';
     let svcAt = 0;
     let srcStatus = 'stopped', renderStatus = 'not connected';
@@ -215,6 +219,7 @@ async function run(ctx) {
         hudImgAt = 0;
         hudSeenShown = false;
         hudSwapAt = 0;
+        hudRefused = false;
         hidden.hud = false;                    /* a new layer starts visible */
         hudSentAt = 0;                         /* and must get its first frame at once */
         hudKind = wantHudKind();
@@ -238,7 +243,7 @@ async function run(ctx) {
                 target: 'hud', x: r.x, y: r.y, w: r.w, h: r.h,
                 vw: r.w, vh: r.h, fps: hudFps,
                 z: 0, visible: 1, opacity: op, contend: 1,
-                dirty_threshold: 8, settle_ms: 1000, stall_ms: 6000,
+                dirty_threshold: 2, settle_ms: 120, stall_ms: 6000,
                 yield: settings.get('hudKeep') ? 0 : 1
             });
         }
@@ -503,10 +508,15 @@ async function run(ctx) {
             return;
         }
         const fps = Number(settings.get('fps')) || 15;
+        /* cluster-render holds a tile whose change is under dirty_threshold
+         * levels until settle_ms; its defaults (8 / 1000) put up to a full
+         * second between a turn on the phone and the glass. A navigation map
+         * is mostly small changes, so keep both low. fps is already the
+         * upload ceiling, so this costs no extra uploads beyond that rate. */
         const common = {
             klass: 'content', z: 0, visible: 1, contend: 1, opacity: 1,
             vw: MAP_W, vh: MAP_H, fps: fps,
-            dirty_threshold: 8, settle_ms: 1000, stall_ms: 6000
+            dirty_threshold: 2, settle_ms: 120, stall_ms: 6000
         };
 
         if (wants(t, 'cluster')) {
@@ -676,6 +686,16 @@ async function run(ctx) {
         cr.on('refused', safe('refused', (op, ref, why) => {
             lastRefused = op + ' ' + ref + ': ' + why;
             log.warn('cluster-render refused ' + op + ' ' + ref + ': ' + why);
+            /* The display has room for two video buffers. The map takes one;
+             * on cars where another app holds the other, a HUD video layer is
+             * refused outright. That is final - waiting out the fallback
+             * timer only leaves the glass empty for six seconds. An image
+             * layer needs no video buffer and is the working path here. */
+            if (ref && ref === hudLayer && hudKind === 'video' &&
+                /video buffer/i.test(why || '') &&
+                (settings.get('hudPath') || 'auto') === 'auto') {
+                hudRefused = true;
+            }
         }));
         cr.on('status', safe('status', (text) => { svcText = text || ''; }));
         cr.connect();
@@ -1014,17 +1034,21 @@ async function run(ctx) {
          * for its own account every five seconds, and after six seconds of the
          * video layer not being shown, put the same picture up as an image. */
         if (hudLayer && /^shown/.test(layerState.hud)) hudSeenShown = true;
-        if (hudLayer && !hidden.hud && !hudSeenShown) {
+        if (hudLayer && !hidden.hud && (!hudSeenShown || hudRefused)) {
             if (cr && cr.ready && Date.now() - svcAt > 5000) {
                 svcAt = Date.now();
                 cr.status();
             }
             if (hudKind === 'video' && (settings.get('hudPath') || 'auto') === 'auto') {
-                if (!hudSwapAt) hudSwapAt = Date.now() + 6000;
-                else if (Date.now() >= hudSwapAt) {
+                if (!hudRefused && !hudSwapAt) hudSwapAt = Date.now() + 6000;
+                if (hudRefused || (hudSwapAt && Date.now() >= hudSwapAt)) {
+                    const wasRefused = hudRefused;
                     hudSwaps++;
                     hudKind = 'image';
-                    log.warn('HUD not shown as a video layer in 6 s: trying an image layer');
+                    hudRefused = false;
+                    log.warn(wasRefused
+                        ? 'HUD video layer refused (no display buffer): using an image layer'
+                        : 'HUD not shown as a video layer in 6 s: trying an image layer');
                     if (cr && hudLayer) cr.drop(hudLayer);
                     hudLayer = 0;
                     makeHud(Number(settings.get('fps')) || 15);

@@ -358,5 +358,111 @@ def header_search_checks():
     return bad
 
 
+def sps_wedge_checks():
+    """The 0.4.8 regression: SPS present but fed from mid-picture.
+
+    The car reported "0 frames, 0 fps - no sequence header in 4197587 bytes"
+    while the tap had sent 226 MB and dropped 121918 chunks. Both ends were
+    stuck on the same buffer: find_sps said there *was* an SPS somewhere in
+    the four megabytes, so the no-SPS rule never ran; DecodeHeader was handed
+    the buffer from its mid-picture start and answered MORE_DATA; MORE_DATA
+    consumed nothing; once the buffer was full the read stopped; and the tap
+    could no longer write. Repeat for ever with a growing drop count.
+
+    The fix has two parts, both checked here: the SPS is aligned to byte 0
+    before DecodeHeader sees it, and every MORE_DATA consumes bytes so new
+    input can arrive. A stream whose SPS+PPS is split by a tap drop must also
+    get there in the end rather than wedging on the first one.
+    """
+    MAX_IN, READ_SZ = 8 * 1024 * 1024, 256 * 1024
+    bad = 0
+
+    def find_sps(b):
+        """decode.c's find_sps: offset of the first SPS, or len(b)."""
+        for i in range(len(b) - 3):
+            if b[i] == 0 and b[i + 1] == 0 and b[i + 2] == 1 and (b[i + 3] & 0x1f) == 7:
+                return i
+        return len(b)
+
+    def run(chunks, fixed):
+        """Model the header phase of decode.c's poll loop.
+
+        `fixed` switches the two rules:
+          old: feed the whole buffer from its mid-picture start; 'more'
+               consumes nothing; compaction only when consumed > 0
+          new: align to the SPS first; 'more' advances to the next start
+               code; the read loop always makes room
+        Returns (headers found, chunks read, bytes held at the end).
+        """
+        buf, consumed, frames, reads = b'', 0, 0, 0
+        for c in chunks:
+            if len(buf) + READ_SZ > MAX_IN:
+                if consumed:
+                    buf = buf[consumed:]
+                    consumed = 0
+                elif fixed:
+                    # the read loop now drops the oldest bytes to make room
+                    buf = buf[len(buf) + READ_SZ - MAX_IN:]
+                else:
+                    continue                    # old: no read, for ever
+            if len(buf) + READ_SZ > MAX_IN:
+                continue
+            buf += c
+            reads += 1
+            avail = len(buf) - consumed
+            if avail <= 4:
+                continue
+            sps = find_sps(buf[consumed:])
+            if sps == avail:
+                keep = min(3, avail)
+                buf = buf[len(buf) - keep:]
+                consumed = 0
+                continue
+            if fixed:
+                consumed += sps                  # byte 0 is the SPS
+                avail -= sps
+            # MFX only accepts a bitstream that starts at an SPS and has its
+            # PPS: that is the whole reason alignment matters here.
+            ok = (buf[consumed:consumed + 4] == b'\x00\x00\x01\x67' and
+                  buf[consumed:].find(b'\x00\x00\x01\x68') >= 0)
+            if ok:
+                frames += 1
+            elif fixed:
+                skip = 4
+                while skip + 3 < avail and not (
+                        buf[consumed + skip] == 0 and buf[consumed + skip + 1] == 0
+                        and buf[consumed + skip + 2] == 1):
+                    skip += 1
+                consumed += min(skip, avail)     # 'more' still makes progress
+        return frames, reads, len(buf)
+
+    SPS = b'\x00\x00\x01\x67' + bytes(8)
+    PPS = b'\x00\x00\x01\x68' + bytes(4)
+    JUNK = b'\x00\x00\x01\x41' + bytes(64)
+    chunks = [JUNK * 2000 for _ in range(20)] + [JUNK * 1000 + SPS + PPS]
+
+    old_frames, old_reads, old_buf = run(chunks, False)
+    new_frames, new_reads, new_buf = run(chunks, True)
+
+    if old_frames >= 1:
+        print("SPS wedge: old rule found a header from a mid-picture start")
+        bad += 1
+    if new_frames < 1:
+        print("SPS wedge: fixed rule found no header (%d frames, %d B)" %
+              (new_frames, new_buf))
+        bad += 1
+    if new_reads < 21:
+        print("SPS wedge: fixed rule stopped reading after %d chunks" % new_reads)
+        bad += 1
+
+    # A split SPS+PPS must be skipped, with a later complete pair used.
+    split = [JUNK * 100 + SPS] + [JUNK * 500] + [JUNK * 100 + SPS + PPS] * 4
+    split_frames, split_reads, split_buf = run(split, True)
+    if split_frames < 1:
+        print("SPS wedge: a split SPS+PPS wedged the stream (%d reads)" % split_reads)
+        bad += 1
+    return bad
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main() + sps_wedge_checks())

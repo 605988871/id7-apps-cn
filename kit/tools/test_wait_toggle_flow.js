@@ -204,7 +204,26 @@ const ctx = {
     assert.ok(afterBurst - beforeBurst <= 1,
         'pacing let ' + (afterBurst - beforeBurst) + ' frames through in one tick');
 
-    console.log('wait_toggle_flow ok: hiding, recovery, HUD position at 100%, and burst pacing');
+    /* An explicit "too many video buffers" refusal is final: the HUD must
+     * switch to an image layer on the next tick, not wait six seconds with an
+     * empty glass. The refused ref is the current HUD video layer. */
+    settings.set('hudPath', 'auto');
+    const hudVideoRef = cr.videos.length ? cr.refs : 0;
+    const imagesBefore = cr.images.length;
+    cr.emit('refused', 'layer', hudVideoRef, 'too many video buffers on the display (at most 2)');
+    global.uiTick();
+    assert.ok(cr.images.length > imagesBefore,
+        'a refused HUD video layer did not become an image layer at once');
+
+    /* The map layer still uses a low settle time: cluster-render otherwise
+     * holds small map changes for a second (settle_ms 1000, dirty_threshold 8). */
+    const mapOpts = cr.videos[0];
+    assert.ok(mapOpts.settle_ms <= 200,
+        'map settle_ms is too high for a live map: ' + mapOpts.settle_ms);
+    assert.ok(mapOpts.dirty_threshold <= 4,
+        'map dirty_threshold hides small changes: ' + mapOpts.dirty_threshold);
+
+    console.log('wait_toggle_flow ok: hiding, recovery, HUD position, pacing, immediate HUD fallback, low settle');
 })().catch((e) => {
     console.log('FAIL wait_toggle_flow\n     ' + (e && e.stack ? e.stack : e));
     process.exit(1);

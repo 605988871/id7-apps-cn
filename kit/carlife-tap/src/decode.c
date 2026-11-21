@@ -85,14 +85,19 @@
  * cluster's picture comes from, and a hang shows on the screen either way. */
 #define SYNC_MS  1000
 #define BUSY_MAX 1000
-/* How long one frame may take to reach a reader before it is dropped. Long
- * enough for a reader that is a frame behind - the app scales and uploads the
- * picture on its own thread and is routinely a frame or two behind on a busy
- * unit - short enough not to become the decoder's own latency. A reader that
- * is merely slow must not be mistaken for one that has gone away: closing the
- * socket on a full buffer is what turns a brief hiccup into a visible
- * disconnect and a fresh round of reconnects. */
-#define SEND_WAIT_MS 250
+/* How long one frame may take to reach a reader before it is dropped. A
+ * reader that is a frame behind must not be mistaken for one that has gone
+ * away - closing on a full buffer turns a hiccup into a visible disconnect -
+ * but waiting here is pure end-to-end latency: the whole picture is already
+ * decoded, and holding it only makes the glass that much further behind the
+ * phone. So wait briefly, then drop this frame and keep the socket. Dropping
+ * a stale picture is the right answer for a live feed; the next frame is
+ * already on its way and replaces it. */
+#define SEND_WAIT_MS 40
+/* Above this much data with an SPS present but no usable header, the SPS is
+ * not going to complete: skip it and look at the next one. A real SPS+PPS is
+ * a few hundred bytes; four megabytes of waiting is the wedge this bounds. */
+#define HEADER_WAIT_MAX (256u * 1024u)
 
 /* ---------------------------------------------------------------- report -- */
 
@@ -240,15 +245,14 @@ static void out_write(Out *o, const unsigned char *p, size_t n)
     if (write(o->fd, hdr, sizeof hdr) != (ssize_t)sizeof hdr) { out_shut(o); o->drops++; return; }
     while (done < n) {
         ssize_t k = write(o->fd, p + done, n - done);
+        int e;
         if (k > 0) { done += (size_t)k; continue; }
         if (k < 0 && errno == EINTR) continue;
-        /* EAGAIN: the reader is a little behind. Wait for it, but only once
-         * per frame and only briefly - a decoder that waits for its slowest
-         * reader is a decoder that adds its latency to a picture that is
-         * already late. A frame abandoned half way is not a lost frame: the
-         * close makes the reader drop what it had of it and start at the next
-         * header. */
-        if (k < 0 && errno == EAGAIN && waited < SEND_WAIT_MS) {
+        e = errno;
+        /* A reader that is a frame behind costs this frame, not the
+         * connection. Waiting longer than this is pure latency: the picture
+         * is already decoded, and the next one is on its way. */
+        if (k < 0 && (e == EAGAIN || e == EWOULDBLOCK) && waited < SEND_WAIT_MS) {
             struct pollfd pf;
             pf.fd = o->fd;
             pf.events = POLLOUT;
@@ -257,6 +261,11 @@ static void out_write(Out *o, const unsigned char *p, size_t n)
             if (ms > 0) continue;
             waited = SEND_WAIT_MS;
         }
+        /* Only a reader that truly went away closes the socket. Closing on a
+         * full buffer makes the app rebuild its source and sit at "waiting
+         * for CarLife" for a hiccup that cost one frame. CLMF carries a magic
+         * on every frame, so the app resyncs after a discarded one anyway. */
+        if (e != EPIPE && e != ECONNRESET) { o->drops++; return; }
         out_shut(o);
         o->drops++;
         return;
@@ -755,16 +764,22 @@ static int dec_start(Dec *d, mfxVideoParam *from_header)
     return 1;
 }
 
-/* One SPS is enough to know the picture size; DecodeHeader wants the SPS and
- * the PPS that follows it, so it is retried until it says something else than
- * "more data". */
-static int have_sps(const unsigned char *p, size_t n)
+/* Where the first SPS starts, or n when there is none. DecodeHeader needs
+ * the bitstream to *begin* at a start code: knowing that an SPS exists
+ * somewhere in four megabytes is not enough. The tap joins mid-picture, so
+ * the buffer almost always begins with the tail of a slice; handing that
+ * whole tail to DecodeHeader gets MFX_ERR_MORE_DATA for ever, and nothing is
+ * consumed - the wedge that reads "no sequence header in N bytes" with a
+ * socket the tap can no longer write to. Returning the offset lets the caller
+ * put the SPS at the front, and gives it something to advance past when MFX
+ * wants more. */
+static size_t find_sps(const unsigned char *p, size_t n)
 {
     size_t i;
     for (i = 0; i + 3 < n; i++)
         if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1 && (p[i + 3] & 0x1f) == 7)
-            return 1;
-    return 0;
+            return i;
+    return n;
 }
 
 /* ---------------------------------------------------------------- frames -- */
@@ -1030,10 +1045,25 @@ int main(int argc, char **argv)
         }
 
         if (client >= 0 && (pfd[1].revents & (POLLIN | POLLHUP | POLLERR))) {
-            if (ilen + READ_SZ > MAX_IN && iconsumed) {
-                memmove(ibuf, ibuf + iconsumed, ilen - iconsumed);
-                ilen -= iconsumed;
-                iconsumed = 0;
+            /* Always make room before reading. Compaction used to be gated
+             * on `iconsumed`: while waiting for a header nothing is consumed,
+             * so once the buffer was full no read ever happened again and the
+             * tap's socket filled. Dropping from the front is safe here - a
+             * header, once missed, is followed by another one. */
+            if (ilen + READ_SZ > MAX_IN) {
+                size_t drop;
+                if (iconsumed) {
+                    memmove(ibuf, ibuf + iconsumed, ilen - iconsumed);
+                    ilen -= iconsumed;
+                    iconsumed = 0;
+                }
+                if (ilen + READ_SZ > MAX_IN) {
+                    drop = ilen + READ_SZ - MAX_IN;
+                    if (drop < ilen) {
+                        memmove(ibuf, ibuf + drop, ilen - drop);
+                        ilen -= drop;
+                    }
+                }
             }
             if (ilen + READ_SZ <= MAX_IN) {
                 ssize_t k = read(client, ibuf + ilen, READ_SZ);
@@ -1063,50 +1093,83 @@ int main(int argc, char **argv)
          * the reads stop. The sequence header that arrives a moment later is
          * in the buffer and is never looked at again.
          *
-         * have_sps() has already searched every byte we hold, so if it says no
-         * then nothing here can start a picture: drop it, keep the last three
-         * bytes in case a start code is split across the next chunk, and wait
-         * for the next one. Progress is what matters, not conservation. */
+         * find_sps() has already searched every byte we hold, so if it says
+         * no then nothing here can start a picture: drop it, keep the last
+         * three bytes in case a start code is split across the next chunk,
+         * and wait for the next one. Progress is what matters, not
+         * conservation.
+         *
+         * If it *does* find one, the SPS must be at the front of the
+         * bitstream given to DecodeHeader. Feeding the whole buffer from its
+         * mid-picture start makes MFX ask for more data for ever: it consumes
+         * nothing, we consume nothing, the socket fills and the tap's drops
+         * climb into six figures. Every branch below therefore either
+         * consumes bytes or compacts the buffer. */
         if (!header_done && ilen - iconsumed > 4) {
             size_t avail = ilen - iconsumed;
-            if (!have_sps(ibuf + iconsumed, avail)) {
+            size_t sps = find_sps(ibuf + iconsumed, avail);
+            if (sps == avail) {
                 size_t keep = avail > 3 ? 3 : avail;
                 memmove(ibuf, ibuf + ilen - keep, keep);
                 ilen = keep;
                 iconsumed = 0;
-            } else if (!dec.session && !open_session(&dec)) {
-                header_done = 1;       /* the reason is in the report */
             } else {
-                mfxBitstream bs;
-                memset(&bs, 0, sizeof bs);
-                memset(&par, 0, sizeof par);
-                /* The decoder fills it in from the SPS; naming the codec is
-                 * what the reference implementation on this unit does, and it
-                 * costs nothing. */
-                par.mfx.CodecId = MFX_CODEC_AVC;
-                bs.Data = ibuf + iconsumed;
-                bs.DataLength = (mfxU32)avail;
-                bs.MaxLength = (mfxU32)avail;
-                sts = g_api.dec_header(dec.session, &bs, &par);
-                if (sts == MFX_ERR_MORE_DATA) {
-                    if (avail >= MAX_IN / 2) { fail("no sequence header in %u bytes", (unsigned)avail); }
-                } else if (sts < MFX_ERR_NONE) {
-                    /* This NAL cannot start a sequence: step past it and look
-                     * for the next one, rather than reading the same bytes
-                     * again on every loop. */
-                    size_t skip = 4;
-                    soft_why("MFXVideoDECODE_DecodeHeader", sts);
-                    while (skip + 3 < avail &&
-                           !(ibuf[iconsumed + skip] == 0 &&
-                             ibuf[iconsumed + skip + 1] == 0 &&
-                             ibuf[iconsumed + skip + 2] == 1))
-                        skip++;
-                    iconsumed += skip < avail ? skip : avail;
-                } else if (dec_start(&dec, &par)) {
-                    header_done = 1;
-                    note("decoding %ux%u", dec.w, dec.h);
-                } else {
+                /* Put the SPS at byte 0: that is the bitstream MFX expects.
+                 * Dropping the bytes before it is also real progress. */
+                iconsumed += sps;
+                avail -= sps;
+                if (!dec.session && !open_session(&dec)) {
                     header_done = 1;       /* the reason is in the report */
+                } else {
+                    mfxBitstream bs;
+                    memset(&bs, 0, sizeof bs);
+                    memset(&par, 0, sizeof par);
+                    /* The decoder fills it in from the SPS; naming the codec is
+                     * what the reference implementation on this unit does, and it
+                     * costs nothing. */
+                    par.mfx.CodecId = MFX_CODEC_AVC;
+                    bs.Data = ibuf + iconsumed;
+                    bs.DataLength = (mfxU32)avail;
+                    bs.MaxLength = (mfxU32)avail;
+                    sts = g_api.dec_header(dec.session, &bs, &par);
+                    if (sts == MFX_ERR_MORE_DATA) {
+                        /* The SPS arrived without the PPS that follows it, or
+                         * a tap drop cut the pair in half. MFX asks for more,
+                         * so give it more - but never on the same bytes: step
+                         * past this SPS and try the next one, and keep doing
+                         * so until a complete pair arrives. This is a normal
+                         * state while joining a stream, not a soft error. */
+                        size_t skip = 4;
+                        note("waiting for a complete SPS+PPS");
+                        while (skip + 3 < avail &&
+                               !(ibuf[iconsumed + skip] == 0 &&
+                                 ibuf[iconsumed + skip + 1] == 0 &&
+                                 ibuf[iconsumed + skip + 2] == 1))
+                            skip++;
+                        iconsumed += skip < avail ? skip : avail;
+                        /* One SPS can only cost so much: beyond that, the
+                         * stream is not yielding a header and the reason has
+                         * to be visible instead of an endless soft count. */
+                        if (avail >= HEADER_WAIT_MAX)
+                            note("no usable SPS+PPS in %u bytes", (unsigned)avail);
+                    } else if (sts < MFX_ERR_NONE) {
+                        /* This NAL cannot start a sequence: step past it and look
+                         * for the next one, rather than reading the same bytes
+                         * again on every loop. */
+                        size_t skip = 4;
+                        soft_why("MFXVideoDECODE_DecodeHeader", sts);
+                        while (skip + 3 < avail &&
+                               !(ibuf[iconsumed + skip] == 0 &&
+                                 ibuf[iconsumed + skip + 1] == 0 &&
+                                 ibuf[iconsumed + skip + 2] == 1))
+                            skip++;
+                        iconsumed += skip < avail ? skip : avail;
+                    } else if (dec_start(&dec, &par)) {
+                        header_done = 1;
+                        note("decoding %ux%u", dec.w, dec.h);
+                    } else {
+                        header_done = 1;       /* the reason is in the report */
+                    }
                 }
             }
         }
