@@ -19,6 +19,7 @@ const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
 const { MAP_W, MAP_H, cropAtlas, zoomWindow, scaleAtlas, atlasSize, liveCardAtlas } = require('./atlas');
+const waitPolicy = require('./wait_policy');
 const { toRgba, parseTarget, parseLayer } = require('./hud_convert');
 const G = require('./kit/gauges');
 
@@ -27,7 +28,7 @@ const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
               'hudWidth', 'hudX', 'hudY', 'hudKeep', 'hudOpacity', 'hudPath',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit',
               'cardTop', 'cardBottom', 'cardLeft', 'cardRight', 'cardFit',
-              'hudMapX', 'hudMapY', 'waitScale', 'waitX', 'waitY',
+              'hudMapX', 'hudMapY', 'waitScale', 'waitX', 'waitY', 'showWait',
               'mapZoom', 'hudMapZoom'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* The decoder's own report: whether the stream became a picture. */
@@ -199,6 +200,7 @@ async function run(ctx) {
         hudImgAt = 0;
         hudSeenShown = false;
         hudSwapAt = 0;
+        hidden.hud = false;                    /* a new layer starts visible */
         hudKind = wantHudKind();
         /* The HUD is a shared surface: whatever else draws on it - BMW's own
          * speed and limit sign, another app's content - sits underneath this
@@ -236,6 +238,32 @@ async function run(ctx) {
         y: Number(settings.get('waitY')) || 0
     });
 
+    /* Whether the waiting page may be on the glass. With the setting off, a
+     * layer that is waiting for CarLife is made invisible rather than fed a
+     * black or a wordy picture: BMW's own cluster and HUD content stays where
+     * it was, and the first real frame makes the layer visible again. The
+     * frames keep arriving while it is hidden, so the service never calls the
+     * layer stalled; only the picture is withheld. */
+    const hidden = { map: false, hud: false };
+    const hideWaiting = (which) => waitPolicy.hide(which, {
+        showWait: settings.get('showWait') !== false,
+        kind: srcKind,
+        source: source,
+        card: hudSource,
+        hudMode: settings.get('hudMode') || 'navi',
+        now: Date.now()
+    });
+    const showLayer = (which, visible) => {
+        const ref = which === 'map' ? mapLayer : hudLayer;
+        if (!ref || hidden[which] === !visible) return;
+        hidden[which] = !visible;
+        if (cr && cr.ready) cr.set(ref, { visible: visible ? 1 : 0 });
+    };
+    const syncVisibility = safe('visibility', () => {
+        showLayer('map', !hideWaiting('map'));
+        showLayer('hud', !hideWaiting('hud'));
+    });
+
     /* A card-sized waiting page.
      *
      * In map mode the HUD shows a window cut out of the map layer - and while
@@ -261,6 +289,7 @@ async function run(ctx) {
      * itself. At 100% the whole map goes through unchanged. */
     const sendMap = safe('map frame', (atlas, seq) => {
         if (!mapLayer || !atlas) return;
+        syncVisibility();
         const z = Number(settings.get('mapZoom')) || 100;
         if (z <= 100) { cr.frame(mapLayer, atlas, seq); return; }
         if (!mapZoomBuf || mapZoomBuf.length !== atlasSize(MAP_W, MAP_H)) {
@@ -279,6 +308,7 @@ async function run(ctx) {
      * hand over a frame of exactly the size the layer was created with. */
     const sendHud = safe('hud frame', (atlas) => {
         if (!cr || !cr.ready || !hudLayer || !hudW || !hudH) return;
+        syncVisibility();
         let frame;
         /* Is there a real picture yet? A CarLife source counts the frames it
          * has actually received; until it has one, the map layer is a status
@@ -427,6 +457,8 @@ async function run(ctx) {
 
         if (mapLayer) { if (cr) cr.drop(mapLayer); mapLayer = 0; layerState.map = 'off'; }
         if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; hudW = hudH = 0; hudAtlas = null; }
+        hidden.map = false;
+        hidden.hud = false;                    /* both layers are made visible */
 
         wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
@@ -452,6 +484,7 @@ async function run(ctx) {
         if (wants(t, 'hud')) makeHud(fps);
         refreshClaim();
         setHudSource();
+        syncVisibility();
         if (lastAtlas) {
             sendMap(lastAtlas, lastSeq);
             if (hudLayer) sendHud(lastAtlas);
@@ -559,7 +592,9 @@ async function run(ctx) {
     /* setHudSource and writeCrop are idempotent and run even when setLayers
      * decides the layers are already right: a HUD detail or a crop percentage
      * changes without any layer changing shape. */
-    const apply = safe('apply', () => { setSource(); setLayers(); setHudSource(); writeCrop(); });
+    const apply = safe('apply', () => {
+        setSource(); setLayers(); setHudSource(); writeCrop(); syncVisibility();
+    });
 
     /* ---------- cluster-render ---------- */
     const connect = safe('connect', () => {
@@ -568,7 +603,9 @@ async function run(ctx) {
         cr.on('ready', safe('ready', () => {
             renderStatus = cr.backend + ' ' + cr.targets;
             log.info('cluster-render: ' + renderStatus);
+            hidden.map = hidden.hud = false;   /* the client remade every layer */
             setLayers();
+            syncVisibility();
         }));
         cr.on('disconnected', safe('disconnected', () => {
             renderStatus = 'reconnecting';
@@ -926,13 +963,17 @@ async function run(ctx) {
 
     /* ---------- status page ---------- */
     ctx.loop('MAIN', 5, safe('ui', () => {
+        /* A settings change lands here even when no new picture has arrived:
+         * hiding and showing do not need a frame, and a wait that is off
+         * should lift at once rather than at the next status page. */
+        syncVisibility();
         /* A HUD layer that never appears is the one failure this app cannot
          * see from the inside: the service accepts the layer, the target stays
          * idle, and nothing says why. So while it is not up: ask the service
          * for its own account every five seconds, and after six seconds of the
          * video layer not being shown, put the same picture up as an image. */
         if (hudLayer && /^shown/.test(layerState.hud)) hudSeenShown = true;
-        if (hudLayer && !hudSeenShown) {
+        if (hudLayer && !hidden.hud && !hudSeenShown) {
             if (cr && cr.ready && Date.now() - svcAt > 5000) {
                 svcAt = Date.now();
                 cr.status();
@@ -981,7 +1022,8 @@ async function run(ctx) {
         cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') +
             (hudBlocked ? '  (busy)' : '') + hudTag, 40, 228, 22, '#a8d8c0');
         cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
-            (hudW ? ' (' + hudW + 'x' + hudH + ')' : ''), 40, 257, 22, '#a8d8c0');
+            (hudW ? ' (' + hudW + 'x' + hudH + ')' : '') +
+            '   wait ' + (settings.get('showWait') === false ? 'off' : 'on'), 40, 257, 22, '#a8d8c0');
         cv.text('HUD card: ' + hudCardInfo(), 40, 284, 21, '#a8d8c0');
         cv.text('USB tap : ' + readTap(), 40, 311, 20, '#e0c88a');
         cv.text((tapSink ? 'Tap sink: ' : 'Tap cmds: ') + (tapSink || tapCmds || '-'),
