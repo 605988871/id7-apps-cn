@@ -4,7 +4,7 @@
 const path = require('path');
 const TH = require('./redline_test_harness');
 TH.hookKit();
-const FuelWatch = require(path.join(TH.ROOT, 'apps', 'redline', 'fuel'));
+const FuelWatch = require(path.join(TH.ROOT, 'apps', 'cn_redline', 'fuel'));
 const smooth = FuelWatch.smooth, fuelItem = FuelWatch.fuelItem;
 const tally = TH.counter(), ok = tally.ok, sleep = TH.sleep;
 const near = (a, b, eps) => typeof a === 'number' && Math.abs(a - b) < (eps || 1e-6);

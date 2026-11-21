@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '../..');
 const built = spawnSync(process.env.MGU_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
     [path.join(__dirname, 'build.py'), '--language', 'ko', '--preview-only', 'service'], { encoding: 'utf8' });
 assert.strictEqual(built.status, 0, built.stderr);
-const kit = path.join(root, 'dist/service/source/javascript/kit');
+const kit = path.join(root, 'dist/cn_service/source/javascript/kit');
 const fonts = require(path.join(kit, 'fonts'));
 const { Canvas } = require(path.join(kit, 'canvas'));
 const rec = require(path.join(kit, 'record'));

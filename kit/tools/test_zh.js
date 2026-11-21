@@ -1,7 +1,14 @@
 'use strict';
 // Translation by: 抖音 小白科技杂物社 / BiliBili 小白151 / GitHub JackieZ123430.
 const assert=require('assert'),fs=require('fs'),path=require('path'),os=require('os');
-const kit=process.argv[2]?path.resolve(process.argv[2]):path.resolve(__dirname,'../runtime');
+/* This fork stages an app as dist/cn_<id>; the CI and the docs still say dist/<id>. Read whichever
+ * is on disk, so `node kit/tools/test_zh.js dist/service/source/javascript/kit` keeps working here. */
+const staged = (p) => {
+    if (!p || fs.existsSync(p)) return p;
+    const alt = p.replace(/(^|[\\/])dist([\\/])([^\\/]+)/, '$1dist$2cn_$3');
+    return fs.existsSync(alt) ? alt : p;
+};
+const kit=process.argv[2]?path.resolve(staged(process.argv[2])):path.resolve(__dirname,'../runtime');
 const i18n=require(path.join(kit,'i18n')),{t,getLanguage}=i18n;
 const locale=JSON.parse(fs.readFileSync(path.join(kit,'locale.json'),'utf8'));
 const language=locale.language||'en',chinese=language==='zh-CN',russian=language==='ru';
@@ -117,7 +124,9 @@ async function main(){
  assert.strictEqual(cv.textWidth('Oil',32,opts),r.textWidth('Oil',32,opts));
  const credit=new Canvas(600,40);drawCredit(credit,580,25);let alpha=0;
  for(let i=3;i<credit.d.length;i+=4)alpha=Math.max(alpha,credit.d[i]);
- assert(credited?alpha>0&&alpha<=64:alpha===0,'credit visibility follows the installed language');
+ // The corner line is optional (this fork dropped it: it covered the speed or the clock): drawn exactly when the credit file has one.
+ const corner=credited?(creditData.corner||''):'';
+ assert(corner?alpha>0&&alpha<=64:alpha===0,'the corner credit is drawn exactly when the credit file has one');
  let height=0;for(const name of fs.readdirSync(path.join(kit,'fonts')).filter(x=>x.endsWith('.json'))){
   const file=JSON.parse(fs.readFileSync(path.join(kit,'fonts',name),'utf8'));for(const s of file.sizes){assert(s.atlasW<=1024&&s.atlasH<=4096);height+=s.atlasH+1}
  }assert(height<8192,'GPU atlas budget');

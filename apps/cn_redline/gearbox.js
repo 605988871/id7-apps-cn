@@ -8,7 +8,7 @@
  *      deg C + 40, read on a G22), then DA12 (deg C + 48, unconfirmed); every 5 s while wanted;
  *   2. SOME/IP BasicDataSet.valueTemperatureTransmissionOil (deg C + 48, 255 = none); some cars
  *      never fill it, so a value that has not changed since start counts only after the EGS failed.
- * The same candidates as Car Vitals (apps/car_vitals/app.json config.dme.egs).
+ * The same candidates as Car Vitals (apps/cn_car_vitals/app.json config.dme.egs).
  * Never throws; value() is a number in deg C or null.
  */
 const { ReadOnlyDiag } = require('./kit/readonly-diag');

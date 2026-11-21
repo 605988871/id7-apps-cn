@@ -3,7 +3,7 @@
  * Part of Redline's experimental features; README.md in this folder has the whole picture.
  *
  * Knock, for the HUD's knock warning and readout: the engine unit (DME, 0x12) over read-only UDS 22, the
- * same values Live Data shows (apps/live_data/useful.js, "Ignition and knock"):
+ * same values Live Data shows (apps/cn_live_data/useful.js, "Ignition and knock"):
  *   554C  knock control's ignition retard, the mean of the cylinders' (s8 x 0.375 degrees crank angle)
  *   4A36  knock detected (u8, 0 = no)
  * Read twice a second while wanted (the HUD shows and the engine runs), on the gearbox reader's link.

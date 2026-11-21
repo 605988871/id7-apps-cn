@@ -4,7 +4,7 @@
 //   node kit/tools/test_redline_call.js
 
 const path = require('path');
-const Call = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'call'));
+const Call = require(path.join(__dirname, '..', '..', 'apps', 'cn_redline', 'call'));
 let fails = 0, checks = 0;
 const ok = (c, m) => { checks++; if (!c) { fails++; console.log('FAIL ' + m); } };
 

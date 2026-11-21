@@ -4,7 +4,7 @@
  *
  * Tyre pressures, their targets and tyre temperatures for the HUD, from the car's own signals. Redline's own
  * code: nothing from Car Vitals is loaded or read (its files neither). The scaling is the one Car Vitals worked
- * out on cars (apps/car_vitals/app.json config.scaling tyrePress / tyreTemp, main.js tyreP / tyreT):
+ * out on cars (apps/cn_car_vitals/app.json config.scaling tyrePress / tyreTemp, main.js tyreP / tyreT):
  *
  *   TPMS.statusTyrePressure        actualValuePressureTyreFLH / FRH / RLH / RRH: 0.1 x raw in the car's pressure
  *                                  unit (bar, kPa or psi), 65532 and up = none (BMW x_call's converter)

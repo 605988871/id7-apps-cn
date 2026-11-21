@@ -22,7 +22,7 @@ for tag in ('ko-kr', 'ko-KR'):
                              '--language', tag, '--preview-only', 'redline'],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    staged = ROOT / 'dist/redline/source/javascript/kit'
+    staged = ROOT / 'dist/cn_redline/source/javascript/kit'
     locale = json.loads((staged / 'locale.json').read_text(encoding='utf-8'))
     spec = json.loads((staged / 'app-spec.json').read_text(encoding='utf-8'))
     assert locale['language'] == 'ko' and locale['strings']['SPEED'] == '속도'

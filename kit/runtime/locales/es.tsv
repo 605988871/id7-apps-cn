@@ -440,7 +440,7 @@ Charges	Cargas
 Totals	Totales
 Where the power goes now	Reparto de potencia actual
 Raw values as the car sends them - for checking the scalings (config.scaling in app.json).	Valores en bruto tal como los envía el coche - para comprobar las escalas (config.scaling en app.json).
-A value n/a or wrong? Adjust config.battery in apps/edrive/app.json and rebuild.	¿Algún valor n/d o incorrecto? Ajusta config.battery en apps/edrive/app.json y vuelve a compilar.
+A value n/a or wrong? Adjust config.battery in apps/cn_edrive/app.json and rebuild.	¿Algún valor n/d o incorrecto? Ajusta config.battery en apps/cn_edrive/app.json y vuelve a compilar.
 No hybrid system	Sin sistema híbrido
 Hybrid car? Settings > Hybrid system > Yes	¿Híbrido? Ajustes > Sistema híbrido > Sí
 No high-voltage battery answered, so	No ha respondido ninguna batería de alta tensión, así que

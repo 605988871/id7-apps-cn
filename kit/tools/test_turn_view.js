@@ -54,7 +54,7 @@ class FakeCR {
     video(o) {
         this.calls++;
         /* The map slot is contended for: the service refuses a layer now and
-         * then (CarLife Map measured about a third of first attempts). */
+         * then (measured about a third of first attempts on this car). */
         if (this.refuseNext) { this.refuseNext = false; return 0; }
         this.videos.push(o);
         return ++this.refs;
@@ -126,7 +126,7 @@ Module._load = function (request, parent) {
     if (parent && parent.filename === MAIN) {
         if (request === './kit/mgu') return fakeMgu;
         if (request === './cluster_render_client') return { ClusterRender: FakeCR };
-        if (request === './carlife_source') {
+        if (request === './frame_source') {
             return { createSource: (o) => new FakeSource(o), mkdirp: () => {}, atlasSize: atlasSize };
         }
         if (request === './camreq') return { create: (o) => new FakeCam(o) };

@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('vm');
 const { spawnSync } = require('child_process');
 const root = path.resolve(__dirname, '../..');
-const stage = path.join(root, 'dist/service');
+const stage = path.join(root, 'dist/cn_service');
 // The offline stage contains real app/runtime code and font data, never a fake SDK.
 const built = spawnSync(process.env.MGU_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
     [path.join(__dirname, 'build.py'), '--language', 'ko', '--preview-only', 'service'], { encoding: 'utf8' });

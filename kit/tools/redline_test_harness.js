@@ -84,7 +84,7 @@ function rmTree(p) {
 }
 
 function redlineDefaults() {
-    const spec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'redline', 'app.json'), 'utf8'));
+    const spec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_redline', 'app.json'), 'utf8'));
     const def = {};
     spec.settings.forEach((s) => { if (s.key) def[s.key] = s.default; });
     return { spec: spec, def: def };

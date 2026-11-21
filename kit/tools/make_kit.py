@@ -56,6 +56,15 @@ def prebuilt_hash():
     except (OSError, IndexError): return None
 
 
+def resolve_app(app_id):
+    """The folder an app id lives in: this fork's apps carry a `cn_` prefix, upstream names
+    (and the docs) do not. Try the id as given, then the prefixed folder."""
+    for cand in (app_id, 'cn_' + app_id):
+        if os.path.isfile(os.path.join(ROOT, 'apps', cand, 'app.json')):
+            return cand
+    raise SystemExit('no such app: %s (looked for apps/%s/app.json)' % (app_id, app_id))
+
+
 def docker_build():
     """Compile kit/renderd in Docker (x86-64 like the head unit). Returns (ok, output, stale): stale = built in an
     image that could not be made again from this docker/."""
@@ -175,6 +184,7 @@ def main():
     for app in apps:
         r = subprocess.run([sys.executable, os.path.join(ROOT, 'kit', 'tools', 'build.py'), '--language', args.language, app], cwd=ROOT)
         if r.returncode: sys.exit('build of %s failed' % app)
+        app = resolve_app(app)
         spec = json.load(open(os.path.join(ROOT, 'apps', app, 'app.json'), encoding='utf-8'))
         app_id = spec.get('id', app)
         ver = spec['version']

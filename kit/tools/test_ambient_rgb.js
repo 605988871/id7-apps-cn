@@ -1,5 +1,5 @@
 'use strict';
-// Ambient config's any colour (apps/ambient_config: lin.js, scenes.js, lights.js, control.js): the body controller's
+// Ambient config's any colour (apps/cn_ambient_config: lin.js, scenes.js, lights.js, control.js): the body controller's
 // status read and writes, the animations, one write at a time with the lights renewed and given back, the
 // driving modes' looks, favourites and the flash file.
 //   node kit/tools/test_ambient_rgb.js
@@ -258,9 +258,15 @@ ok(Math.round(S.hueOf([0, 0, 255])) === 240 && S.hsv(120, 1, 1).join() === '0,25
     writes.length = 0;
     lights.show(look('rainbow'));
     await sleep(60);
-    // (from the rainbow's first write: the breathing's write under way at the switch may land first)
-    const rw = writes.slice(Math.max(0, writes.findIndex((w) => w[2] === 0)));
-    ok(rw.length >= 2 && rw.slice(0, 2).every((w) => w[2] === 0 && w.slice(5, 8).join() === rw[0].slice(5, 8).join()), 'rainbow: the whole car one colour, 2 writes a frame');
+    /* One frame is two writes, a bus each, the same colour. The breathing's write under way at the
+     * switch may land first and it is also NAD 0 (its own colour, which the rainbow starts at too),
+     * so the frame's pair is found by its header - 0xda writes the first bus, 0xe3 the second - and
+     * not by where the NAD 0 writes begin. */
+    const busOf = (w) => (w[0] === 0xda ? 0 : 1);
+    const rw = writes.filter((w) => w[2] === 0);
+    const pair = rw.findIndex((w, i) => i + 1 < rw.length && busOf(w) !== busOf(rw[i + 1])
+        && w.slice(5, 8).join() === rw[i + 1].slice(5, 8).join());
+    ok(pair >= 0, 'rainbow: the whole car one colour, 2 writes a frame (' + rw.length + ' writes)');
     writes.length = 0;
     lights.show(look('wave'));
     await sleep(100);

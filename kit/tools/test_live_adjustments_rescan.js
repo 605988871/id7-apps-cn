@@ -3,7 +3,7 @@
  * ignition is on, not only when a setting changes; nothing while the ignition is off, in demo, or once found. */
 const assert = require('assert');
 const path = require('path');
-const { rescan, SLOW_MS, TRIES } = require(path.join(__dirname, '..', '..', 'apps', 'live_adjustments', 'rescan.js'));
+const { rescan, SLOW_MS, TRIES } = require(path.join(__dirname, '..', '..', 'apps', 'cn_live_adjustments', 'rescan.js'));
 
 let n = 0;
 const ok = (c, m) => { assert(c, m); n++; console.log('ok   ' + m); };

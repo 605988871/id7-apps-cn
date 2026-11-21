@@ -1324,7 +1324,7 @@ mgu.run({
                 cv.text(r ? ago(Date.now() - r.t) : '-', cols[6], y, fsS, t.dim, { font: 'label' });
                 y += rowH;
             }));
-            cv.text('A value n/a or wrong? Adjust config.battery in apps/edrive/app.json and rebuild.', 48, 488, 20, t.dim);
+            cv.text('A value n/a or wrong? Adjust config.battery in apps/cn_edrive/app.json and rebuild.', 48, 488, 20, t.dim);
             if (d.demo) cv.text('Main page: demo data until the link answers', 1552, 488, 20, t.warn, { align: 'right' });
         }
 

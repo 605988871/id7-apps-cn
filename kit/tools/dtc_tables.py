@@ -23,7 +23,7 @@ Missing tables are skipped. Then rebuild the dtc_scanner app (kit/tools/build.py
 import json, os, re, shutil, sys, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', '..', 'apps', 'dtc_scanner', 'dtc_db', 'tables')
+OUT = os.path.join(HERE, '..', '..', 'apps', 'cn_dtc_scanner', 'dtc_db', 'tables')
 NAMES = ('dtc_scanner_variant_exact.json', 'dtc_scanner_addr_exact.json', 'dtc_scanner_ecu_matches.json', 'dtc_scanner_ecu_hints.json',
          'dtc_scanner_texts.json', 'dtc_scanner_ambiguous.json')
 

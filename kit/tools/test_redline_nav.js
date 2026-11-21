@@ -4,7 +4,7 @@
 // tracker's freshness and give-way rules on a driven clock, then the probe's tap. Node 8 compatible.
 //   node kit/tools/test_redline_nav.js
 const fs = require('fs'), os = require('os'), path = require('path');
-const APP = path.join(__dirname, '..', '..', 'apps', 'redline');
+const APP = path.join(__dirname, '..', '..', 'apps', 'cn_redline');
 const Nav = require(path.join(APP, 'nav'));
 const NavLog = require(path.join(APP, 'navlog'));
 

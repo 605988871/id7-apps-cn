@@ -3,7 +3,7 @@
  * Part of Redline's experimental features; README.md in this folder has the whole picture.
  *
  * The electrical readouts on the HUD, read from the car itself, the way eDrive reads them
- * (apps/edrive/app.json config.battery, main.js, battery12.js, live.js):
+ * (apps/cn_edrive/app.json config.battery, main.js, battery12.js, live.js):
  *
  *   every car
  *     12 V charge    CDS.statusBattery2.conditionBatteryChargingCondition (%), sent by the car

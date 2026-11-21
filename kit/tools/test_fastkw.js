@@ -3,7 +3,7 @@
 // it follows the pedal at once, the AC compressor and the rest of the car's draw included.
 //   node kit/tools/test_fastkw.js
 const path = require('path');
-const { FastKw, MIN_FIT } = require(path.join(__dirname, '..', '..', 'apps', 'edrive', 'fastkw'));
+const { FastKw, MIN_FIT } = require(path.join(__dirname, '..', '..', 'apps', 'cn_edrive', 'fastkw'));
 
 let fails = 0, checks = 0;
 const ok = (c, msg) => { checks++; if (!c) { fails++; console.log('FAIL ' + msg); } };

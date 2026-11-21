@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const TH = require('./redline_test_harness');
 const ROOT = TH.ROOT;
-const APP = path.join(ROOT, 'apps', 'redline');
+const APP = path.join(ROOT, 'apps', 'cn_redline');
 const { ShiftShare } = require(path.join(APP, 'shareshift'));
 
 const tally = TH.counter(), ok = tally.ok;

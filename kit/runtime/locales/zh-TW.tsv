@@ -431,7 +431,7 @@ Charges	充電次數
 Totals	總計
 Where the power goes now	目前功率分配
 Raw values as the car sends them - for checking the scalings (config.scaling in app.json).	車輛原始數值，用於核對 app.json 中的 config.scaling 換算配置。
-A value n/a or wrong? Adjust config.battery in apps/edrive/app.json and rebuild.	數值不可用或不正確時，調整 app.json 中的 config.battery 後重新構建。
+A value n/a or wrong? Adjust config.battery in apps/cn_edrive/app.json and rebuild.	數值不可用或不正確時，調整 app.json 中的 config.battery 後重新構建。
 No hybrid system	無混合動力系統
 Hybrid car? Settings > Hybrid system > Yes	油電車請在“設定 > 混合動力系統”中選擇“是”
 No high-voltage battery answered, so	高壓電池無回應，因此

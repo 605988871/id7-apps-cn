@@ -1,7 +1,7 @@
 # Simplified Chinese diagnostic descriptions
 
 The `zh-CN` Fault Scanner build adds an independent lookup catalog for the fault
-texts in the bundled `apps/dtc_scanner/dtc_db.pack`. It does not change that database,
+texts in the bundled `apps/cn_dtc_scanner/dtc_db.pack`. It does not change that database,
 diagnostic requests, clear behavior, app IDs, app.json files or startup handling.
 The English build keeps its package name and contains no diagnostic translation
 pack or expanded atlas. Other Chinese apps keep the original UI atlas.

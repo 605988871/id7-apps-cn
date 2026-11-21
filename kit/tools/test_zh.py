@@ -17,7 +17,9 @@ expected_hmi_locales = [
 ]
 assert build.LANGS == expected_hmi_locales and len(build.LANGS) == 33
 credit = zh_credit()
-assert credit['corner'] == 'Translation by: 抖音 小白科技杂物社 · BiliBili 小白151 · GitHub JackieZ123430'
+# No corner signature: the app's own title already says what it is, and a second line of text in the
+# corner of a 1088x480 cluster only covered the speed or the clock.
+assert credit['corner'] == ''
 assert credit['settingsTitle'] == 'Translation by: 抖音 小白科技杂物社 / BiliBili 小白151'
 assert credit['settingsLink'] == 'GitHub JackieZ123430 · github.com/JackieZ123430/idrive7-apps-cn'
 assert credit['comment'] == [
@@ -35,20 +37,23 @@ count = 0
 table_count = 0
 for manifest in sorted((root / 'apps').glob('*/app.json')):
     original = json.loads(manifest.read_text(encoding='utf-8'))
-    assert not any(s['key'] == 'language' for s in original['settings'])
+    # settings are optional (the CarLife probe has none): an app without them has no selector either
+    assert not any(s['key'] == 'language' for s in original.get('settings', []))
     keys = {}
     for language in package_languages:
         spec = localize_spec(original, language)
-        assert not any(s['key'] == 'language' for s in spec['settings']), (manifest, language)
+        assert not any(s['key'] == 'language' for s in spec.get('settings', [])), (manifest, language)
         if language == 'en':
             assert spec == original, 'English must remain the unmodified default package'
         for key in ('id', 'signals', 'config', 'assets'):
             assert original.get(key) == spec.get(key), (manifest, key)
-        assert len(original['settings']) == len(spec['settings'])
-        for a, b in zip(original['settings'], spec['settings']):
+        assert len(original.get('settings', [])) == len(spec.get('settings', []))
+        for a, b in zip(original.get('settings', []), spec.get('settings', [])):
             assert a['key'] == b['key'] and a['default'] == b['default']
             assert [o[0] for o in a.get('options', [])] == [o[0] for o in b.get('options', [])]
-        suffix = '' if language == 'en' else '-' + language.lower().replace('-', '.') + '.' + str(revisions[language])
+        # Chinese and English are this fork's default languages and keep the plain version (mgu-repo.json's
+        # dist/{id}@{version}.tgz); the others carry their revision so two builds of one version can differ.
+        suffix = '' if language in ('en', 'zh-CN') else '-' + language.lower().replace('-', '.') + '.' + str(revisions[language])
         assert spec['version'] == original['version'] + suffix, (manifest, language, spec['version'])
         _, ui, strings, _ = build.build_ui(copy.deepcopy(spec), language)
         unicode_resources(ui, strings, language)
@@ -59,18 +64,24 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
         credit_title = build.sid(spec['id'], 'CN_CREDITS_TITLE')
         credit_link = build.sid(spec['id'], 'CN_CREDITS_LINK')
         cn = {k for k in strings if k.endswith('_CN_CREDITS_TITLE') or k.endswith('_CN_CREDITS_LINK')}
-        if language == 'zh-CN':
+        # The credits are rows of the settings page, so an app without one (the CarLife probe) has none:
+        # nothing to check about text it never shows.
+        page = bool(spec.get('settings'))
+        if not page:
+            assert not cn
+        elif language == 'zh-CN':
             assert cn == {credit_title, credit_link}
             assert strings[credit_title] == credit['settingsTitle']
             assert strings[credit_link] == credit['settingsLink']
         else:
             assert not cn
-        other = translation_credit(language) if language != 'zh-CN' else None
+        other = translation_credit(language) if page and language != 'zh-CN' else None
         if other:
             title, link = build.sid(spec['id'], credit_name(language) + '_TITLE'), build.sid(spec['id'], credit_name(language) + '_LINK')
             assert strings[title] == other['settingsTitle'] and strings[link] == other['settingsLink'], (manifest, language)
             assert all('JackieZ123430' not in v and '小白' not in v and '抖音' not in v for v in strings.values())
-        assert any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        if page:
+            assert any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
         # build.py writes this fixed bundle to each of the 33 HMI locale files.
         tables = {hmi_locale: dict(strings) for hmi_locale in build.LANGS}
         assert len(tables) == 33
@@ -92,11 +103,15 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
         keys[language] = set(strings)
         count += 1
     ru_credit = {build.sid(original['id'], credit_name('ru') + '_TITLE'), build.sid(original['id'], credit_name('ru') + '_LINK')}
-    assert keys['ru'] - keys['en'] == (ru_credit if translation_credit('ru') else set()), (manifest, 'Russian adds only its credit rows')
-    assert keys['en'] <= keys['ru']
-    assert keys['zh-CN'] - keys['en'] == {build.sid(original['id'], 'CN_CREDITS_TITLE'),
-                                           build.sid(original['id'], 'CN_CREDITS_LINK')}
-    assert keys['en'] <= keys['zh-CN']
+    if original.get('settings'):
+        assert keys['ru'] - keys['en'] == (ru_credit if translation_credit('ru') else set()), (manifest, 'Russian adds only its credit rows')
+        assert keys['en'] <= keys['ru']
+        assert keys['zh-CN'] - keys['en'] == {build.sid(original['id'], 'CN_CREDITS_TITLE'),
+                                               build.sid(original['id'], 'CN_CREDITS_LINK')}
+        assert keys['en'] <= keys['zh-CN']
+    else:
+        # no settings page, so no credits rows: the three languages are the same bundle
+        assert keys['en'] == keys['ru'] == keys['zh-CN'], (manifest, 'no settings page: the languages must not differ')
 try:
     unicode_resources({}, {'SID_TEST_%d' % n: '' for n in range(769)}, 'en')
 except ValueError:

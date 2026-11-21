@@ -10,8 +10,8 @@ const ROOT = TH.ROOT;
 
 let cr = null;
 TH.hookKit({ clusterRender: TH.fakeClusterRender({ set: 'merge', onCreate: (c) => { cr = c; } }) });
-const Hud = require(path.join(ROOT, 'apps', 'redline', 'hud'));
-const N = require(path.join(ROOT, 'apps', 'redline', 'hud-nav'));
+const Hud = require(path.join(ROOT, 'apps', 'cn_redline', 'hud'));
+const N = require(path.join(ROOT, 'apps', 'cn_redline', 'hud-nav'));
 // every arrow the car can ask for, and sample turns (test-only, not in the app)
 const C = require(path.join(__dirname, 'redline_nav_cases'));
 const { Canvas } = require(path.join(ROOT, 'kit', 'runtime', 'canvas'));

@@ -5,7 +5,7 @@
  * dtc_scanner does, and adds only:
  *
  *   - a fixed physical target: the DME engine controller, diagnostic address 0x12
- *     (confirmed from the project's own ECU map in apps/dtc_scanner/main.js),
+ *     (confirmed from the project's own ECU map in apps/cn_dtc_scanner/main.js),
  *   - identity reads of the DME over UDS 0x22 (ReadDataByIdentifier), read-only,
  *     to tell which DME variant we are talking to so the right adapter is chosen.
  *

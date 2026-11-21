@@ -5,7 +5,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../..');
-const stage = path.join(root, 'dist/live_adjustments/source');
+const stage = path.join(root, 'dist/cn_live_adjustments/source');
 const python = process.env.MGU_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 const built = spawnSync(python, [path.join(__dirname, 'build.py'), '--language', 'zh-TW',
     '--preview-only', 'live_adjustments'], { cwd: root, encoding: 'utf8', timeout: 120000, windowsHide: true });

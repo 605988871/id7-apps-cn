@@ -575,11 +575,26 @@ def build_start_widget(spec, app_id, icon_src, out, pkg_out=None):
     return {'component': comp, 'layout': ui['containers']['500']['components'][str(WIDGET_COMPONENT_ID)]['cells']['Widget']['value']}
 
 
+def resolve_app(app_id):
+    """The folder an app id lives in.
+
+    This fork's apps carry a `cn_` prefix (`apps/cn_redline`), while upstream scripts, the
+    CI jobs and the docs name them without it (`build.py redline`). Both spellings mean the
+    same app here, so try the id as given first and then the prefixed folder. A wrong name
+    gets one sentence instead of a traceback forty lines long.
+    """
+    for cand in (app_id, 'cn_' + app_id):
+        if os.path.isfile(os.path.join(APPS, cand, 'app.json')):
+            return cand
+    raise SystemExit('no such app: %s (looked for apps/%s/app.json)' % (app_id, app_id))
+
+
 def build(app_id, language='en', preview_only=False):
     language = normalize_language(language)
     if not preview_only and not all(os.path.isfile(os.path.join(SDK, name)) for name in ('index.js', 'package.json')):
         raise SystemExit('BMW oap-sdk is missing. Extract it from your own head unit with kit/tools/extract_sdk.js, '
                          'or use --preview-only for an offline preview (no installable package).')
+    app_id = resolve_app(app_id)
     adir = os.path.join(APPS, app_id)
     spec = json.load(open(os.path.join(adir, 'app.json'), encoding='utf-8'))
     spec = localize_spec(spec, language)

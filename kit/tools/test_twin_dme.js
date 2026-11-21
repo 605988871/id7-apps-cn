@@ -63,7 +63,7 @@ const test = (name, fn) => cases.push([name, fn]);
 
 /* ---------- TwinDme ---------- */
 test('TwinDme: the index table is BMW\'s V8 pairs, nothing else', () => {
-    const I = require(path.join(ROOT, 'apps', 'live_data', 'builtin', 'sgbd_index.json'));
+    const I = require(path.join(ROOT, 'apps', 'cn_live_data', 'builtin', 'sgbd_index.json'));
     const V8_SGBD = /^(DME8FF_R|DME98_R|N63TU_R0|S63TU_R0)$/;
     const pairs = Object.keys(I).filter((k) => /^13 /.test(k)).map((k) => k.slice(3)).filter((i) => V8_SGBD.test(I['12 ' + i] || '')).sort();
     assert.deepStrictEqual(TwinDme.TWIN.slice().sort(), pairs);
@@ -373,7 +373,7 @@ const twinOf = (v) => ({ twin: v, detect: () => Promise.resolve(v), known: () =>
 test('Redline knock: the larger retard of the two banks; one unit: 0x13 never asked', async () => {
     const unhook = redlineHook();
     try {
-        const KnockWatch = require(path.join(ROOT, 'apps', 'redline', 'knock'));
+        const KnockWatch = require(path.join(ROOT, 'apps', 'cn_redline', 'knock'));
         const unit = (retard, flag) => (k) => (k === '22 554C' ? [0x62, 0x55, 0x4C, s8(retard)] : k === '22 4A36' ? [0x62, 0x4A, 0x36, flag] : null);
         const run = async (l, twin) => {
             const logs = [], w = new KnockWatch({ log: { info: (m) => logs.push(m), warn: (m) => logs.push('W ' + m) } }, () => l, twin === undefined ? undefined : { twin: twinOf(twin) });
@@ -410,7 +410,7 @@ test('Redline knock: the larger retard of the two banks; one unit: 0x13 never as
 test('Redline fuel: both banks\' 5656 added, else OBD 5E, never one bank alone', async () => {
     const unhook = redlineHook();
     try {
-        const FuelWatch = require(path.join(ROOT, 'apps', 'redline', 'fuel'));
+        const FuelWatch = require(path.join(ROOT, 'apps', 'cn_redline', 'fuel'));
         const K = 0.00119209 * 3.6;
         const unit = (raw5656, raw5e, raw4521) => (k) => (k === '22 5656' && raw5656 != null ? [0x62, 0x56, 0x56].concat(u16(raw5656))
             : k === '01 5E' && raw5e != null ? [0x41, 0x5E].concat(u16(raw5e)) : k === '22 4521' && raw4521 != null ? [0x62, 0x45, 0x21].concat(u16(raw4521))
@@ -462,8 +462,8 @@ test('Redline fuel: both banks\' 5656 added, else OBD 5E, never one bank alone',
  */
 async function vitalsMisfires(units, files, opts) {
     opts = opts || {};
-    const MAIN = path.join(ROOT, 'apps', 'car_vitals', 'main.js');
-    const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'car_vitals', 'app.json'), 'utf8'));
+    const MAIN = path.join(ROOT, 'apps', 'cn_car_vitals', 'main.js');
+    const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_car_vitals', 'app.json'), 'utf8'));
     const l = fakeLink(units);
     const EventEmitter = require('events');
     class FakeDiag extends EventEmitter {
@@ -617,8 +617,8 @@ test('M Vitals: a head unit moved from a V8 to a B58 (a fresh V8 answer kept): f
 
 /* ---------- Live Data: Useful lists ---------- */
 test('Live Data Useful: V8-only and single-unit-only entries, bank 2\'s names, all in the built-in catalog', () => {
-    const U = require(path.join(ROOT, 'apps', 'live_data', 'useful'));
-    const cat = require(path.join(ROOT, 'apps', 'live_data', 'builtin', 'DME8FF_R.json'));
+    const U = require(path.join(ROOT, 'apps', 'cn_live_data', 'useful'));
+    const cat = require(path.join(ROOT, 'apps', 'cn_live_data', 'builtin', 'DME8FF_R.json'));
     const all = (groups) => [].concat.apply([], groups.map((g) => g.items));
     const names = (only) => all(U[0x12]).filter((i) => i.only === only).map((i) => i.name);
     assert.deepStrictEqual(names('twin'), ['Misfires, cylinder 7', 'Misfires, cylinder 8', 'Rough running, cylinder 7', 'Rough running, cylinder 8']);
@@ -644,8 +644,8 @@ test('Live Data Useful: V8-only and single-unit-only entries, bank 2\'s names, a
  * units: { 0x12: answer, 0x13: answer } as fakeLink's; files: data/ files to start with.
  */
 async function liveData(units, files) {
-    const MAIN = path.join(ROOT, 'apps', 'live_data', 'main.js');
-    const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'live_data', 'app.json'), 'utf8'));
+    const MAIN = path.join(ROOT, 'apps', 'cn_live_data', 'main.js');
+    const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_live_data', 'app.json'), 'utf8'));
     const l = fakeLink(units);
     l.stats = { sent: 0, ms: 0, timed: 0, missed: 0 };
     l.busy = 0;

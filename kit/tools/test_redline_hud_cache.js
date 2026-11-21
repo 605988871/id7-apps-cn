@@ -6,7 +6,7 @@
 const path = require('path');
 const TH = require('./redline_test_harness');
 TH.hookKit();
-const Draw = require(path.join(TH.ROOT, 'apps', 'redline', 'hud-draw'));
+const Draw = require(path.join(TH.ROOT, 'apps', 'cn_redline', 'hud-draw'));
 const { Canvas } = require(path.join(TH.ROOT, 'kit', 'runtime', 'canvas'));
 const tally = TH.counter(), ok = tally.ok;
 

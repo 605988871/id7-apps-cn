@@ -32,7 +32,7 @@ scanner shows no text for that fault. The texts are BMW's: they stay out of git 
 import json, os, re, shutil, sys, tarfile, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(HERE, '..', '..', 'apps', 'dtc_scanner')
+APP = os.path.join(HERE, '..', '..', 'apps', 'cn_dtc_scanner')
 
 
 def from_export(src, out):

@@ -3,7 +3,7 @@
 // not shipped in the app (apps/cn_redline/hud-nav.js draws them). The lists are the car's catalog's values
 // (someip-interfaces.json, navigation.GuidingTypes); test_redline_hud_nav.js checks them against it when it's here.
 const path = require('path');
-const { TURN_DIRECTIONS } = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'hud-nav'));
+const { TURN_DIRECTIONS } = require(path.join(__dirname, '..', '..', 'apps', 'cn_redline', 'hud-nav'));
 
 /*
  * Every value the car's catalog (someip-interfaces.json, navigation.GuidingTypes) has for what decides the arrow,

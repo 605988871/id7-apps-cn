@@ -10,8 +10,8 @@ const path = require('path');
 const Module = require('module');
 
 const ROOT = path.join(__dirname, '..', '..'), KIT = path.join(ROOT, 'kit', 'runtime');
-const MAIN = path.join(ROOT, 'apps', 'warmup', 'main.js');
-const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'warmup', 'app.json'), 'utf8'));
+const MAIN = path.join(ROOT, 'apps', 'cn_warmup', 'main.js');
+const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_warmup', 'app.json'), 'utf8'));
 const { Recorder } = require(path.join(KIT, 'record'));        // what the kit draws into (display.js)
 const themes = require(path.join(KIT, 'themes'));
 
@@ -119,7 +119,7 @@ const checks = [
         assert(t.indexOf('GEARBOX READY IN') < 0 && t.indexOf('COOLANT READY IN') >= 0 && status(t) === 'READY', 'no gearbox: as before: ' + t.join(' | '));
     }],
     ['gearbox.js: the unit\'s 6000, else DA12 or the signal once they moved', async () => {
-        const { Gearbox, Moving } = require(path.join(__dirname, '..', '..', 'apps', 'warmup', 'gearbox'));
+        const { Gearbox, Moving } = require(path.join(__dirname, '..', '..', 'apps', 'cn_warmup', 'gearbox'));
         const m = new Moving(false);
         m.put(20, wall); m.put(20, wall); assert.strictEqual(m.get(wall), null, 'a value that never moved counts as none');
         m.put(-60, wall); assert.strictEqual(m.get(wall), null, 'out of range is ignored');

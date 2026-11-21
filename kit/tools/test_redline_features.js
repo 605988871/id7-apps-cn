@@ -9,7 +9,7 @@
 const path = require('path');
 const TH = require('./redline_test_harness');
 const ROOT = TH.ROOT;
-const APP = path.join(ROOT, 'apps', 'redline');
+const APP = path.join(ROOT, 'apps', 'cn_redline');
 TH.hookKit();
 const Hud = require(path.join(APP, 'hud'));
 const Draw = require(path.join(APP, 'hud-draw'));

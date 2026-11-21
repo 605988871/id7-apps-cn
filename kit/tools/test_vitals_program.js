@@ -1,5 +1,5 @@
 'use strict';
-/* apps/car_vitals/program.js (#193): with programSteady, an S / M signal that flickers (a module such as M-Track)
+/* apps/cn_car_vitals/program.js (#193): with programSteady, an S / M signal that flickers (a module such as M-Track)
  * shows S; M shows once it holds 2 s, as after a paddle press; off: exactly what the car sends. */
 const assert = require('assert');
 const path = require('path');

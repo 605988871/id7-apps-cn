@@ -1,6 +1,13 @@
 'use strict';
 const assert = require('assert'), fs = require('fs'), path = require('path');
-const stage = path.resolve(process.argv[2] || 'dist/dtc_scanner/source/javascript');
+/* This fork stages an app as dist/cn_<id>; the CI and the docs still say dist/<id>. Read whichever
+ * is on disk, so `node test_diagnostic_ru.js dist/dtc_scanner/source/javascript` keeps working here. */
+const staged = (p) => {
+    if (!p || fs.existsSync(p)) return p;
+    const alt = p.replace(/(^|[\\/])dist([\\/])([^\\/]+)/, '$1dist$2cn_$3');
+    return fs.existsSync(alt) ? alt : p;
+};
+const stage = path.resolve(staged(process.argv[2] || 'dist/cn_dtc_scanner/source/javascript'));
 const { diagnosticText } = require(path.join(stage, 'diagnostic-text'));
 const i18n = require(path.join(stage, 'kit/i18n'));
 const locale = require(path.join(stage, 'kit/locale.json'));

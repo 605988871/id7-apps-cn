@@ -3,7 +3,7 @@
 // that would use them are on, each field at most every GAP_MS, at most MAX_RUN_MS per start. Node 8 compatible.
 const fs = require('fs'), os = require('os'), path = require('path');
 const TH = require('./redline_test_harness');
-const PL = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'powerlog'));
+const PL = require(path.join(__dirname, '..', '..', 'apps', 'cn_redline', 'powerlog'));
 const tally = TH.counter(), ok = tally.ok, sleep = TH.sleep;
 const E2 = 'de.bmw.infotainment.drivingexcitement.Efficiencytainment2', RL = 'de.bmw.infotainment.resetlogic.ResetLogic';
 

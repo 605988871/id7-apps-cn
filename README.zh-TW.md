@@ -132,9 +132,9 @@ BMW 應用程式平台提供的自訂圖形顯示方式，是用 JavaScript 畫�
 | **G-Force（G 值儀表）** | 摩擦圓帶漸隱軌跡，隨各方向實際使用的附著力擴展邊界；顯示橫縱向即時條、各方向本次峰值、超過 0.5 g 的持續時間和歷史記錄。G 值數字按設定頻率更新，預設每秒 10 次；圓點與軌跡以完整幀率移動。 |
 | **Warm-Up（暖機助手）** | 機油和冷卻液儀表，以及暖機計算器：根據實測升溫速率計算達到工作溫度所需分鐘數和預計時刻，並投射在溫度趨勢圖上；樣本不足時使用典型速率，油電車純電行駛時顯示引擎關閉。提供隨油溫升高的安全轉速上限，以及激烈駕駛後的渦輪冷卻倒計時：高轉或高功率後需溫和駕駛 30 秒至 3 分鐘，取決於此前激烈駕駛時長。 |
 | **M Vitals（M 車輛儀表）** | 多頁運動儀表及峰值：轉速、增壓（壓力單位 bar、psi 或 kPa）、帶 D/S/M 與數字檔位的車速、iDrive 運動顯示提供的功率（百分比乘以車輛最大功率，適用於原廠及調校引擎；kW/hp/PS）、扭力（Nm/lb-ft）、冷卻液、機油溫度及 G 值等。燃油與點火頁顯示進氣溫度 IAT、高壓燃油 HPFP/油軌及低壓燃油 LPFP 壓力、點火正時、目標/實際增壓和請求/實際空氣充量（均附 5 分鐘曲線；BMW DME DID 4AB0 / 580B / 480C / 5813，OBD PID 0x70 作為後備），以及本次駕駛循環各缸失火計數（OBD 服務 06）；通過 UDS/OBD 從 DME 讀取，標準 OBD 標識可在 `app.json` 的 config.dme 調整，同時顯示進氣比車外高多少度。溫度頁另從變速箱單元 EGS 讀取油溫（config.dme.egs）。各項均可自動/顯示/隱藏，未回應項讓出空間。底盤頁大字顯示胎壓（對照目標）和胎溫，xDrive 卡片可設自動（車輛報告四驅後顯示）、顯示或隱藏，適用於後驅車；無原車扭力分配訊號時，讀取分動箱 LMV 的前軸扭力（UDS `22 DB32`，config.xdrive），結合引擎扭力和檔位估算，卡片註明來源。增壓、變速箱油溫、輪胎卡片和胎溫同樣支援自動/顯示/隱藏；自動模式收到真實資料後顯示。255 °C 胎溫等不合理值及始終為 0 °C 的變速箱油溫等不變值視為無資料；原始值寫入日誌（`raw tyre temperature`、`raw gearbox oil`、`raw FES boost`），用於校準 config.scaling。增壓優先來自運動顯示，無可用值時從 DME 的 OBD 讀取增壓/歧管絕對壓力減環境氣壓（config.dme.boost 中的候選項），也可用 Boost from 手動指定。接近紅線或增壓上限時，儀表由藍轉紅。 |
-| **Fault Scanner（故障檢測）** | 經主機診斷閘道器通過 UDS 掃描全車控制單元，按模組顯示故障碼與狀態，即時顯示 Check Control 訊息，支援兩次按鍵確認清除。故障說明來自本車編碼工具匯出（`kit/tools/dtc_texts.py`）、少量手寫文字，以及可選匯入的全控制單元故障資料庫（`--db`）；對有故障的單元讀取 SGBD 索引（UDS 22 F1 50）以選擇名稱和文字。僅匯入英文文字，混有德文的條目被跳過，相應故障無說明。CSV 故障碼清單（`--codes`）為適用單元補齊仍缺失的說明；執行 `--db` 後用 `kit/tools/dtc_tables.py` 生成 `dtc_scanner_*.json`，按單元類型與地址補充文字。建置用 `pack_data.py` 將約 19 MB 文字壓入約 3.7 MB 的 `dtc_db.pack`，應用程式只解壓目前故障所需的幾 KB。存放庫已獲許可隨附故障說明表和 SGBD 索引的壓縮包 `apps/dtc_scanner/dtc_db.pack`；自行匯入的 `dtc_db/` 會替代它。匯入資料庫和車輛匯出檔案不進入 git。 |
+| **Fault Scanner（故障檢測）** | 經主機診斷閘道器通過 UDS 掃描全車控制單元，按模組顯示故障碼與狀態，即時顯示 Check Control 訊息，支援兩次按鍵確認清除。故障說明來自本車編碼工具匯出（`kit/tools/dtc_texts.py`）、少量手寫文字，以及可選匯入的全控制單元故障資料庫（`--db`）；對有故障的單元讀取 SGBD 索引（UDS 22 F1 50）以選擇名稱和文字。僅匯入英文文字，混有德文的條目被跳過，相應故障無說明。CSV 故障碼清單（`--codes`）為適用單元補齊仍缺失的說明；執行 `--db` 後用 `kit/tools/dtc_tables.py` 生成 `dtc_scanner_*.json`，按單元類型與地址補充文字。建置用 `pack_data.py` 將約 19 MB 文字壓入約 3.7 MB 的 `dtc_db.pack`，應用程式只解壓目前故障所需的幾 KB。存放庫已獲許可隨附故障說明表和 SGBD 索引的壓縮包 `apps/cn_dtc_scanner/dtc_db.pack`；自行匯入的 `dtc_db/` 會替代它。匯入資料庫和車輛匯出檔案不進入 git。 |
 | **eDrive（EDrive助手）** | 面向插電式油電/電動車，按實際駕駛學習純電續航：以引擎啟動閾值以上的可用電量，結合每公里行駛能耗（最近約 60 km 純電行駛）與空調、車載電器每小時功耗計算。冷天制熱、熱天製冷的功耗按外溫區間，在引擎關閉且靜止/緩行時學習；行駛能耗按低於 35、35–60、60–85、85–110、高於 110 km/h 分檔，按目前速度估計續航，因此高速續航比市區少。行駛時也根據同速下相對空調關閉狀態的額外能耗學習空調功耗；座椅和方向盤加熱按檔位計入。能量頁顯示各速度檔能耗、目前驅動/空調/座椅/方向盤/車載用電及各自消耗的公里數、車輛自身功率分配和高壓電池溫度（續航頁也顯示）。空調按小時耗電，擁堵時對里程影響更大，頁面顯示 kW 和損失里程。空調開關讀取 ClimateMaster `statusClimateSystemOn`：關閉時僅扣除獨立學習的車載用電（通常 0.3 kW），續航升高；開啟時下降，顯示 CLIMATE ON/OFF，A/C 按鍵開啟時另有 A/C 標記。尚未學習時按外溫估算：滿電在 20 °C 約 50 km、10 °C 為 40–45、0 °C 為 30–38、−10 °C 為 20–30，按本車 20 °C 續航縮放，並顯示高低範圍、SOH（滿充容量相對新電池的百分比與 kWh）及目前電量 kWh。新電池容量可設定，例如 330e/530e 為 12 kWh、X5 45e 為 24 kWh。還顯示上次高壓充電增加的百分比/kWh/里程（主機休眠期間充電會在下次啟動顯示）和 12 V 電壓。充電日誌記錄日期、充入電量、增加里程和按電價計算的費用（預設 0.25 €/kWh），提供月度/累計總計和 14 天圖表。純電動車（BEV，針對 iX3 G08）：電池報告的可用容量超過 45 kWh 時自動識別，也可將“驅動系統”設為“純電動車”；顯示相同頁面但不含引擎內容，續航計算至 0 %（或設定的 5–20 %），電量讀取 `E5CE`（iX3 對 `DDBC` 只返回零），每 % 對應的 kWh 與健康度來自電池自身的可用容量（`E5C7`，與新車可用容量對比，預設 74 kWh），即時功率為 `E54D` × `E561`，交流慢充也會記錄，且不會詢問引擎和變速箱控制單元。無油電系統時偵測到電池單元不回應，只顯示 12 V，或將“驅動系統”設為“無”。電量和 SOH 通過 UDS 讀取，診斷頁展示原始回應，便於按車型修改 `app.json` 的 DID。 |
-| **eDrive 即時頁面** | `apps/edrive/live.js` 預設適配 24 kWh 的 X5 xDrive45e，可調整用於其他插電式油電車型。**電池：**每秒讀取電壓和電流，相乘得到即時 kW，正值為驅動、負值為回收或充電；條形範圍為電池目前允許的最大回收至最大驅動功率，附兩分鐘曲線、電芯與冷卻液溫度；逐個電芯電壓條標出最高、最低及壓差。本次行程統計耗電、回收、淨耗電、驅動與空調份額及峰值；選單 Reset drive totals 開始新行程。**能量頁空調：**引擎關閉、未插電且靜止時，電池只供應車內負載，因此總功耗減去空調關閉時學習的基線，即實際制熱/製冷功耗；該行優先顯示這個測量值或空調單元自身資料，替代估計值。經 SME 的 UDS 讀取 `DD68` 電壓、`DD69` 電流、`DDBF` 電芯電壓、`DDC0` 電芯溫度、`DD6C` 冷卻液、`DD7D` 電流限值（採用 OVMS 在 i3 上解析的 BMW 標識）；診斷頁顯示回應，若電流方向相反可用 `powerSign` 翻轉。**首頁小工具**（`startWidget`）的大組件顯示即時功率、狀態、電壓/電流、電量、功率條、電芯和本次行程，小工具以文字行顯示相同資訊；Battery unit 與 Scan 頁面由 Diagnostics pages 設定控制。 |
+| **eDrive 即時頁面** | `apps/cn_edrive/live.js` 預設適配 24 kWh 的 X5 xDrive45e，可調整用於其他插電式油電車型。**電池：**每秒讀取電壓和電流，相乘得到即時 kW，正值為驅動、負值為回收或充電；條形範圍為電池目前允許的最大回收至最大驅動功率，附兩分鐘曲線、電芯與冷卻液溫度；逐個電芯電壓條標出最高、最低及壓差。本次行程統計耗電、回收、淨耗電、驅動與空調份額及峰值；選單 Reset drive totals 開始新行程。**能量頁空調：**引擎關閉、未插電且靜止時，電池只供應車內負載，因此總功耗減去空調關閉時學習的基線，即實際制熱/製冷功耗；該行優先顯示這個測量值或空調單元自身資料，替代估計值。經 SME 的 UDS 讀取 `DD68` 電壓、`DD69` 電流、`DDBF` 電芯電壓、`DDC0` 電芯溫度、`DD6C` 冷卻液、`DD7D` 電流限值（採用 OVMS 在 i3 上解析的 BMW 標識）；診斷頁顯示回應，若電流方向相反可用 `powerSign` 翻轉。**首頁小工具**（`startWidget`）的大組件顯示即時功率、狀態、電壓/電流、電量、功率條、電芯和本次行程，小工具以文字行顯示相同資訊；Battery unit 與 Scan 頁面由 Diagnostics pages 設定控制。 |
 | **Service（保養資訊）** | 讀取 BMW CBS 保養需求，與 iDrive“車輛狀態 > 保養需求”一致：機油、煞車、煞車油、車輛檢查、年檢等，每項使用車輛原有語言和單位顯示距離、日期，以綠/黃/紅區分，並給出下次保養摘要及詳細提示。資料來自儀表 `KombiInterface_2`。只讀：這些車輛沒有提供供主機調用的保養復位，需要在儀表選單或維修車間完成。 |
 | **Doom** | Freedoom: Phase 1（四章免費遊戲資料）以 WebAssembly 在主機執行。3D 視圖使用全螢幕完整解析度 1920 × 504，擴展 Doom 的視野以適應螢幕；狀態欄、選單及訊息以 4:3 疊加，VM 上可達 35 fps。先進入 Play/Continue、New game 和設定主選單，遊戲中無頁頭或按鈕欄，BACK 返回選單。**旋轉控制器瞄準，推杆行走和橫移，按下開火與開門，按兩下切換下一武器。** 遊戲中獨佔旋鈕、按壓與傾斜，向前推不再開啟 HMI 下拉選單，向左推不再離開遊戲；BACK、MENU 和觸控始終有效。依賴安裝器載入到 HMI 的控制器門控外掛程式，見 [5.1](#51-what-deploy-carsh-install-does)。沒有外掛程式時仍讀取控制器訊號，但 HMI 也會回應。離開頁面或被彈窗/來電遮擋時暫停並自動存檔，下次從停止位置繼續。主選單可設定難度、章節、移動速度（預設慢走，可選步行/跑步）、瞄準速度與方向、渲染解析度（全/中/低）。採用 GPL-2.0，見[授權條款](#doom-and-renderer-licences)。預設僅停車執行，行駛時儲存並等待；Parked only 可關閉。 |
 
@@ -266,7 +266,7 @@ sh deploy-car.sh restore    # 恢復原廠（要求輸入 YES）
 
 Doom 像其他應用程式一樣安裝，除非建置時只列出其他應用程式，否則包含在套件中。四個區別：
 
-1. **首次建置下載遊戲資料。** git 不儲存 WAD。第一次 `build.py`/`make-car-kit` 從 [Freedoom 發佈頁](https://github.com/freedoom/freedoom/releases/tag/v0.13.0) 下載 Freedoom: Phase 1 0.13.0 的 24 MB zip，核對 SHA-256，儲存為 `apps/doom/freedoom1.wad`，以後複用。電腦無法聯網時可在別處下載 `freedoom-0.13.0.zip` 並把其中的 `freedoom1.wad` 放到 `apps/doom/`。其他 WAD，包括 id 原版 `doom.wad`，無法通過驗證。
+1. **首次建置下載遊戲資料。** git 不儲存 WAD。第一次 `build.py`/`make-car-kit` 從 [Freedoom 發佈頁](https://github.com/freedoom/freedoom/releases/tag/v0.13.0) 下載 Freedoom: Phase 1 0.13.0 的 24 MB zip，核對 SHA-256，儲存為 `apps/cn_doom/freedoom1.wad`，以後複用。電腦無法聯網時可在別處下載 `freedoom-0.13.0.zip` 並把其中的 `freedoom1.wad` 放到 `apps/cn_doom/`。其他 WAD，包括 id 原版 `doom.wad`，無法通過驗證。
 2. **體積更大。** 引擎與遊戲資料約 11 MB，推送稍慢，無需額外處理。
 3. **全螢幕需要 GPU 渲染器。** 套件會安裝 `mgu-renderd`；未執行階段回退為普通應用程式區域內的較小畫面。
 4. **安裝結束會為控制器門控外掛程式重新啟動一次主機。** `deploy-car.sh install` 將 `mgu-inputgate.so` 配置為隨 HMI 載入，讓遊戲獨佔控制器，見 [5.1](#51-what-deploy-carsh-install-does)。它在主機啟動時載入，因此安裝後會黑畫面約一分鐘，隨後自動恢復。若外掛程式導致 HMI 無法正常啟動，會自動排除外掛程式。要稍後重新啟動可用 `NO_REBOOT=1 sh deploy-car.sh install`，外掛程式下次用車時載入；不需要外掛程式可用 `NO_INPUTGATE=1 sh deploy-car.sh install`。此時 Doom 仍能執行，但 HMI 也會回應控制器，例如向前推會開啟下拉選單。
@@ -486,7 +486,7 @@ MainApp 只顯示 BMW 簽名服務配置啟用的應用程式，其中不會包�
 | `screens` | `canvas` 頁面含一張大圖和最多 4 個按鈕，`BTN_SETTINGS` 開啟根據 `settings` 生成的設定頁。`"bar": false` 不繪按鈕欄，將全高留給遊戲，但下方 HMI 按鈕仍存在，用於焦點和點選；`"chrome": false` 移除頁頭、欄和麵板，應用程式佔整屏（`cv.place.full`）。`"kind": "menu"` 加 `"items"`（`["button", NAME, label]` 或 `["text", NAME, label]`）建立 HMI 清單頁，`"settings": true` 把所有設定放進去，不另建設定頁。 |
 | `assets` | 建置下載並按 SHA-256 驗證的資源，格式 `[{ "file", "sha256", "url" }]`；zip 可另設 `zipSha256`、`zipMember`，例如 Doom 資料。應用程式目錄裡的 `.wasm`、`.wad`、`LICENSE`、`NOTICE` 原樣打包。 |
 | `settings` | `choice`、按 `steps` 切換的 `number`、`bool`，儲存在 `data/settings.json`。先顯示應用程式設定，再顯示主題、更新率、版面配置、渲染器、示範等螢幕設定。`"markDefault": true` 在預設行附加“預設”；`"reset": n` 的 n 改變時，讓每輛車一次性恢復該項新預設值。 |
-| `startWidget` | 可選首頁小工具，按 Drive Recorder/Weather 方式生成 `rhmiDataStartWidget/`。`name` 為清單名，`layout` 為 HMI 模板（如 `LT_Table_OnlineApps_DriveRecorderWidget`），`image` 為圖像目標單元（如 `BackgroundImage1`），`size` 為圖片寬高（HMI 縮放到大組件並居中裁剪，G05 適合 384 × 256），`cells` 為每次放置組件時寫入一次的 `{cell: [value, type]}`。用 `ctx.widget.loop(fps, (inst) => canvas)` 繪製，用 `ctx.widget.set(spawnId, cell, value, type)` 更新其他單元；點選開啟應用程式，見 `apps/edrive/live.js`。 |
+| `startWidget` | 可選首頁小工具，按 Drive Recorder/Weather 方式生成 `rhmiDataStartWidget/`。`name` 為清單名，`layout` 為 HMI 模板（如 `LT_Table_OnlineApps_DriveRecorderWidget`），`image` 為圖像目標單元（如 `BackgroundImage1`），`size` 為圖片寬高（HMI 縮放到大組件並居中裁剪，G05 適合 384 × 256），`cells` 為每次放置組件時寫入一次的 `{cell: [value, type]}`。用 `ctx.widget.loop(fps, (inst) => canvas)` 繪製，用 `ctx.widget.set(spawnId, cell, value, type)` 更新其他單元；點選開啟應用程式，見 `apps/cn_edrive/live.js`。 |
 
 **對照服務目錄檢查標誌。** 無 getter 的欄位不能使用 `r`，getter ID 為 0 也視為缺失，安裝器會拒絕。把主機目錄複製為 `reference/someip-interfaces.json` 後執行：
 
@@ -624,7 +624,7 @@ kit/tools/make_gif.sh docs/media/redline.gif redline 6 6 --set coldGuard=false  
 
 ```
 apps/<id>/            app.json + main.js (+ helpers) per app
-apps/doom/            Doom: doom-core.js (WebAssembly runner, files over Node fs), controls.js
+apps/cn_doom/         Doom: doom-core.js (WebAssembly runner, files over Node fs), controls.js
                       (controller -> keys), doom.wasm (built from third_party/doomgeneric), GPL-2.0
 kit/runtime/          app runtime: mgu.js (platform glue), record.js + display.js + renderd.js
                       (GPU path), canvas.js (software path), gauges.js, themes.js,
@@ -641,10 +641,10 @@ deploy/               make-car-kit.sh/.cmd, push-to-car.sh/.ps1, mgu-app-install
 deploy/car/           deploy-car.sh (runs on the unit) + its README
 docs/                 RHMI widget reference, screenshots (docs/screens), animations (docs/media)
 third_party/doomgeneric/  Doom's engine source (GPL-2.0) with the changes for the app (mgu.patch,
-                      MGU.md) and build.sh, which builds apps/doom/doom.wasm
+                      MGU.md) and build.sh, which builds apps/cn_doom/doom.wasm
 ```
 
-`apps/<id>/` 儲存各應用程式定義、主程式與輔助檔案；`apps/doom/` 含 WebAssembly 執行器、控制器映射及 Doom 引擎；`kit/runtime/` 為平台銜接、GPU/軟體繪圖、儀表主題、車輛訊號、示範和診斷執行階段。`kit/renderd/` 是基於 mgu-render 的 C/GLES2/Wayland/ivi GPU 服務，採用 GPL-3.0-or-later，`prebuilt/` 為二進位與原始碼指紋，`inputgate/` 為控制器門控。`kit/platform/` 為權限模板，`kit/tools/` 為建置、預覽、圖示字體、SDK 提取、訊號與介面生成工具，`kit/icons/` 為 SVG 圖示。`deploy/` 為電腦端部署工具，`deploy/car/` 為主機腳本與說明，`docs/` 為 RHMI 文件和媒體。`third_party/doomgeneric/` 為 GPL-2.0 Doom 引擎原始碼、`mgu.patch`、`MGU.md` 和生成 `apps/doom/doom.wasm` 的 `build.sh`。
+`apps/<id>/` 儲存各應用程式定義、主程式與輔助檔案；`apps/cn_doom/` 含 WebAssembly 執行器、控制器映射及 Doom 引擎；`kit/runtime/` 為平台銜接、GPU/軟體繪圖、儀表主題、車輛訊號、示範和診斷執行階段。`kit/renderd/` 是基於 mgu-render 的 C/GLES2/Wayland/ivi GPU 服務，採用 GPL-3.0-or-later，`prebuilt/` 為二進位與原始碼指紋，`inputgate/` 為控制器門控。`kit/platform/` 為權限模板，`kit/tools/` 為建置、預覽、圖示字體、SDK 提取、訊號與介面生成工具，`kit/icons/` 為 SVG 圖示。`deploy/` 為電腦端部署工具，`deploy/car/` 為主機腳本與說明，`docs/` 為 RHMI 文件和媒體。`third_party/doomgeneric/` 為 GPL-2.0 Doom 引擎原始碼、`mgu.patch`、`MGU.md` 和生成 `apps/cn_doom/doom.wasm` 的 `build.sh`。
 
 以下內容有意不放入存放庫：
 
@@ -660,7 +660,7 @@ third_party/doomgeneric/  Doom's engine source (GPL-2.0) with the changes for th
 
 存放庫採用 MIT，但有兩部分例外。GPU 渲染器 `kit/renderd` 是 Robert Nisipeanu 和 IterioDev 的 [mgu-render](https://github.com/robertnisipeanu/mgu-store)，採用 GPL-3.0-or-later（`kit/renderd/LICENSE`）；來自本存放庫最初渲染器的部分仍同時保留 MIT（`kit/renderd/LICENSE.mgu-renderd`），`kit/renderd/inputgate` 門控採用 MIT。渲染器作為獨立程式執行，因此經 socket 與它通訊的應用程式仍採用 MIT。
 
-另一部分是 Doom：`apps/doom/doom.wasm` 是以 WebAssembly 編譯的 [doomgeneric](https://github.com/ozkl/doomgeneric) 引擎（GPL-2.0），所以 Doom 應用程式整體按 GPL-2.0 散佈，見 `apps/doom/LICENSE` 和 `NOTICE`。完整原始碼及適配修改在 `third_party/doomgeneric`，使用 zig 0.13 和 binaryen 119 執行其 `build.sh` 可逐位元組重建 `doom.wasm`。遊戲資料 [Freedoom: Phase 1](https://freedoom.github.io) 0.13.0 採用 BSD，聲明在 NOTICE 中；資料不放入存放庫，由建置腳本下載並核對 SHA-256。Doom 是 id Software 的商標，Freedoom 與本應用程式均不隸屬於 id Software。
+另一部分是 Doom：`apps/cn_doom/doom.wasm` 是以 WebAssembly 編譯的 [doomgeneric](https://github.com/ozkl/doomgeneric) 引擎（GPL-2.0），所以 Doom 應用程式整體按 GPL-2.0 散佈，見 `apps/cn_doom/LICENSE` 和 `NOTICE`。完整原始碼及適配修改在 `third_party/doomgeneric`，使用 zig 0.13 和 binaryen 119 執行其 `build.sh` 可逐位元組重建 `doom.wasm`。遊戲資料 [Freedoom: Phase 1](https://freedoom.github.io) 0.13.0 採用 BSD，聲明在 NOTICE 中；資料不放入存放庫，由建置腳本下載並核對 SHA-256。Doom 是 id Software 的商標，Freedoom 與本應用程式均不隸屬於 id Software。
 
 ---
 

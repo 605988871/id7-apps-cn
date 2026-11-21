@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const TH = require('./redline_test_harness');
 const ROOT = TH.ROOT;
-const APP = path.join(ROOT, 'apps', 'redline');
+const APP = path.join(ROOT, 'apps', 'cn_redline');
 
 // the app requires the kit as './kit/...' (where the build puts it)
 TH.hookKit();
@@ -744,7 +744,7 @@ const labels = (items) => items.map((r) => r.label).join(',');
 function electricalChecks() {
     const Electrical = require(path.join(APP, 'electrical'));
     const { DidReader } = require(path.join(ROOT, 'kit', 'runtime', 'dids'));
-    const edrive = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'edrive', 'app.json'), 'utf8')).config.battery;
+    const edrive = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_edrive', 'app.json'), 'utf8')).config.battery;
     // the same reads as eDrive (its config.battery): 12 V candidates in order, the HV charge, voltage and current
     const same = (a, b, keys) => keys.every((k) => (a[k] == null ? null : a[k]) === (b[k] == null ? null : b[k]));
     const ecuOf = (c) => (c.ecu == null ? edrive.ecu : c.ecu);

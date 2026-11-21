@@ -2,7 +2,7 @@
 /* apps/cn_edrive/linkqueue.js: the power reads first, but a read waiting gets a turn after URGENT_RUN of them. */
 const assert = require('assert');
 const path = require('path');
-const { linkQueue, URGENT_RUN } = require(path.join(__dirname, '..', '..', 'apps', 'edrive', 'linkqueue.js'));
+const { linkQueue, URGENT_RUN } = require(path.join(__dirname, '..', '..', 'apps', 'cn_edrive', 'linkqueue.js'));
 
 (async () => {
     const order = [];

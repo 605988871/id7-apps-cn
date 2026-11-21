@@ -14,8 +14,8 @@ const EventEmitter = require('events');
 const Module = require('module');
 
 const ROOT = path.join(__dirname, '..', '..'), KIT = path.join(ROOT, 'kit', 'runtime');
-const MAIN = path.join(ROOT, 'apps', 'edrive', 'main.js'), LIVE = path.join(ROOT, 'apps', 'edrive', 'live.js');
-const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'edrive', 'app.json'), 'utf8'));
+const MAIN = path.join(ROOT, 'apps', 'cn_edrive', 'main.js'), LIVE = path.join(ROOT, 'apps', 'cn_edrive', 'live.js');
+const SPEC = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_edrive', 'app.json'), 'utf8'));
 const { Recorder: Canvas } = require(path.join(KIT, 'record'));        // what the kit draws into (display.js)
 const themes = require(path.join(KIT, 'themes'));
 
@@ -123,7 +123,7 @@ function context(dir, set) {
  * "Read now" button (the health read too), exit() the process exiting (its exit handlers only: kept off this process's)
  */
 async function boot(dir, vals, set) {
-    [MAIN, LIVE, path.join(ROOT, 'apps', 'edrive', 'range.js'), path.join(ROOT, 'apps', 'edrive', 'battery12.js')].forEach((f) => { delete require.cache[f]; });
+    [MAIN, LIVE, path.join(ROOT, 'apps', 'cn_edrive', 'range.js'), path.join(ROOT, 'apps', 'cn_edrive', 'battery12.js')].forEach((f) => { delete require.cache[f]; });
     require(MAIN);
     values = vals; timers = [];
     const ctx = context(dir, set), before = process.listeners('exit');
@@ -611,7 +611,7 @@ const checks = [
         assert.deepStrictEqual(SPEC.settings.find((s) => s.key === 'hybrid').options.map((o) => o[0]), ['auto', 'bev', 'yes', '48v', 'no']);
     }],
     ['B7. the range model\'s limits scale with the battery (the hybrid\'s as they were)', async () => {
-        const { RangeModel } = require(path.join(ROOT, 'apps', 'edrive', 'range.js'));
+        const { RangeModel } = require(path.join(ROOT, 'apps', 'cn_edrive', 'range.js'));
         const m = new RangeModel({ learn: { km: 20, pct: 20 * 0.17 } });
         assert.strictEqual(m.drivePctPerKm(50), null, '0.17 % per km is under the hybrid\'s floor');
         m.scale = 0.12 / 0.74;

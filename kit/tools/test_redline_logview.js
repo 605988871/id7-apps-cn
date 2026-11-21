@@ -9,7 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const LogView = require(path.join(__dirname, '..', '..', 'apps', 'redline', 'logview'));
+const LogView = require(path.join(__dirname, '..', '..', 'apps', 'cn_redline', 'logview'));
 
 let checks = 0, fails = 0;
 const ok = (c, m) => { checks++; if (!c) { fails++; console.log('FAIL ' + m); } };

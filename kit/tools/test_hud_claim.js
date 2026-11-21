@@ -12,7 +12,7 @@ const ROOT = TH.ROOT;
 // a stand-in cluster-render: ready at once; pixels() answers nothing (whole pictures each time), no slot reports
 TH.hookKit({ clusterRender: TH.fakeClusterRender({ pixels: undefined, status: false }) });
 const { HudClaim } = require(path.join(ROOT, 'kit', 'runtime', 'hud_claim'));
-const Hud = require(path.join(ROOT, 'apps', 'redline', 'hud'));
+const Hud = require(path.join(ROOT, 'apps', 'cn_redline', 'hud'));
 
 const tally = TH.counter(), ok = tally.ok, sleep = TH.sleep;
 const log = { info() {}, warn() {}, error() {} };
@@ -73,7 +73,7 @@ const rm = TH.rmTree;   // the head unit (and the node8-runtime CI job) is Node 
     ok(s.v.hud === 'on', 'hudHandBack off: Redline\'s HUD stays on');
     h.stop();
     // and off is the default: not set at all, it stays on too
-    const spec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'redline', 'app.json'), 'utf8')).settings.filter((x) => x.key === 'hudHandBack')[0];
+    const spec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'cn_redline', 'app.json'), 'utf8')).settings.filter((x) => x.key === 'hudHandBack')[0];
     ok(spec && spec.default === true, 'hudHandBack is on by default (this fork: the map comes back)');
     rm(path.join(SHM, 'redline'));
     s = settings({ hudHandBack: undefined }); h = start(s);

@@ -38,7 +38,7 @@ from datetime import date
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
-OUT = os.path.join(ROOT, 'apps', 'live_data', 'catalog')
+OUT = os.path.join(ROOT, 'apps', 'cn_live_data', 'catalog')
 URL = 'https://emdzej.github.io/ediabasx-docs-sgbd/sgbd/%s/'
 SIZES = {'u8': 1, 's8': 1, 'u16': 2, 's16': 2, 'u32': 4, 's32': 4, 'f32': 4}
 TYPES = {'unsigned char': 'u8', 'signed char': 's8', 'unsigned int': 'u16', 'signed int': 's16',
@@ -267,7 +267,7 @@ def read_pack(file, rel):
 
 
 def cmd_index(out):
-    db = os.path.join(ROOT, 'apps', 'dtc_scanner', 'dtc_db')
+    db = os.path.join(ROOT, 'apps', 'cn_dtc_scanner', 'dtc_db')
     idx = load(os.path.join(db, 'sgbd_index.json'), None)
     if idx is None:
         idx = read_pack(db + '.pack', 'sgbd_index.json')
@@ -324,8 +324,8 @@ def cmd_add(sgbd, file, out):
     print('%s: %d texts added or changed, %d in all' % (os.path.basename(en_file), n, len(en)))
 
 
-BUILTIN = os.path.join(ROOT, 'apps', 'live_data', 'builtin')
-USEFUL = os.path.join(ROOT, 'apps', 'live_data', 'useful.js')
+BUILTIN = os.path.join(ROOT, 'apps', 'cn_live_data', 'builtin')
+USEFUL = os.path.join(ROOT, 'apps', 'cn_live_data', 'useful.js')
 
 
 def cmd_builtin(src):

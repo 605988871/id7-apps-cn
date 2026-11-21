@@ -110,7 +110,7 @@ const CBS_SOURCES = [
     { address: 0x29, name: 'DSC', dids: [0x1001] },
 ];
 const CBS_REFRESH_MS = 60000;
-// the engine unit's wear values (DME8FF_R: B58 / B48 / B38), as Live Data reads them (apps/live_data/useful.js
+// the engine unit's wear values (DME8FF_R: B58 / B48 / B38), as Live Data reads them (apps/cn_live_data/useful.js
 // "Oil", "Wear and service"; layouts from its builtin DME8FF_R catalog); kit/dids.js candidates, first that answers
 const ENGINE_REFRESH_MS = 60000;
 // (the identifiers of both units of a twin-unit engine are the master's, its SGBD pair's)

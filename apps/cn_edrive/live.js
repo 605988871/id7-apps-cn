@@ -900,7 +900,7 @@ module.exports = function live(ctx, sh) {
             cv.text(why.length > 22 ? why.slice(0, 21) + '…' : why, cols[5], y, fz - 2, r && r.ok ? GO : r ? t.warn : t.dim, { font: 'label' });
             y += rowH;
         }));
-        cv.text('A value n/a or wrong? Adjust config.battery in apps/edrive/app.json and rebuild. Regen shown while accelerating: powerSign 1.', 48, 492, 18, t.dim);
+        cv.text('A value n/a or wrong? Adjust config.battery in apps/cn_edrive/app.json and rebuild. Regen shown while accelerating: powerSign 1.', 48, 492, 18, t.dim);
     }
 
     function renderScan(cv, t, d) {

@@ -2,7 +2,7 @@
 /* apps/cn_draggy/wheelspin.js: no spin when the wheels follow the body, spin when they run ahead, the slope's offset off. */
 const assert = require('assert');
 const path = require('path');
-const { Wheelspin } = require(path.join(__dirname, '..', '..', 'apps', 'draggy', 'wheelspin.js'));
+const { Wheelspin } = require(path.join(__dirname, '..', '..', 'apps', 'cn_draggy', 'wheelspin.js'));
 
 let n = 0;
 const ok = (c, m) => { assert(c, m); n++; console.log('ok   ' + m); };

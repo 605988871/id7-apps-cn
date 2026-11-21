@@ -5,7 +5,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { XDriveLive } = require(path.join(__dirname, '..', '..', 'apps', 'live_adjustments', 'xdrive_live'));
+const { XDriveLive } = require(path.join(__dirname, '..', '..', 'apps', 'cn_live_adjustments', 'xdrive_live'));
 
 let fails = 0, checks = 0;
 const ok = (c, msg) => { checks++; if (!c) { fails++; console.log('FAIL ' + msg); } };

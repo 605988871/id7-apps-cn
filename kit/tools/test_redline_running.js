@@ -19,8 +19,8 @@ const ROOT = TH.ROOT;
 // a stand-in cluster-render: ready at once; records layers and pixels
 let cr = null;
 TH.hookKit({ clusterRender: TH.fakeClusterRender({ set: 'merge', onCreate: (c) => { cr = c; } }) });
-const Hud = require(path.join(ROOT, 'apps', 'redline', 'hud'));
-const HudNav = require(path.join(ROOT, 'apps', 'redline', 'hud-nav'));
+const Hud = require(path.join(ROOT, 'apps', 'cn_redline', 'hud'));
+const HudNav = require(path.join(ROOT, 'apps', 'cn_redline', 'hud-nav'));
 const def = TH.redlineDefaults().def;
 
 const tally = TH.counter(), ok = tally.ok, sleep = TH.sleep;
@@ -195,7 +195,7 @@ const log = { info() {}, warn() {}, error() {} };
     // "Play on HUD" and the HUD looks preview draw one demo frame (hud.js demoFrame): the same blink and shake.
     // The clock is held still and stepped by hand, so the HUD's timer can't step in between.
     {
-        const main = fs.readFileSync(path.join(ROOT, 'apps', 'redline', 'main.js'), 'utf8');
+        const main = fs.readFileSync(path.join(ROOT, 'apps', 'cn_redline', 'main.js'), 'utf8');
         const pv = main.slice(main.indexOf('const studioFrame'), main.indexOf('function lookLayer('));
         ok(/Hud\.demoFrame\(now - studio\.t0, Hud\.optsFrom\(studioP\(\)\), studio\.cue, hud \? hud\.lead\(\) : 200, now\)/.test(pv) && !/blink|shake|SHAKE/.test(pv),
             'the preview takes its frame from Hud.demoFrame, no blink or shake of its own');
