@@ -276,18 +276,15 @@ static int sink_connect(void)
  * wait is bounded and tiny (SINK_WAIT_MS); the send buffer is enlarged in
  * sink_connect so it almost never comes to this.
  *
- * If the wait still ends with the buffer full, whether the socket is closed
- * matters. Closing it makes the decoder tear down its session and wait for a
- * fresh SPS - which CarLife may only send at the start of navigation, leaving
- * the picture stuck. So: if not one byte went out, the stream is still aligned
- * and the socket is kept; the next chunk rides the same session. Only a half
- * sent slice (which would poison every frame up to the next keyframe) or a
- * reader that truly went away (EPIPE/ECONNRESET) closes it, so the decoder
- * resynchronises on a fresh keyframe instead of decoding garbage. */
+ * If the wait still ends with the buffer full, the socket has to close. A
+ * chunk that did not make it is a hole in the H.264 stream whether it was the
+ * whole chunk or half of one: the next P frame predicts from a picture the
+ * decoder never saw, and MSDK paints that as a mosaic rather than reporting
+ * it. Closing makes the decoder tear down its session and start over at the
+ * next keyframe - a clean freeze instead of a garbled picture. */
 static void sink_write(const void *buf, size_t n)
 {
     const unsigned char *p = (const unsigned char *)buf;
-    const unsigned char *start = p;
     size_t left = n;
     int waited = 0;
 
@@ -315,16 +312,12 @@ static void sink_write(const void *buf, size_t n)
             continue;                    /* try the same bytes again */
         }
         __sync_fetch_and_add(&sink_drops, 1);
-        {
-            int e = errno;               /* keep it across sink_say() */
-            if (w < 0) sink_say(e);
-            /* Nothing sent: keep the session alive, the decoder stays in step.
-             * A partial send, or a genuine disconnect: close so the decoder
-             * starts over at the next keyframe, not on a half slice. */
-            if (p != start ||
-                (w < 0 && e != EAGAIN && e != EWOULDBLOCK && e != ENOBUFS))
-                sink_close();
-        }
+        if (w < 0) sink_say(errno);
+        /* A hole in the H.264 stream is a hole whether it was a whole chunk
+         * or half of one: the next P frame predicts from a picture the
+         * decoder never saw. Close so it starts over at the next keyframe
+         * instead of painting a mosaic. */
+        sink_close();
         return;
     }
 }

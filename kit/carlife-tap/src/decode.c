@@ -49,6 +49,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -85,15 +86,12 @@
  * cluster's picture comes from, and a hang shows on the screen either way. */
 #define SYNC_MS  1000
 #define BUSY_MAX 1000
-/* How long one frame may take to reach a reader before it is dropped. A
- * reader that is a frame behind must not be mistaken for one that has gone
- * away - closing on a full buffer turns a hiccup into a visible disconnect -
- * but waiting here is pure end-to-end latency: the whole picture is already
- * decoded, and holding it only makes the glass that much further behind the
- * phone. So wait briefly, then drop this frame and keep the socket. Dropping
- * a stale picture is the right answer for a live feed; the next frame is
- * already on its way and replaces it. */
-#define SEND_WAIT_MS 40
+/* A frame is handed out without waiting on the reader. The picture is already
+ * decoded, so blocking here is pure end-to-end latency - and worse: every
+ * millisecond this loop stops is a millisecond the tap's sink socket is not
+ * being drained, which is how the tap ends up dropping raw H.264 bytes and
+ * the decoder paints a garbled picture. A slow reader costs this one frame;
+ * the next frame is already on its way and replaces it. */
 /* Above this much data with an SPS present but no usable header, the SPS is
  * not going to complete: skip it and look at the next one. A real SPS+PPS is
  * a few hundred bytes; four megabytes of waiting is the wedge this bounds. */
@@ -222,11 +220,14 @@ static void out_shut(Out *o)
 static void out_write(Out *o, const unsigned char *p, size_t n)
 {
     /* CLMF, the format the app's frame sources already read: magic, length of
-     * the payload, frame number - all little endian, then the 4:2:0 picture. */
+     * the payload, frame number - all little endian, then the 4:2:0 picture.
+     * Header and payload go in one writev so a frame is either wholly on the
+     * socket or not at all: a header with a half payload behind it would pair
+     * the wrong bytes on the reader. */
     unsigned char hdr[12];
     uint32_t magic = 0x464d4c43u, len = (uint32_t)n, seq = (uint32_t)++o->seq;
-    size_t done = 0;
-    int waited = 0;
+    struct iovec iov[2];
+    size_t done = 0, total = sizeof hdr + n;
 
     memcpy(hdr + 0, &magic, 4);
     memcpy(hdr + 4, &len, 4);
@@ -242,30 +243,44 @@ static void out_write(Out *o, const unsigned char *p, size_t n)
         }
     }
     if (o->fd < 0) { o->drops++; return; }
-    if (write(o->fd, hdr, sizeof hdr) != (ssize_t)sizeof hdr) { out_shut(o); o->drops++; return; }
-    while (done < n) {
-        ssize_t k = write(o->fd, p + done, n - done);
-        int e;
-        if (k > 0) { done += (size_t)k; continue; }
-        if (k < 0 && errno == EINTR) continue;
-        e = errno;
-        /* A reader that is a frame behind costs this frame, not the
-         * connection. Waiting longer than this is pure latency: the picture
-         * is already decoded, and the next one is on its way. */
-        if (k < 0 && (e == EAGAIN || e == EWOULDBLOCK) && waited < SEND_WAIT_MS) {
-            struct pollfd pf;
-            pf.fd = o->fd;
-            pf.events = POLLOUT;
-            pf.revents = 0;
-            int ms = poll(&pf, 1, SEND_WAIT_MS - waited);
-            if (ms > 0) continue;
-            waited = SEND_WAIT_MS;
+
+    iov[0].iov_base = hdr;
+    iov[0].iov_len = sizeof hdr;
+    iov[1].iov_base = (void *)p;
+    iov[1].iov_len = n;
+
+    while (done < total) {
+        ssize_t k = writev(o->fd, iov, 2);
+        if (k > 0) {
+            done += (size_t)k;
+            if (iov[0].iov_len) {
+                if ((size_t)k < iov[0].iov_len) {
+                    iov[0].iov_base = (unsigned char *)iov[0].iov_base + k;
+                    iov[0].iov_len -= (size_t)k;
+                    k = 0;
+                } else {
+                    k -= (ssize_t)iov[0].iov_len;
+                    iov[0].iov_len = 0;
+                }
+            }
+            if (!iov[0].iov_len && k > 0) {
+                iov[1].iov_base = (unsigned char *)iov[1].iov_base + k;
+                iov[1].iov_len -= (size_t)k;
+            }
+            continue;
         }
-        /* The 12-byte header is already on the socket, so a frame that stops
-         * here leaves the reader a length that no longer matches the bytes
-         * that follow - a garbled picture, not a dropped one. Close so the
-         * reader resyncs cleanly at the next header. EAGAIN already had its
-         * brief grace period above; only a complete frame keeps the socket. */
+        if (k < 0 && errno == EINTR) continue;
+        if (done == 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            /* Not one byte of this frame reached the socket: a full buffer is
+             * a slow reader, not a dead one. Drop the frame and keep the
+             * connection - the next frame replaces it, and the reader never
+             * has to rebuild its source over one lost picture. */
+            o->drops++;
+            return;
+        }
+        /* A partial frame is on the socket: the reader would pair this
+         * header with the wrong bytes, so close and let it resync at the
+         * next header. A reader that truly went away lands here too. */
         out_shut(o);
         o->drops++;
         return;

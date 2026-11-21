@@ -2,7 +2,7 @@
   "id": "cn_carlife_map",
   "title": "CarLife 地图",
   "description": "把手机 CarLife 的导航送到 iDrive 7：仪表盘和 HUD 都能显示地图，HUD 也可显示 CarLife 自己的导航条（箭头、车道、路名）。取流与解码组件随应用一同安装，画面在车机侧解码后裁切；若仪表盘上没有出现画面，先确认车上已装 Cluster renderer。地图缩放可在设置里调，位置请在主界面的「微调」页用按钮左右上下微调；实验功能",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "vendor": "custom",
   "loggingId": "OAA6",
   "iconGlyph": "gauge",
@@ -12,7 +12,7 @@
   "autostart": true,
   "requires": {
     "idrive7-renderd": "2.1.15",
-    "carlife-tap": "0.4.10"
+    "carlife-tap": "0.4.11"
   },
   "screens": [
     {
