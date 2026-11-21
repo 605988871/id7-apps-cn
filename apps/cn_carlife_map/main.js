@@ -18,15 +18,17 @@ const mgu = require('./kit/mgu');
 const { HudClaim } = require('./kit/hud_claim');
 const { ClusterRender } = require('./cluster_render_client');
 const { createSource, mkdirp, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT } = require('./carlife_source');
-const { MAP_W, MAP_H, cropAtlas, atlasSize, liveCardAtlas } = require('./atlas');
+const { MAP_W, MAP_H, cropAtlas, zoomWindow, scaleAtlas, atlasSize, liveCardAtlas } = require('./atlas');
 const { toRgba, parseTarget, parseLayer } = require('./hud_convert');
+const G = require('./kit/gauges');
 
 const APP = 'cn_carlife_map';
 const KEYS = ['target', 'source', 'fps', 'hudMode', 'hudDetail',
               'hudWidth', 'hudX', 'hudY', 'hudKeep', 'hudOpacity', 'hudPath',
               'mapTop', 'mapBottom', 'mapLeft', 'mapRight', 'mapFit',
               'cardTop', 'cardBottom', 'cardLeft', 'cardRight', 'cardFit',
-              'hudMapX', 'hudMapY'];
+              'hudMapX', 'hudMapY', 'waitScale', 'waitX', 'waitY',
+              'mapZoom', 'hudMapZoom'];
 const TAP_REPORT = '/dev/shm/carlife-tap.txt';
 /* The decoder's own report: whether the stream became a picture. */
 const DECODE_REPORT = '/dev/shm/carlife-decode.txt';
@@ -63,6 +65,11 @@ async function run(ctx) {
     let cr = null;
     let source = null;
     let mapLayer = 0, hudLayer = 0;
+    /* The cluster's map layer is a fixed 1088x480. A zoom other than 100 needs
+     * a frame of that same size, made by scaling a window of the decoder's
+     * atlas - a source frame is never resized in place, because the source
+     * owns it and reuses it. */
+    let mapZoomBuf = null;
     let lastAtlas = null, lastSeq = 0, frames = 0;
     /* The HUD gets a frame of its own size, from its own source: a layer's
      * frame must be exactly its vw x vh, and cluster-render drops any frame
@@ -248,6 +255,22 @@ async function run(ctx) {
         return hudWaitBuf;
     };
 
+    /* The cluster's map frame, at the zoom the driver asked for. The layer is
+     * a fixed MAP_W x MAP_H, so any frame handed to it has to be that size too:
+     * scale a window of the source into a spare buffer, never the source
+     * itself. At 100% the whole map goes through unchanged. */
+    const sendMap = safe('map frame', (atlas, seq) => {
+        if (!mapLayer || !atlas) return;
+        const z = Number(settings.get('mapZoom')) || 100;
+        if (z <= 100) { cr.frame(mapLayer, atlas, seq); return; }
+        if (!mapZoomBuf || mapZoomBuf.length !== atlasSize(MAP_W, MAP_H)) {
+            mapZoomBuf = Buffer.alloc(atlasSize(MAP_W, MAP_H));
+        }
+        const win = zoomWindow(MAP_W, MAP_H, z, 0, 0);
+        const out = scaleAtlas(atlas, MAP_W, MAP_H, win, MAP_W, MAP_H, mapZoomBuf);
+        if (out) cr.frame(mapLayer, out, seq);
+    });
+
     /* The HUD's frame, in whichever shape the mode asks for.
      *
      * cluster-render takes a frame only when it is exactly the layer's vw x vh,
@@ -267,19 +290,18 @@ async function run(ctx) {
             } else if (!atlas) {
                 return;
             } else {
-                /* Which piece of the map the glass shows. Centred by default;
-                 * the two pan settings move it, as a percentage of the map's
-                 * own size, so that a HUD sitting off to one side can show the
-                 * road and not the middle of the picture. The window cannot
-                 * leave the map, and the offsets are even because 4:2:0 chroma
-                 * is per 2x2 block. */
+                /* The HUD shows the same map as the cluster, at its own size.
+                 * At 100% the window is the whole map and it is scaled down to
+                 * the HUD layer - not cut out of it, which is why the picture
+                 * used to look blown up. A zoom above 100 takes a smaller
+                 * window and grows it back to the layer; pan moves that window
+                 * once there is room. Both stay inside the map, on 2x2-block
+                 * boundaries for 4:2:0 chroma. */
+                const z = Number(settings.get('hudMapZoom')) || 100;
                 const px = Number(settings.get('hudMapX')) || 0;
                 const py = Number(settings.get('hudMapY')) || 0;
-                let dx = ((MAP_W - hudW) >> 1) + Math.round(MAP_W * px / 100);
-                let dy = ((MAP_H - hudH) >> 1) + Math.round(MAP_H * py / 100);
-                dx = Math.max(0, Math.min(MAP_W - hudW, dx)) & ~1;
-                dy = Math.max(0, Math.min(MAP_H - hudH, dy)) & ~1;
-                hudAtlas = cropAtlas(atlas, MAP_W, MAP_H, dx, dy, hudW, hudH, hudAtlas);
+                const win = zoomWindow(MAP_W, MAP_H, z, px, py);
+                hudAtlas = scaleAtlas(atlas, MAP_W, MAP_H, win, hudW, hudH, hudAtlas);
                 frame = hudAtlas;
             }
         } else {
@@ -431,7 +453,7 @@ async function run(ctx) {
         refreshClaim();
         setHudSource();
         if (lastAtlas) {
-            if (mapLayer) cr.frame(mapLayer, lastAtlas, lastSeq);
+            sendMap(lastAtlas, lastSeq);
             if (hudLayer) sendHud(lastAtlas);
         }
         log.info('layers: target ' + t + ', map ' + mapLayer + ', hud ' + hudLayer +
@@ -519,7 +541,7 @@ async function run(ctx) {
             lastSeq = seq;
             frames++;
             if (!cr || !cr.ready) return;
-            if (mapLayer) cr.frame(mapLayer, atlas, seq);
+            sendMap(atlas, seq);
             if (hudLayer) sendHud(atlas);
         }));
         source.on('status', safe('source status', (s) => { srcStatus = String(s); }));
@@ -801,8 +823,8 @@ async function run(ctx) {
     function hudCardInfo() {
         const mode = settings.get('hudMode') || 'navi';
         if (mode === 'map') {
-            return 'map ' + hudW + 'x' + hudH + ' from the map, pan ' +
-                (Number(settings.get('hudMapX')) || 0) + '/' +
+            return 'map ' + hudW + 'x' + hudH + ', zoom ' + (Number(settings.get('hudMapZoom')) || 100) +
+                '%, pan ' + (Number(settings.get('hudMapX')) || 0) + '/' +
                 (Number(settings.get('hudMapY')) || 0) + '%';
         }
         if (!hudSource) return 'off (no HUD layer)';
@@ -850,6 +872,58 @@ async function run(ctx) {
     const svcHudTarget = () => parseTarget(svcText, 'hud').slice(0, 120);
     const svcHudLayer = () => parseLayer(svcText, 'hud', hudLayer).slice(0, 120);
 
+    /* ---------- fine-tuning page ----------
+     * The iDrive settings screen is a native drop-down: a position can only be
+     * picked from a list of pixel values, which is slow to dial in while
+     * looking at the glass. So the positions and zooms live here instead, as
+     * buttons that move one step at a time - the same control redline uses for
+     * its HUD. Each press writes the setting through settings.set, which also
+     * calls apply() via the change hook below, so the glass updates at once. */
+    let page = 0;                              // 0 = status, 1 = fine tuning
+
+    function stepButtons(cv, t, x, y, key, buttons, fmt) {
+        const it = settings.item(key), steps = (it && it.steps) || [], cur = settings.get(key);
+        const i = Math.max(0, steps.indexOf(cur));
+        const go = (d) => {
+            const j = Math.max(0, Math.min(steps.length - 1, i + d));
+            if (steps[j] === undefined || steps[j] === cur) return;
+            settings.set(key, steps[j]);
+        };
+        const w0 = G.button(cv, t, x, y, 0, 44, buttons[0][0], () => go(buttons[0][1]),
+            { key: 'tune_' + key + '_a', busy: i <= 0 });
+        cv.text(fmt ? fmt(steps.length ? steps[i] : cur) : String(steps.length ? steps[i] : cur),
+            x + (w0 || 120) + 78, y + 30, 22, t.text, { align: 'center', font: 'bold' });
+        G.button(cv, t, x + (w0 || 120) + 156, y, 0, 44, buttons[1][0], () => go(buttons[1][1]),
+            { key: 'tune_' + key + '_b', busy: i >= steps.length - 1 });
+    }
+
+    function drawTune(cv, t) {
+        cv.text('微调校准', 40, 60, 38, '#ffffff');
+        cv.text('按旋钮选中按钮，按确认键走一格；改动会立刻送到仪表盘和 HUD', 40, 100, 20, '#7fbf9f');
+        const px = (v) => (v === 0 ? '居中' : (v > 0 ? '+' : '') + v + '%');
+        const pz = (v) => v + '%' + (v === 100 ? '（完整地图）' : '');
+
+        cv.text('HUD 位置', 40, 158, 22, t.accent, { font: 'bold' });
+        stepButtons(cv, t, 40, 176, 'hudX', [['左', -1], ['右', 1]], (v) => v === 0 ? '居中' : (v > 0 ? '+' : '') + v + ' px');
+        stepButtons(cv, t, 40, 236, 'hudY', [['上', -1], ['下', 1]], (v) => v === 0 ? '默认' : (v > 0 ? '+' : '') + v + ' px');
+
+        cv.text('HUD 地图', 800, 158, 22, t.accent, { font: 'bold' });
+        stepButtons(cv, t, 800, 176, 'hudMapZoom', [['缩小', -1], ['放大', 1]], pz);
+        stepButtons(cv, t, 800, 236, 'hudMapX', [['左', -1], ['右', 1]], px);
+        stepButtons(cv, t, 800, 296, 'hudMapY', [['上', -1], ['下', 1]], px);
+
+        cv.text('仪表盘地图 / 等待文字', 40, 318, 22, t.accent, { font: 'bold' });
+        stepButtons(cv, t, 40, 336, 'mapZoom', [['缩小', -1], ['放大', 1]], pz);
+        stepButtons(cv, t, 800, 356, 'waitX', [['左', -1], ['右', 1]], px);
+        stepButtons(cv, t, 800, 416, 'waitY', [['上', -1], ['下', 1]], px);
+
+        G.button(cv, t, 40, 404, 0, 44, '全部复位', () => {
+            ['hudX', 'hudY', 'hudMapZoom', 'hudMapX', 'hudMapY', 'mapZoom', 'waitX', 'waitY']
+                .forEach((k) => { const it = settings.item(k); if (it) settings.set(k, it.default); });
+        }, { key: 'tune_reset', color: '#e08a8a' });
+        cv.text('缩放 100% = 完整地图；放大后可用左右上下移动取景', 40, 486, 19, '#8fa3b4');
+    }
+
     /* ---------- status page ---------- */
     ctx.loop('MAIN', 5, safe('ui', () => {
         /* A HUD layer that never appears is the one failure this app cannot
@@ -879,6 +953,10 @@ async function run(ctx) {
         }
 
         const cv = ctx.canvas(1600, 520).clear('#0b1016');
+        if (page === 1) {
+            drawTune(cv, ctx.theme());
+            return ui.image('MAIN_GFX', cv);
+        }
         const kind = settings.get('source') || 'demo';
         /* The waiting picture on the cluster carries one short line of why.
          * It is set here, once a loop, because this is the only place that can
@@ -929,6 +1007,8 @@ async function run(ctx) {
             40, 492, 19, decExec ? '#e08a8a' : '#8fa3b4');
         return ui.image('MAIN_GFX', cv);
     }));
+
+    if (ui.comp('BTN_PAGE')) ui.onClick('BTN_PAGE', () => { page = page ? 0 : 1; });
 
     apply();
     connect();

@@ -75,6 +75,58 @@ function cropAtlas(src, sw, sh, dx, dy, dw, dh, out) {
     return a;
 }
 
+/**
+ * The window of the source a zoom shows. 100 is the whole picture; a larger
+ * number takes a smaller window (a closer look) and that window is stretched
+ * to the layer's size. Pan moves the window after centring it, in per cent of
+ * the source, so a pan has no room until there is zoom to give it - which is
+ * why the HUD's full-map view is centred and cannot be nudged away from it.
+ * x/y are even and w is a multiple of four, so chroma stays on 2x2 blocks.
+ */
+function zoomWindow(sw, sh, zoom, panX, panY) {
+    const z = Number(zoom) > 100 ? Number(zoom) : 100;
+    const w = Math.max(4, Math.min(sw, Math.round(sw * 100 / z / 4) * 4));
+    const h = Math.max(2, Math.min(sh, Math.round(sh * 100 / z / 2) * 2));
+    let x = Math.round((sw - w) / 2 + sw * (Number(panX) || 0) / 100);
+    let y = Math.round((sh - h) / 2 + sh * (Number(panY) || 0) / 100);
+    x = Math.max(0, Math.min(sw - w, x)) & ~1;
+    y = Math.max(0, Math.min(sh - h, y)) & ~1;
+    return { x: x, y: y, w: w, h: h };
+}
+
+/**
+ * Resample a window of a 4:2:0 atlas into a dw x dh atlas. Nearest neighbour:
+ * a map is roads and text, not a photograph, and the head unit has no cycles
+ * for a filter here. dw must be a multiple of four and dh even, as cluster-
+ * render requires; the window zoomWindow() returns is already aligned.
+ * At 1:1 with the full window this is a plain copy, so the cluster's default
+ * view costs nothing extra.
+ */
+function scaleAtlas(src, sw, sh, win, dw, dh, out) {
+    const need = atlasSize(dw, dh);
+    if (dw < 4 || dh < 2 || !src || src.length < need) return null;
+    const a = out && out.length === need ? out : Buffer.alloc(need);
+    const du = dw * dh, su = sw * sh;
+    const chw = dw >> 1, chh = dh >> 1;
+    const swin = win.w >> 1, shwin = win.h >> 1;
+    const cx = win.x >> 1, cy = win.y >> 1, shw = sw >> 1;
+    for (let y = 0; y < dh; y++) {
+        const sy = win.y + Math.floor(y * win.h / dh);
+        const s = sy * sw + win.x, d = y * dw;
+        for (let x = 0; x < dw; x++) a[d + x] = src[s + Math.floor(x * win.w / dw)];
+    }
+    for (let y = 0; y < chh; y++) {
+        const sy = cy + Math.floor(y * shwin / chh);
+        const s = su + sy * sw, d = du + y * dw;
+        for (let x = 0; x < chw; x++) {
+            const sx = cx + Math.floor(x * swin / chw);
+            a[d + x] = src[s + sx];                    // U, left half of the row
+            a[d + chw + x] = src[s + shw + sx];        // V, right half
+        }
+    }
+    return a;
+}
+
 /** Fill a triangle in the Y plane. Used for arrow heads, which have to look
  * like an arrow and not like a box. */
 function fillTri(a, w, h, x0, y0, x1, y1, x2, y2, value) {
@@ -584,5 +636,5 @@ function waitingAtlas(out, w, h, tick, note, opt) {
     return a;
 }
 
-module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, demoAtlas, arrowAtlas,
+module.exports = { MAP_W, MAP_H, atlasSize, cropAtlas, zoomWindow, scaleAtlas, demoAtlas, arrowAtlas,
     activityAtlas, liveCardAtlas, waitingAtlas, fitScale, textOpt };
