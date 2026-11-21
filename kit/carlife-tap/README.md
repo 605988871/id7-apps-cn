@@ -373,6 +373,52 @@ two streams — one with CarLife's headers, one without — because the probe ha
 two answers to get right, and the second must still pass through byte for byte.
 On Windows the library can only be built, not exercised.
 
+## Publishing it as its own source
+
+A source in the Store is read as **one** layout: a `catalog.json` (Releases), a
+tag, or a branch's repo tree — never a mix. This repository is read as its tree,
+which is what builds the apps on the head unit. In that layout a tool is packed
+from its folder after the download, and the download is the tool's own folder
+only (the Store's `docs/PUBLISHING.md`, "Repo tree") — 217 KB here, once the
+updater is 0.8.40 or later. Before that every install read the repository's
+whole tarball: 62 MB, because this tree carries the DTC tables and the demo
+media, and none of it is this tool.
+
+Putting a `catalog.json` in *this* repository would not fix that: the Store would
+then list only what the catalog names, and the apps — which have no prebuilt
+packages, only a build script — would disappear from it. So the kit gets a source
+of its own, and this tree keeps serving the apps.
+
+```
+python3 kit/tools/pack_tool.py --repo <owner>/<tools-repo>
+```
+
+writes `dist/release/carlife-tap/carlife-tap@<version>.tgz` (30 KiB: the two
+binaries, the two scripts, the unit, the manifest) and the `catalog.json` that
+names it with its size and sha256. Publish both on a release named `catalog` in
+that small repository:
+
+```
+gh release create catalog catalog.json carlife-tap@0.4.10.tgz \
+   -R <owner>/<tools-repo> --title catalog --notes "car life tap 0.4.10"
+```
+
+The Store reads `releases/download/catalog/catalog.json` from the repository a
+source points at, so adding `<owner>/<tools-repo>` as a source lists this tool
+alone and downloads those 30 KiB — the tarball is checked against the size and
+sha256 the catalog states before anything installs. A USB stick works without a
+repository: copy the same two files to its root and add it as a folder source.
+
+Leave this repository's `mgu-repo.json` listing `carlife-tap` until the new
+source is added and the tool is installed from it, then remove the entry in a
+later commit — two sources offering one id are two rows in the Store, and the
+apps' `requires` still resolves against whichever source lists it.
+
+`kit/tools/test_pack_tool.py` reads the result back: `component.json` at the
+root, `files/<path>` and `units/<name>`, an executable executable and a library
+not, the catalog's size and sha256 against the file, the same folder packing to
+the same bytes.
+
 ## State
 
 0.4.0 — captures, classifies, decodes, and delivers both pictures; installed and
