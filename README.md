@@ -642,6 +642,7 @@ kit/icons/            the apps' tile icons as SVG (render_icons.py -> apps/<app>
 deploy/               make-car-kit.sh/.cmd, push-to-car.sh/.ps1, mgu-app-install.sh, mainapp-patch.js
 deploy/car/           deploy-car.sh (runs on the unit) + its README
 docs/                 RHMI widget reference, screenshots (docs/screens), animations (docs/media)
+tools/upstream-sync/  把上游 idrive7-apps 的更新并进本仓库（见该目录 README：血缘、冲突处理、补翻译）
 third_party/doomgeneric/  Doom's engine source (GPL-2.0) with the changes for the app (mgu.patch,
                       MGU.md) and build.sh, which builds apps/doom/doom.wasm
 ```
