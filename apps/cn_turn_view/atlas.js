@@ -185,8 +185,8 @@ function fillRing(a, w, h, cx, cy, rOut, thick, value) {
 /**
  * One lane's arrow, inside a box.
  *
- * `type` is what the lane does, in the same words CarLife's own strip uses:
- * straight, left, right, slight-left, slight-right, uturn, or left-straight /
+ * `type` is what the lane does, in the words a guidance strip uses: straight,
+ * left, right, slight-left, slight-right, uturn, or left-straight /
  * right-straight for a lane that goes two ways. A driver reads these at a
  * glance, so each is the ordinary icon and nothing clever.
  */
@@ -279,9 +279,9 @@ function laneGlyph(a, w, h, x, y, bw, bh, type, value) {
  *   full      ... and the lane guidance and the speed limit
  *
  * Drawn here, on the head unit, so the shape can be judged on the car before
- * any decoder exists: with `Picture source = Test picture` the HUD shows this
- * card and the settings move it. The same geometry then comes from CarLife's
- * own guidance strip, cropped out of its picture.
+ * any decoder exists: with `Picture source = Test picture` the card is shown
+ * and the settings move it. It is not used by the camera view itself, which
+ * crops its picture rather than drawing anything.
  *
  * `dir` is a lane glyph type; `lanes` is an array of them with `active` naming
  * the lane to take; `limit` is a speed limit in km/h or null.
@@ -497,14 +497,15 @@ function drawText(a, w, h, x, y, s, scale, value, chroma) {
 }
 
 /**
- * What is shown while CarLife's stream arrives but cannot be decoded yet.
+ * What is shown while the camera's stream arrives but cannot be decoded yet.
  *
- * CarLife sends H.264 and the head unit has no decoder in this build, so the
- * real picture is not available. Drawing nothing would look exactly like a
+ * The camera sends H.264 and the head unit has no decoder in this build, so
+ * the real picture is not available. Drawing nothing would look exactly like a
  * broken pipeline, and that is the one thing this picture must not look like:
- * it prints the bytes and frames the capture side has already delivered, and a
+ * it prints the bytes and frames the receiver has already delivered, and a
  * marker that moves only when data is still coming. If the numbers climb, the
- * whole path from USB to the cluster works and only the decoder is missing.
+ * whole path from the camera ECU to the cluster works and only the decoder is
+ * missing.
  *
  * `mb` megabytes seen, `idr` keyframes seen, `mbps` recent rate, `tick` frame
  * counter (the marker's position).
@@ -520,7 +521,7 @@ function activityAtlas(out, w, h, tick, mb, idr, mbps) {
     const mx = (tick * 11) % (w - 40);
     fillY(a, w, h, mx, 6, 40, 6, 235);
 
-    drawText(a, w, h, 40, 44, 'CARLIFE LIVE', 4, 210);
+    drawText(a, w, h, 40, 44, 'CAMERA LIVE', 4, 210);
     drawText(a, w, h, 40, 110, 'H.264 STREAM', 3, 150);
 
     const mbs = mb.toFixed(1);
@@ -542,8 +543,8 @@ function activityAtlas(out, w, h, tick, mb, idr, mbps) {
 }
 
 /**
- * The card's placeholder while CarLife's stream arrives but cannot be decoded,
- * and while it has not started arriving at all.
+ * The card's placeholder while the camera's stream arrives but cannot be
+ * decoded, and while it has not started arriving at all.
  *
  * activityAtlas is laid out for the cluster's 1088x480 and its lower half would
  * fall off a 480x168 card, so the card gets its own: the same proof - a marker
@@ -551,7 +552,7 @@ function activityAtlas(out, w, h, tick, mb, idr, mbps) {
  * of six.
  *
  * The face is about a third of the cluster's. At five and nine, "WAITING FOR
- * CARLIFE" covered the card once the HUD scaled the card up again; two and
+ * CAMERA" covered the card once the HUD scaled the card up again; two and
  * three leave the car's own speed and limit sign alone. `opt` is the app's own
  * idea of how big and where (see textOpt), so it can be changed without a
  * rebuild. `mb` is kept for the card's own stream; a `note` from the app wins
@@ -568,7 +569,7 @@ function liveCardAtlas(out, w, h, tick, mb, opt, note) {
     const k1 = fitScale(s1, w, 2 * o.k);
     drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2 + w * o.dx),
         Math.round(h * 0.14 + h * o.dy), s1, k1, 150);
-    const s2 = 'CARLIFE';
+    const s2 = 'CAMERA';
     const k2 = fitScale(s2, w, 3 * o.k);
     drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2 + w * o.dx),
         Math.round(h * 0.34 + h * o.dy), s2, k2, 225);
@@ -591,16 +592,16 @@ function liveCardAtlas(out, w, h, tick, mb, opt, note) {
 }
 
 /**
- * What is shown while CarLife is selected but nothing is arriving yet.
+ * What is shown while the camera view is selected but nothing is arriving.
  *
  * An empty layer and a broken layer look the same on the cluster: black. This
  * says which one it is, and the blinking dot says the app is alive rather than
  * stuck - without it, "waiting" and "crashed" are the same picture.
  *
  * `note` is one short line under the big words, and it is the whole point of
- * the page: "waiting" is true of a phone that is not connected, of a decoder
- * that never started and of frames that arrive at the wrong size, and those
- * are three different things to do. Whoever knows which one it is passes it
+ * the page: "waiting" is true of a camera that never sent, of a decoder that
+ * never started and of frames that arrive at the wrong size, and those are
+ * three different things to do. Whoever knows which one it is passes it
  * in; an empty note keeps the page as it was.
  *
  * `opt` carries the size and the place from the app's settings (textOpt). The
@@ -618,7 +619,7 @@ function waitingAtlas(out, w, h, tick, note, opt) {
     const s1 = 'WAITING FOR', k1 = fitScale(s1, w, 5 * o.k);
     drawText(a, w, h, Math.round((w - charWidth(s1, k1)) / 2 + w * o.dx),
         Math.round(h * 0.20 + h * o.dy), s1, k1, 150);
-    const s2 = 'CARLIFE', k2 = fitScale(s2, w, 9 * o.k);
+    const s2 = 'CAMERA', k2 = fitScale(s2, w, 9 * o.k);
     drawText(a, w, h, Math.round((w - charWidth(s2, k2)) / 2 + w * o.dx),
         Math.round(h * 0.40 + h * o.dy), s2, k2, 225);
 

@@ -1,10 +1,10 @@
 # turn-decode -- the camera's H.264 into the atlas the cluster's map layer takes.
 #
-# CarLife Map's decoder, built into this component and run with --dir, so the
-# two apps never share a socket, a crop.json or a report: this one listens on
-# /dev/shm/turn-view/h264.sock (where turn-cam writes) and hands the picture to
-# whoever listens on /dev/shm/turn-view/live.sock (the app), at exactly the size
-# the map layer asked for.
+# Built from src/decode.c and run with --dir, so no two apps share a socket, a
+# crop.json or a report: this one listens on /dev/shm/turn-view/h264.sock (where
+# turn-cam writes) and hands the picture to whoever listens on
+# /dev/shm/turn-view/live.sock (the app), at exactly the size the map layer
+# asked for.
 #
 # A camera picture is the whole frame, so crop.json asks for no cut and keeps
 # the aspect ratio; the app writes it. Nothing else here knows what a camera is.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 'use strict';
 /**
- * Frame sources for the CarLife map app.
+ * Frame sources for the camera picture.
  *
  * Every source produces one complete YUV 4:2:0 atlas per frame:
  *   rows 0..h-1          Y
@@ -9,13 +9,13 @@
  * and emits it as 'frame' (buffer, seq). No conversion is done here.
  *
  * Sources:
- *   demo    - a built-in moving test picture, no external service needed
- *   carlife - CarLife's own picture, from the capture side over a local
- *             socket (see CarlifeSource below)
- *   tcp     - framed atlases over TCP (connect or listen, see config file)
- *   fifo    - framed atlases from a local named pipe
+ *   demo   - a built-in moving test picture, no external service needed
+ *   socket - finished frames from the decoder, over a local unix socket
+ *            (see SocketSource below); this is what the app uses
+ *   tcp    - framed atlases over TCP (connect or listen, see config file)
+ *   fifo   - framed atlases from a local named pipe
  *
- * Wire format for carlife / tcp / fifo, all little endian:
+ * Wire format for socket / tcp / fifo, all little endian:
  *   u32 magic = 0x464d4c43 ('CLMF')
  *   u32 len   = number of atlas bytes (must be w * (h + h/2))
  *   u32 seq   - frame number, informational
@@ -35,11 +35,11 @@ const BACKOFF = [500, 1000, 2000, 4000];
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 20558;
-const DEFAULT_FIFO = '/dev/shm/carlife-map/frames.fifo';
-/* Where the capture side delivers CarLife's picture. Under /dev/shm so it is
- * always there, and a unix socket rather than TCP so no port is exposed. */
-const DEFAULT_SOCK = '/dev/shm/carlife-map/live.sock';
-const CARLIFE_PORT = 20559;
+const DEFAULT_FIFO = '/dev/shm/turn-view/frames.fifo';
+/* Where the decoder hands out its frames. Under /dev/shm so it is always
+ * there, and a unix socket rather than TCP so no port is exposed. */
+const DEFAULT_SOCK = '/dev/shm/turn-view/live.sock';
+const DEFAULT_SOCK_PORT = 20559;
 
 class FrameSource extends EventEmitter {
     constructor(opts) {
@@ -272,7 +272,7 @@ function dirFacts(p) {
     }
 }
 
-/** Is this the start of an Annex B NAL unit (H.264 as CarLife sends it)? */
+/** Is this the start of an Annex B NAL unit? */
 function looksLikeH264(b) {
     if (b.length < 3) return false;
     if (b[0] !== 0 || b[1] !== 0) return false;
@@ -280,32 +280,31 @@ function looksLikeH264(b) {
 }
 
 /**
- * CarLife's own picture.
+ * The decoded picture, from the decoder's socket.
  *
- * CarLife sends one H.264 stream over USB (AOA) and decodes it inside its own
- * process, so the only way to a second screen is to copy that stream out and
- * decode it again. The copying is done by a preload library in the carlife
- * process (kit/carlife-tap); this class is the receiving end.
+ * The camera picture is H.264 and the unit has no decoder in this build, so it
+ * is decoded by turn-decode and arrives here as finished frames. This class
+ * reads a stream of atlases off a local socket, whoever produced them.
  *
  * Two kinds of data can arrive, and saying which is the whole point of this
  * source, because both look identical from the outside - a black cluster:
  *
- *   CLMF, decoded frames  the capture side (or an external decoder) writes
- *                         atlases; they are drawn as they are.
+ *   CLMF, decoded frames  the decoder (or another producer) writes atlases;
+ *                         they are drawn as they are.
  *   raw H.264             the stream is flowing but nothing decodes it. The
  *                         bytes and keyframes are counted and printed on the
- *                         cluster instead, so "capture works, decoder missing"
+ *                         cluster instead, so "receiver works, decoder missing"
  *                         cannot be mistaken for "nothing is connected".
  *
- * Who connects: whoever captures. The app listens, so the order of start does
- * not matter - the capture side retries and drops in when it can.
+ * Who connects: whoever produces frames. The app listens, so the order of
+ * start does not matter - the producer retries and drops in when it can.
  */
-class CarlifeSource extends FrameSource {
+class SocketSource extends FrameSource {
     constructor(opts) {
         super(opts);
         this.sockPath = opts.sockPath || DEFAULT_SOCK;
         this.host = opts.host || null;          /* set only by an override file */
-        this.port = opts.port || CARLIFE_PORT;
+        this.port = opts.port || DEFAULT_SOCK_PORT;
         this.server = null;
         this.client = null;
         this.buf = Buffer.alloc(0);
@@ -435,7 +434,7 @@ class CarlifeSource extends FrameSource {
             this.retry = 0;
             this.listenErr = '';
             try { fs.chmodSync(this.sockPath, 0o666); } catch (e) {}
-            this.emit('status', 'waiting for CarLife (' + this.sockPath + ')');
+            this.emit('status', 'waiting for the decoder (' + this.sockPath + ')');
         });
     }
 
@@ -573,9 +572,9 @@ class CarlifeSource extends FrameSource {
         }
     }
 
-    /* The cluster never goes black while CarLife is selected.
+    /* The cluster never goes black while the camera view is selected.
      *
-     * Three states, three pictures: waiting for the capture side, H.264
+     * Three states, three pictures: waiting for the decoder, H.264
      * arriving but not decodable, real frames (which come from _feed and skip
      * this entirely). An empty layer would make all three look alike.
      *
@@ -650,7 +649,8 @@ class CarlifeSource extends FrameSource {
 
 /**
  * opts: { w, h, fps, kind, host, port, path, sockPath }. `kind` is 'demo',
- * 'carlife', 'tcp' or 'fifo'. 'tcp' connects to host:port by default; set
+ * 'socket', 'tcp' or 'fifo'. 'socket' reads the decoder's unix socket; 'tcp'
+ * connects to host:port by default; set
  * opts.tcpListen = true to listen.
  */
 function createSource(opts) {
@@ -658,12 +658,12 @@ function createSource(opts) {
         return new StreamSource(Object.assign({}, opts, { mode: opts.tcpListen ? 'tcp-listen' : 'tcp-connect' }));
     }
     if (opts.kind === 'fifo') return new StreamSource(Object.assign({}, opts, { mode: 'fifo' }));
-    if (opts.kind === 'carlife') return new CarlifeSource(opts);
+    if (opts.kind === 'socket') return new SocketSource(opts);
     return new DemoSource(opts);
 }
 
 module.exports = {
-    createSource, CarlifeSource, mkdirp,
-    DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, CARLIFE_PORT,
+    createSource, SocketSource, mkdirp,
+    DEFAULT_HOST, DEFAULT_PORT, DEFAULT_FIFO, DEFAULT_SOCK, DEFAULT_SOCK_PORT,
     atlasSize
 };

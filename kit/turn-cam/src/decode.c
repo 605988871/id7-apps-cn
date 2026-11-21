@@ -1,10 +1,4 @@
-/* carlife-decode -- CarLife's H.264 to the two pictures the apps draw.
- *
- * CarLife sends the phone's picture as H.264 and nothing else: the protocol
- * carries no turn, no distance, no lane and no speed limit (the vehicle SDK's
- * navigation module has two states, idle and running). The only way to get a
- * map, or a turn arrow, onto the cluster and the HUD is therefore to decode
- * the picture here and cut the wanted piece out of it.
+/* turn-decode -- an H.264 stream to the two pictures an app draws.
  *
  * The unit has no ffmpeg and no MSDK dispatcher; it has the Intel MSDK 2017
  * hardware library itself (/usr/lib/libmfxhw64.so, API 1.24) and libva. This
@@ -16,24 +10,23 @@
  * Two frames come out of every decoded picture, because cluster-render takes
  * a frame only when its length is exactly the layer's vw x vh:
  *
- *   /dev/shm/carlife-map/live.sock   1088x480   the map, cut to the part of
- *                                               CarLife's picture that is the
- *                                               map and scaled to the layer
- *   /dev/shm/carlife-map/hud.sock     480x168   the guidance strip, cut from
- *                                               the top of the picture
+ *   <dir>/live.sock   1088x480   the main picture, cut to the part of the
+ *                                stream that is wanted and scaled to the layer
+ *   <dir>/hud.sock     480x168   the second picture, cut from the top (a
+ *                                camera crop turns it off)
  *
  * Both carry the same 12-byte CLMF header the app's other sources use, so the
  * app needs to know nothing about this program. The cut rectangles come from
- * /dev/shm/carlife-map/crop.json, which the app rewrites when its settings
- * change; this program re-reads it every second, so the settings take effect
- * without a restart.
+ * <dir>/crop.json, which the app rewrites when its settings change; this
+ * program re-reads it every second, so the settings take effect without a
+ * restart.
  *
  * Everything this program knows about itself goes to
- * /dev/shm/carlife-decode.txt, because the car's screen is the only screen the
+ * /dev/shm/<dir>-decode.txt, because the car's screen is the only screen the
  * user has: which library was loaded, whether the VA display came up, what
  * size the picture is, how many frames have come out, and the first thing that
  * went wrong. A decoder that fails silently would be indistinguishable from a
- * phone that is not connected.
+ * camera that is not sending.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -57,16 +50,15 @@
 #include "mfx/mfxvideo.h"
 
 /* The folder the sockets and crop.json live in, and the report's own path.
- * Both are runtime state rather than macros because a second app (Turn View)
- * runs the same decoder beside CarLife Map: one binary, `--dir` for the other
- * app's folder, so neither app's tap takes the other's socket. The default is
- * exactly what CarLife Map has always used. */
-#define DIR_DEFAULT "/dev/shm/carlife-map"
+ * Both are runtime state rather than macros because the same binary serves
+ * more than one app: one build, `--dir` per app's folder, so no two apps share
+ * a socket or a crop.json. The default is this component's own folder. */
+#define DIR_DEFAULT "/dev/shm/turn-view"
 static char g_in_sock[192]   = DIR_DEFAULT "/h264.sock";
 static char g_map_sock[192]  = DIR_DEFAULT "/live.sock";
 static char g_card_sock[192] = DIR_DEFAULT "/hud.sock";
 static char g_crop_file[192] = DIR_DEFAULT "/crop.json";
-static char g_report[192]    = "/dev/shm/carlife-decode.txt";
+static char g_report[192]    = "/dev/shm/turn-view-decode.txt";
 
 /* The map layer's size (cluster-render takes a frame only at exactly the
  * layer's vw x vh) and the most a crop.json may ask for. They are separate so
@@ -900,17 +892,17 @@ static void produce(const Dec *d)
         return;
     }
 
-    /* The map: the part of CarLife's picture that is the map, filled out so
-     * the cluster's layer is not stretched. */
+    /* The map: the part of the picture the app asked for, filled out so the
+     * cluster's layer is not stretched. */
     r = rect_of(d->w, d->h, g_crop.map_top, g_crop.map_bottom, g_crop.map_left,
                 g_crop.map_right, mw, mh, !g_crop.map_stretch);
     blit(g_mapbuf, mw, mh, d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, r);
     out_write(&g_map, g_mapbuf, (size_t)mw * mh * 3 / 2);
     g_map_rect = r;
 
-    /* The HUD: the guidance strip at the top of the picture, straight across.
-     * CarLife draws its arrow, its road name and its lanes there, so cutting
-     * rather than redrawing is the only thing that can be honest about them. */
+    /* The HUD: the strip at the top of the picture, straight across. Whatever
+     * the sender draws there, cutting rather than redrawing is the only thing
+     * that can be honest about it. */
     if (!g_crop.card_off) {
         r = rect_of(d->w, d->h, g_crop.card_top, g_crop.card_bottom, g_crop.card_left,
                     g_crop.card_right, cw, ch, !g_crop.card_stretch);
@@ -947,7 +939,7 @@ static void write_report(void)
 
     localtime_r(&t, &tm);
     n = snprintf(buf, sizeof buf,
-        "=== CARLIFE DECODE %02d:%02d:%02d pid=%d ===\n"
+        "=== TURN DECODE %02d:%02d:%02d pid=%d ===\n"
         "libs: mfx=%s%s va=%s mfxapi=%d\n"
         "state: %s\n"
         "frames: %lu rate %lu fps last %lldms\n"

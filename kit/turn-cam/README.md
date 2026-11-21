@@ -42,12 +42,11 @@ dlopen("libias-media_transport-avb_ufipc_bridge.so.1")
 
 **写 socket 是全有或全无**：`send()` 只写了一半时立刻关掉这条连接，让解码器在下一个关键帧重新
 同步。半个 NAL 留在流里，下一个起始码就落在错的位置上，屏幕上是一片马赛克——比起丢一个 NAL，
-这更糟。和 `carlife-tap` 的取流端是同一个取舍。
+这更糟。
 
 ### turn-decode
 
-就是 CarLife Map 的解码器，从同一份源码（`kit/carlife-tap/src/decode.c`）编进这个组件，跑的时候
-带 `--dir /dev/shm/turn-view`：
+从同目录的 `src/decode.c` 编出来，跑的时候带 `--dir /dev/shm/turn-view`：
 
 - 监听 `h264.sock`（`turn-cam` 连上来）
 - 用主机自己的 Intel MSDK（`libmfxhw64.so`，dlopen）解码
@@ -57,9 +56,10 @@ dlopen("libias-media_transport-avb_ufipc_bridge.so.1")
 `--dir` 的意义：两个应用各有自己的 socket 目录、`crop.json` 和报告，谁先启动都不影响另一边。
 报告名字由目录名推出来，所以这里写的是 `/dev/shm/turn-view-decode.txt`。
 
-**为什么解码器要放一份在这里**：不然装「转向影像」就得先下 `carlife-tap`（它有预加载库和一整套
-东西），只为借一个 34 KB 的解码器。两份二进制由各自的构建脚本从**同一份**源码编出，所以
-`test/component_test.py` 会比对两个文件的 SHA-256：只重编其中一个就是车上看不出来的漂移。
+**为什么解码器放在这个组件里**：不然装「转向影像」就得先装一整套取流工具（预加载库、unit、
+安装脚本），只为借一个 34 KB 的解码器。源码只有一份（`src/decode.c`），
+`test/component_test.py` 会核对 `turn-decode` 是不是用这份源码编的：源码里改过默认目录而没
+重编，二进制就还指着旧目录，这是车上唯一看不出来的漂移。
 
 ## 文件与服务
 
@@ -84,7 +84,7 @@ dlopen("libias-media_transport-avb_ufipc_bridge.so.1")
 ```sh
 ./build-zig.sh                 # 两个都编
 ./build-zig.sh cam             # 只编 turn-cam
-./build-zig.sh decode          # 只编 turn-decode（需要 ../carlife-tap/src/decode.c）
+./build-zig.sh decode          # 只编 turn-decode（用 src/decode.c）
 ZIG=/d/zig/zig-x86_64-windows-0.14.1/zig.exe ./build-zig.sh
 ```
 

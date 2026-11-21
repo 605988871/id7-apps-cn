@@ -2,7 +2,7 @@
 
 上游是 [`cauliflowermossgrape/idrive7-apps`](https://github.com/cauliflowermossgrape/idrive7-apps)
 （`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀、界面与文档换成中文、并加了
-CarLife 地图和转向影像两个自研应用。
+CarLife 诊断和转向影像两个自研应用。
 
 ## 和普通 fork 不一样的地方
 

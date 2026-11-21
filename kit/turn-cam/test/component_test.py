@@ -5,20 +5,18 @@ The first install of a tool in this repository failed, and nothing on the car
 said why: the Store only quotes the last line a hook printed, and it never got
 that far. The cause was in component.json - fields that exist in no other
 component (`activate`/`deactivate`, a `from` inside `files`), which is the one
-kind of mistake a test can catch without a car. So this asserts the same shape
-kit/carlife-tap/test/component_test.py does, plus the two things that are
-particular to this component:
+kind of mistake a test can catch without a car. So this asserts the shape the
+Store accepts, plus the things that are particular to this component:
 
-  * the decoder beside the receiver is CarLife Map's decoder, byte for byte:
-    it is built from kit/carlife-tap/src/decode.c, and a rebuild of only one of
-    the two copies is exactly the drift nobody would notice on the car
+  * the decoder is built from src/decode.c, which has to be here: a build that
+    silently falls back to some other copy is exactly the drift nobody would
+    notice on the car
   * the folder, the socket and the two report paths the unit and the app agree
     on are spelled the same in all four places (C, unit, app, hook)
 
     python3 test/component_test.py
 """
 
-import hashlib
 import json
 import os
 import re
@@ -31,24 +29,15 @@ APP_DIR = os.path.join(REPO, 'apps', 'cn_turn_view')
 APP = os.path.join(APP_DIR, 'app.json')
 MAIN = os.path.join(APP_DIR, 'main.js')
 MANIFEST = os.path.join(KIT, 'component.json')
-TAP_DECODE = os.path.join(REPO, 'kit', 'carlife-tap', 'carlife-decode')
-TAP_SRC = os.path.join(REPO, 'kit', 'carlife-tap', 'src', 'decode.c')
+DECODE_SRC = os.path.join(KIT, 'src', 'decode.c')
 
 # The fields used by every tool this repository has actually installed with:
-# kit/renderd/prebuilt, kit/renderd/inputgate/tool, kit/carlife-test/tool.
+# kit/renderd/prebuilt, kit/renderd/inputgate/tool, kit/carlife-probe/tool.
 KNOWN = {'id', 'kind', 'version', 'title', 'description', 'mguHmi', 'optional',
          'uninstallable', 'requires', 'files', 'units', 'enable', 'dropins',
          'recmgr', 'restart', 'keepRunning', 'postInstall'}
 
 DIR = '/dev/shm/turn-view'
-
-
-def sha(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for b in iter(lambda: f.read(1 << 16), b''):
-            h.update(b)
-    return h.hexdigest()
 
 
 def main():
@@ -115,12 +104,21 @@ def main():
     check(want == spec['version'],
           'the app asks for %s %s, this is %s' % (spec['id'], want, spec['version']))
 
-    # The decoder is built from CarLife Map's one source, into this component.
-    check(os.path.isfile(TAP_SRC), 'the decoder source is gone: %s' % TAP_SRC)
-    if os.path.isfile(TAP_DECODE) and os.path.isfile(os.path.join(KIT, 'turn-decode')):
-        check(sha(TAP_DECODE) == sha(os.path.join(KIT, 'turn-decode')),
-              'turn-decode is not the carlife-decode this repository has: rebuild both '
-              '(kit/carlife-tap/build-zig.sh decode, kit/turn-cam/build-zig.sh decode)')
+    # The decoder is built here, from the source beside it: one copy of the
+    # source, one binary. A binary built from an older source is caught by the
+    # folder it no longer points at - the one thing a rebuild changes silently.
+    check(os.path.isfile(DECODE_SRC), 'the decoder source is gone: %s' % DECODE_SRC)
+    decode = os.path.join(KIT, 'turn-decode')
+    if os.path.isfile(DECODE_SRC) and os.path.isfile(decode):
+        src = open(DECODE_SRC, encoding='utf-8').read()
+        m = re.search(r'#define DIR_DEFAULT "([^"]+)"', src)
+        check(bool(m), 'the decoder has no DIR_DEFAULT to compare against')
+        if m:
+            with open(decode, 'rb') as f:
+                blob = f.read()
+            check(m.group(1).encode() in blob,
+                  'turn-decode was not rebuilt from src/decode.c: it does not know %s '
+                  '(./build-zig.sh decode)' % m.group(1))
 
     # One folder, one socket, two reports, named the same everywhere.
     check(("const DIR = '%s'" % DIR) in main_js, 'the app does not use %s' % DIR)

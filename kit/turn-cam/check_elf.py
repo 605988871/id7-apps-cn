@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Check that a built libcarlife-tap.so will actually load on the unit.
+"""Check that a built program or library will actually load on the unit.
 
-The unit is x86_64 with glibc 2.27. A library that asks for a newer symbol
+The unit is x86_64 with glibc 2.27. An object that asks for a newer symbol
 version fails at load time with "undefined symbol" and nothing on the car
 screen says why, so the build has to refuse to hand one over.
 
 Pure stdlib ELF parsing: the build machine (Windows) has no readelf, and the
 container does not always have binutils either.
 
-    python3 check_elf.py bin/libcarlife-tap.so
+    python3 check_elf.py turn-cam
+    python3 check_elf.py turn-decode
 
 Exit status 1 and a reason on stderr if anything is off.
 """

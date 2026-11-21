@@ -11,8 +11,8 @@
  *
  * What it does: joins the camera stream as one more receiver on the IAS AVB
  * bridge, depacketises RTP (rtp_h264.c: single NAL, STAP-A, FU-A) into Annex B,
- * and writes that to h264.sock. turn-decode (this component's copy of CarLife
- * Map's decoder) reads that socket, decodes with the unit's MSDK, cuts the
+ * and writes that to h264.sock. turn-decode (src/decode.c, built into this
+ * component) reads that socket, decodes with the unit's MSDK, cuts the
  * picture and hands the app frames - so there is exactly one H.264 decoder on
  * the unit, already car-tested, and this program stays small enough to reason
  * about.
@@ -26,7 +26,7 @@
  * Writes are all-or-nothing. A socket that takes half a NAL unit leaves the
  * decoder a stream whose next start code is in the wrong place, which is a
  * mosaic on screen; closing it instead makes the decoder resynchronise at the
- * next keyframe. The same reasoning as carlife-tap's sink.
+ * next keyframe. The same reasoning as any other stream sink here.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>

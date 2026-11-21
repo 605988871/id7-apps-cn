@@ -10,10 +10,10 @@
  *     something asks the camera ECU for a view.
  *
  * The asking is camreq.js (SOME/IP); the receiving is the turn-cam tool, which
- * writes Annex B to a socket; the decoding is turn-decode (CarLife Map's
- * decoder, built into the same tool, run with --dir /dev/shm/turn-view), so the
- * picture path is the one that already works on this car. This app is the last
- * mile: ask, show, hide.
+ * writes Annex B to a socket; the decoding is turn-decode (built from the same
+ * tool's decode.c, run with --dir /dev/shm/turn-view), so the picture path is
+ * the one that already works on this car. This app is the last mile: ask, show,
+ * hide.
  *
  * Nothing here draws with a shader. The camera is a video layer on the 'map'
  * target - the same layer the Maps-on-cluster project uses - and the layer is
@@ -25,7 +25,7 @@
 const fs = require('fs');
 const mgu = require('./kit/mgu');
 const { ClusterRender } = require('./cluster_render_client');
-const { createSource } = require('./carlife_source');
+const { createSource } = require('./frame_source');
 const { MAP_W, MAP_H, atlasSize, zoomWindow, scaleAtlas } = require('./atlas');
 const camreq = require('./camreq');
 
@@ -134,9 +134,9 @@ async function run(ctx) {
 
     /* A layer on the map slot is contended for: on this unit the factory map
      * holds it and a third-party content layer loses the first attempt about a
-     * third of the time (CarLife Map measured it). `video()` returns 0 then,
-     * and the service retries on its own ladder - so the app must not hammer
-     * it every tick while that is going on. */
+     * third of the time (measured on this car). `video()` returns 0 then, and
+     * the service retries on its own ladder - so the app must not hammer it
+     * every tick while that is going on. */
     let layerRetryAt = 0;
 
     const makeLayer = safe('layer', () => {
@@ -149,16 +149,15 @@ async function run(ctx) {
             vw: MAP_W, vh: MAP_H,
             fps: layerFps,
             z: 0, visible: 0, contend: 1, opacity: 1,
-            /* Holding the map area also hides the factory turn box, as CarLife
-             * Map's map layer does: the navigation arrow over a camera picture
-             * is the one thing worse than no picture. It comes back when the
-             * layer is hidden, which is what hiding rather than dropping the
-             * layer buys. */
+            /* Holding the map area also hides the factory turn box, as a
+             * contended map layer does: the navigation arrow over a camera
+             * picture is the one thing worse than no picture. It comes back
+             * when the layer is hidden, which is what hiding rather than
+             * dropping the layer buys. */
             guide_hold: 1,
-            /* The same reasoning as CarLife Map: cluster-render's defaults hold
-             * small changes for up to a second, which on a live camera is a
-             * second of lag. A camera scene changes everywhere, so keep both
-             * low. */
+            /* cluster-render's defaults hold small changes for up to a second,
+             * which on a live camera is a second of lag. A camera scene
+             * changes everywhere, so keep both low. */
             dirty_threshold: 2, settle_ms: 120, stall_ms: 6000
         });
         if (!mapLayer) {
@@ -210,7 +209,7 @@ async function run(ctx) {
     const startSource = safe('source', () => {
         if (source) return;
         source = createSource({
-            kind: 'carlife', w: MAP_W, h: MAP_H,
+            kind: 'socket', w: MAP_W, h: MAP_H,
             fps: Number(settings.get('fps')) || 15,
             sockPath: LIVE_SOCK
         });
