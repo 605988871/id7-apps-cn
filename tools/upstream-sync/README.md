@@ -24,7 +24,7 @@ CarLife 地图和转向影像两个自研应用。
 {
   "url": "https://github.com/cauliflowermossgrape/idrive7-apps",
   "branch": "main",
-  "baseline": "6c28deea76383b22faa35903207fbef182e01749"
+  "baseline": "e35c3c114147acdb1fdc61fd6c2218d99b9f776e"
 }
 ```
 
