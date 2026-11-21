@@ -75,10 +75,6 @@ def changed(base, target):
     return rows
 
 
-def has_merge_base(a, b):
-    return git('merge-base', a, b, check=False).returncode == 0
-
-
 # ------------------------------------------------------------------------ config
 
 def load():
@@ -240,7 +236,7 @@ def cmd_status(_args):
     return 0
 
 
-def cmd_merge(_args):
+def cmd_merge(args):
     cfg = load()
     head = remote_head(cfg)
     if head == cfg['baseline']:
@@ -249,13 +245,12 @@ def cmd_merge(_args):
     fetch_trees(cfg)
     inject(cfg, cfg['baseline'], head)
 
+    # The merge base has to be the baseline every time: this repository keeps a linear
+    # history (the upstream commits are not pushed), so the root commit is grafted onto
+    # the baseline afresh for each merge.
     root = text('rev-list', '--max-parents=0', 'HEAD').strip().splitlines()[0]
-    if not has_merge_base('HEAD', 'refs/remotes/upstream/main'):
-        # First merge only: tell git the snapshot came from the upstream commit we synced.
-        # The replace ref stays local (git never pushes refs/replace) and says what is true
-        # once the merge commit exists: that upstream commit is an ancestor of ours.
-        print('首次合并：把根提交 %s 接到上游 %s 上（git replace --graft）' % (root[:8], cfg['baseline'][:8]))
-        git('replace', '--graft', root, cfg['baseline'])
+    print('合并基：把根提交 %s 接到上游 %s 上（git replace --graft）' % (root[:8], cfg['baseline'][:8]))
+    git('replace', '-f', '--graft', root, cfg['baseline'])
 
     r = git('merge', '--no-ff', '--no-edit', '-m',
             'Merge upstream %s (%s)' % (cfg['branch'], head[:8]), 'refs/remotes/upstream/main', check=False)
@@ -266,8 +261,15 @@ def cmd_merge(_args):
         print('\n合并停在冲突上（%d 个）：' % len(conflicts))
         for c in conflicts:
             print('  ' + c)
-        print('\n改完 `git add` 后 `git commit`，再跑 `upstream.py done` 记下新基线。')
+        print('\n改完 `git add` 后 `git commit`（要不要保留合并提交见下），再跑 `upstream.py done`。')
         return 1
+    if '--merge-commit' not in args:
+        # Keep the tree, drop upstream as a parent: a plain commit like the earlier syncs,
+        # so a push uploads the changed files only, not the upstream history.
+        git('reset', '--soft', 'HEAD^')
+        git('commit', '-q', '-m', '同步上游 %s（%s）' % (cfg['branch'], head[:8]))
+        print('已压成一个普通提交（上游历史不进本仓库）。要保留合并提交，加 --merge-commit。')
+        print('提交信息可以再改：git commit --amend')
     cfg['baseline'] = head
     save(cfg)
     print('\n已合并，基线更新为 %s。' % head[:8])

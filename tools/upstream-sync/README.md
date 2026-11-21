@@ -4,14 +4,18 @@
 （`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀、界面与文档换成中文、并加了
 CarLife 地图和转向影像两个自研应用。
 
-## 和普通 fork 不一样的两个地方
+## 和普通 fork 不一样的地方
 
 **一、没有共同祖先。** 本仓库的第一个提交是整包导入（732 个文件，没有上游历史）。
 `git merge upstream/main` 会直接拒绝：*refusing to merge unrelated histories*。
-所以第一次合并要用 `git replace --graft` 告诉 git「这份快照来自上游的哪个提交」；
-合并提交出来以后，上游那个提交就成了我们的祖先，血缘是真的，以后每次都和普通 fork 一样。
+所以每次合并前都要用 `git replace --graft` 告诉 git「这份快照对应上游的哪个提交」，
+脚本按 `.upstream/config.json` 的基线自动做，你不用管。
 
-**二、GitHub 不给按对象取文件。** 只取树（`--filter=blob:none`）很快，但 partial clone 之后
+**二、合并结果压成一个普通提交。** 上游那 545 个提交**不进本仓库**：脚本把合并算完，
+保留结果、去掉上游那个父提交，于是推送只上传这次改动的几 MB，克隆也不会变大。
+要保留真正的合并提交（比如以后想让 GitHub 认出血缘），`merge --merge-commit`。
+
+**三、GitHub 不给按对象取文件。** 只取树（`--filter=blob:none`）很快，但 partial clone 之后
 按需取文件时会报 `upload-pack: not our ref`——GitHub 不接受按 blob SHA 索取。所以脚本自己
 把这次真正变了的那些文件从 `raw.githubusercontent.com` 取回来、`git hash-object -w`
 写进对象库，再让 `git merge` 在本地算。没变的文件用的还是本地已有的对象，不用下载。
@@ -43,7 +47,7 @@ CarLife 地图和转向影像两个自研应用。
 # 1. 上游有没有更新，会动哪些文件（只取树，不下载文件内容）
 python3 tools/upstream-sync/upstream.py status
 
-# 2. 取回改动并合并
+# 2. 取回改动并合并（结果自动压成一个普通提交；想留合并提交就加 --merge-commit）
 python3 tools/upstream-sync/upstream.py merge
 
 # 3. 解冲突（见下表），然后：
