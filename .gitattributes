@@ -6,5 +6,3 @@
 *.mgu binary
 kit/renderd/prebuilt/mgu-renderd binary
 *.pack binary
-kit/turn-cam/turn-cam binary
-kit/turn-cam/turn-decode binary

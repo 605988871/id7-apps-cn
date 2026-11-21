@@ -1,8 +1,7 @@
 # 把上游更新并进这个中文仓库
 
 上游是 [`cauliflowermossgrape/idrive7-apps`](https://github.com/cauliflowermossgrape/idrive7-apps)
-（`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀、界面与文档换成中文、并加了
-CarLife 诊断和转向影像两个自研应用。
+（`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀，界面与文档换成中文。
 
 ## 和普通 fork 不一样的地方
 
@@ -58,7 +57,7 @@ python3 tools/upstream-sync/upstream.py gaps
 
 # 5. 自测 + 推送
 python3 kit/tools/build.py --preview-only cn_ambient_config
-node kit/tools/test_turn_view.js
+node kit/tools/test_ambient_rgb.js
 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 \
   git -c http.version=HTTP/1.1 push origin master
 ```

@@ -46,6 +46,3 @@ kit/tools/.font-cache/
 /kit/renderd/core
 /apps/cn_zf8hp/data/
 egs-snapshot*.json
-# the C unit tests' local build output (test_rtp.exe on Windows)
-kit/turn-cam/test/test_rtp*
-!kit/turn-cam/test/test_rtp.c

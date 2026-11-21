@@ -55,26 +55,6 @@
         "ID7",
         "ID8"
       ]
-    },
-    {
-      "id": "carlife-probe-root",
-      "path": "kit/carlife-probe/tool",
-      "title": "CarLife 诊断（root）",
-      "description": "只读查看 CarLife 进程与打开的文件（有 USB 设备即说明画面走 USB 不走网络）、解码、配置、本机服务与可用软件；数据在诊断应用里显示（iDrive 7）",
-      "uninstallable": true,
-      "mguHmi": [
-        "ID7"
-      ]
-    },
-    {
-      "id": "turn-cam",
-      "path": "kit/turn-cam",
-      "title": "转向影像取流与解码",
-      "description": "车机摄像头在 AVB 总线上的 H.264 取下来并解码成仪表盘地图区域那一块画面；随「转向影像」应用一同安装，不请求摄像头，不与行车记录仪抢设备（iDrive 7）",
-      "uninstallable": true,
-      "mguHmi": [
-        "ID7"
-      ]
     }
   ]
 }
