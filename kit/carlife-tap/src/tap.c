@@ -62,6 +62,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>      /* AT_FDCWD and the O_* the report file is opened with */
+#include <poll.h>       /* bounded wait for room on the sink socket */
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -133,6 +134,14 @@ _Static_assert(sizeof(struct usbdevfs_bulktransfer) == 24, "usbdevfs_bulktransfe
 #define TYPE_SLOTS 12
 #define TYPE_HEAD 24
 #define MAX_RESEEK 8192u            /* this many misses and the framing is wrong */
+
+/* How long the tap will wait for room on the sink socket before giving up on
+ * the tail of one chunk. A USB chunk is a few hundred KB and the decoder reads
+ * it in slices; on a busy unit the socket fills faster than it drains. A short
+ * wait lets the decoder catch up instead of cutting a NAL in half, which is
+ * what a garbled picture is. Kept small: this runs inside carlife's read hook. */
+#define SINK_WAIT_MS 15
+#define SINK_SNDBUF  (4u * 1024u * 1024u)
 #define MAXCMD_TIGHT 4096u          /* while resyncing, only this much is believable */
 
 static int on;                 /* watching this process */
@@ -240,25 +249,45 @@ static int sink_connect(void)
         syscall(SYS_close, fd);
         return 0;
     }
+    /* The default AF_UNIX send buffer is a couple of hundred KB. One chunk of
+     * phone video can be most of that, so the decoder - which reads in 256 KB
+     * slices with a decode in between - regularly comes back to find the buffer
+     * full. Enlarging it here costs kernel memory only while a reader exists,
+     * and absorbs the burst that would otherwise become a hole in the stream. */
+    {
+        int sz = (int)SINK_SNDBUF;
+        syscall(SYS_setsockopt, fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof sz);
+    }
     sink_fd = fd;
     sink_why[0] = 0;
     return 1;
 }
 
-/* Non-blocking and without SIGPIPE: if the app is not running, or is slower
- * than the phone, the chunk is dropped. Buffering it would grow carlife's
- * memory, and raising SIGPIPE would kill it - neither is acceptable for an
- * observer.
+/* Non-blocking and without SIGPIPE: a reader that never appears can never
+ * block or kill carlife. But once a reader *is* attached, the bytes handed to
+ * it are a continuous H.264 stream: a slice is a prediction on the pictures
+ * before it, so a hole in the middle does not cost one frame, it costs every
+ * frame until the next keyframe - the mosaic the screen shows for a second
+ * after a hiccup.
  *
- * A short send is continued, not dropped. The socket buffer is a few hundred
- * kilobytes and a USB chunk can be most of that: sending the first part and
- * throwing the rest away puts a hole in the middle of a picture, which the
- * decoder then has to resynchronise across - on a busy unit that is every
- * chunk. Stopping at EAGAIN keeps the data that fits and credits it. */
+ * So a full socket is waited out briefly rather than treated as a drop. The
+ * wait is bounded and tiny (SINK_WAIT_MS); the send buffer is enlarged in
+ * sink_connect so it almost never comes to this.
+ *
+ * If the wait still ends with the buffer full, whether the socket is closed
+ * matters. Closing it makes the decoder tear down its session and wait for a
+ * fresh SPS - which CarLife may only send at the start of navigation, leaving
+ * the picture stuck. So: if not one byte went out, the stream is still aligned
+ * and the socket is kept; the next chunk rides the same session. Only a half
+ * sent slice (which would poison every frame up to the next keyframe) or a
+ * reader that truly went away (EPIPE/ECONNRESET) closes it, so the decoder
+ * resynchronises on a fresh keyframe instead of decoding garbage. */
 static void sink_write(const void *buf, size_t n)
 {
     const unsigned char *p = (const unsigned char *)buf;
+    const unsigned char *start = p;
     size_t left = n;
+    int waited = 0;
 
     if (!on || !n) return;
     if (sink_fd < 0 && !sink_connect()) return;
@@ -266,14 +295,34 @@ static void sink_write(const void *buf, size_t n)
         long w = syscall(SYS_sendto, sink_fd, p, left, 0x4000 /* MSG_NOSIGNAL */, NULL, 0);
         if (w > 0) {
             __sync_fetch_and_add(&sink_bytes, (unsigned long long)w);
-            p += w;
+            p += (size_t)w;
             left -= (size_t)w;
+            waited = 0;
             continue;
         }
+        if (w < 0 && errno == EINTR) continue;
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)
+                  && waited < SINK_WAIT_MS) {
+            struct pollfd pf;
+            int ms = SINK_WAIT_MS - waited;
+            pf.fd = sink_fd;
+            pf.events = POLLOUT;
+            pf.revents = 0;
+            syscall(SYS_poll, &pf, 1, ms);
+            waited += ms;
+            continue;                    /* try the same bytes again */
+        }
         __sync_fetch_and_add(&sink_drops, 1);
-        if (w < 0) sink_say(errno);
-        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) return;
-        sink_close();                    /* reader went away: reconnect later */
+        {
+            int e = errno;               /* keep it across sink_say() */
+            if (w < 0) sink_say(e);
+            /* Nothing sent: keep the session alive, the decoder stays in step.
+             * A partial send, or a genuine disconnect: close so the decoder
+             * starts over at the next keyframe, not on a half slice. */
+            if (p != start ||
+                (w < 0 && e != EAGAIN && e != EWOULDBLOCK && e != ENOBUFS))
+                sink_close();
+        }
         return;
     }
 }

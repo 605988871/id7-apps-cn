@@ -136,6 +136,50 @@ ok('a card status page carries the reason and the text settings', () => {
     assert.notStrictEqual(Buffer.compare(first, seen[seen.length - 1]), 0);
 });
 
+ok('a torn CLMF stream resyncs: short, bogus-length and garbage bytes never reach the layer', () => {
+    const w = 64, h = 32, want = atlas.atlasSize(w, h);
+    const s = new CarlifeSource({ w, h, fps: 10, sockPath: '/tmp/none.sock' });
+    s.running = true;
+    s.format = 'clmf';                          /* decoder already handshook */
+    const seen = [];
+    s.on('frame', (b) => seen.push(b));
+
+    /* Stray bytes from a frame that was cut when the socket closed: no frame. */
+    s._feed(Buffer.from([0xde, 0xad, 0xbe, 0x00, 0x00, 0x46]));
+    assert.strictEqual(seen.length, 0, 'garbage produced a frame');
+
+    /* A header split across two data events whose length is wrong: still no
+     * frame, and the parser must be back on a boundary for the next packet. */
+    const bogus = packet(want + 8, 2);
+    s._feed(bogus.subarray(0, 5));
+    s._feed(Buffer.concat([bogus.subarray(5), Buffer.alloc(want + 8, 0)]));
+    assert.strictEqual(seen.length, 0, 'a wrong-size frame reached the layer');
+
+    /* One intact frame after all that: delivered once, at the right size. */
+    const good = packet(want, 3);
+    good.set(Buffer.alloc(want, 0x5a), 12);
+    s._feed(good);
+    assert.strictEqual(seen.length, 1, 'expected one good frame, got ' + seen.length);
+    assert.strictEqual(seen[0].length, want, 'a wrong-size frame got through');
+    assert.strictEqual(seen[0][0], 0x5a, 'the good frame was not the one delivered');
+});
+
+ok('a decode socket that goes away clears its state before the next one', () => {
+    const w = 64, h = 32;
+    const s = new CarlifeSource({ w, h, fps: 10, sockPath: '/tmp/none.sock' });
+    s.running = true;
+    const handlers = {};
+    const emitter = new (require('events').EventEmitter)();
+    emitter.on = function (ev, fn) { handlers[ev] = fn; return this; };
+    s._attach(emitter, 'local');
+    s.format = 'clmf';
+    s.buf = Buffer.from([1, 2, 3]);
+    handlers.close();                            /* the decoder dropped the link */
+    assert.strictEqual(s.client, null, 'a gone socket was not cleared');
+    assert.strictEqual(s.format, '', 'the old format survived the disconnect');
+    assert.strictEqual(s.buf.length, 0, 'partial bytes survived the disconnect');
+});
+
 ok('a status page never grows the layer: its frame is exactly vw x vh', () => {
     for (const [w, h] of [[1088, 480], [480, 168], [344, 120]]) {
         const s = new CarlifeSource({ w: w, h: h, fps: 5, sockPath: '/tmp/none.sock' });

@@ -86,9 +86,13 @@
 #define SYNC_MS  1000
 #define BUSY_MAX 1000
 /* How long one frame may take to reach a reader before it is dropped. Long
- * enough for a reader that is a frame behind, short enough not to become the
- * decoder's own latency. */
-#define SEND_WAIT_MS 50
+ * enough for a reader that is a frame behind - the app scales and uploads the
+ * picture on its own thread and is routinely a frame or two behind on a busy
+ * unit - short enough not to become the decoder's own latency. A reader that
+ * is merely slow must not be mistaken for one that has gone away: closing the
+ * socket on a full buffer is what turns a brief hiccup into a visible
+ * disconnect and a fresh round of reconnects. */
+#define SEND_WAIT_MS 250
 
 /* ---------------------------------------------------------------- report -- */
 
@@ -771,6 +775,7 @@ static unsigned char *g_mapbuf, *g_cardbuf;
 static size_t g_mapbuf_sz, g_cardbuf_sz;
 static long long g_last_frame_ms;
 static unsigned long g_frames, g_rate, g_rate_at_frames;
+static unsigned long g_blank;           /* decoded pictures dropped for empty chroma */
 static long long g_rate_at_ms;
 /* The crop the pictures are being cut with, and the rectangles the last frame
  * came from: the report prints both, because on the car's screen the only way
@@ -794,11 +799,43 @@ static unsigned char *buf_for(unsigned char **buf, size_t *have, size_t need)
     return *buf;
 }
 
+/* A picture with no chroma is not a picture. When the tap has to cut a chunk
+ * short, MSDK sometimes still hands back a surface whose UV plane was never
+ * filled - all zeros instead of the neutral 128 - and BT.601 paints that
+ * green, which on the glass looks like the decoder broke. The same happens on
+ * the first frame after a session restarts. A real frame cannot have an
+ * entirely empty chroma plane, so dropping it costs one picture and keeps a
+ * green field off the screen; the next intact picture replaces it at once. */
+static int picture_ok(const Dec *d)
+{
+    const unsigned char *uv = d->vout.Data.UV;
+    unsigned pitch = d->pitch, w = d->w, h = d->h;
+    unsigned gy, gx, live = 0;
+
+    for (gy = 0; gy < 8; gy++) {
+        unsigned ry = ((gy * h) / 8) & ~1u;
+        for (gx = 0; gx < 16; gx++) {
+            unsigned rx = ((gx * w) / 16) & ~1u;
+            const unsigned char *s = uv + (size_t)(ry / 2) * pitch + rx;
+            /* NV12: U and V interleaved. Anything well away from a blank
+             * plane means the VPP really wrote this surface. */
+            if (s[0] > 16 || s[1] > 16) live++;
+        }
+    }
+    return live != 0;
+}
+
 static void produce(const Dec *d)
 {
     Rect r;
     long long t = now_ms();
     unsigned mw, mh, cw, ch;
+
+    if (!picture_ok(d)) {
+        g_blank++;
+        soft_why("blank picture (no chroma)", 0);
+        return;                          /* keep the last good frame on screen */
+    }
 
     /* The app rewrites the file when a setting changes and cannot tell this
      * program so: read it again, but not once per frame - a picture every
@@ -877,7 +914,7 @@ static void write_report(void)
         "out: map %ux%u card %s\n"
         "crop: map t%.0f b%.0f l%.0f r%.0f %s; card t%.0f b%.0f l%.0f r%.0f %s\n"
         "rect: map %u,%u %ux%u; card %u,%u %ux%u\n"
-        "errors: %lu\n"
+        "errors: %lu blank=%lu\n"
         "error: %s\n",
         tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid(),
         g_mfx_lib, g_va_lib[0] == '-' ? " (none)" : "", g_va_lib, g_mfx_ver,
@@ -896,7 +933,7 @@ static void write_report(void)
         g_have_rects ? g_map_rect.w : 0, g_have_rects ? g_map_rect.h : 0,
         g_have_rects ? g_card_rect.x : 0, g_have_rects ? g_card_rect.y : 0,
         g_have_rects ? g_card_rect.w : 0, g_have_rects ? g_card_rect.h : 0,
-        g_soft,
+        g_soft, g_blank,
         g_why[0] ? g_why : "none");
 
     {

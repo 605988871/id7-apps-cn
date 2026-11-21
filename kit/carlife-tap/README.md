@@ -257,9 +257,26 @@ in: 15728640 bytes, 1 connection
 out: map 1088x480 card 480x168
 crop: map t8 b0 l0 r0 fill; card t0 b16 l0 r24 stretch
 rect: map 0,106 1280x564; card 0,0 306x114
-errors: 0
+errors: 0 blank=0
 error: none
 ```
+
+Three symptoms and the number that explains each one:
+
+- **花屏 (mosaic)** — `sink: ... drops=N`. A drop is H.264 bytes that never
+  reached the decoder. The tap now enlarges its socket buffer and waits briefly
+  for room instead of cutting a chunk in half, so a busy unit should hold
+  `drops=0`. A rising `drops` means the decoder is falling behind; it is the
+  one number to watch after a change of phone or video size.
+- **绿屏 (a solid green field)** — `errors: N blank=M`. A decoded frame whose
+  chroma plane is empty would be painted green by BT.601; the decoder drops it
+  and counts it as `blank` rather than put it on the glass. A rising `blank`
+  points at damaged input (see `drops`), not at the colour conversion.
+- **断开 (the picture drops out and restarts)** — `sockets:` and `state:`.
+  `map=waiting` with `decoding` means the app is not reading that socket; the
+  output writer now waits for a slow reader instead of closing the socket on a
+  full buffer. `stream went away` in `state:` means the tap reconnected — watch
+  whether the frames count starts climbing again on its own.
 
 `in` is what reached it from the tap, and `state` says what it is doing with
 it. That pair is what separates the two ways to have no picture: `in: 0 bytes`

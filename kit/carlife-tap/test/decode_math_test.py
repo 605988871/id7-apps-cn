@@ -192,6 +192,7 @@ def main():
     # its V half 200: that is the only way to tell a split atlas from an
     # interleaved one without a screen.
     bad += chroma_checks()
+    bad += blank_checks()
     bad += header_search_checks()
 
     # the atlas the app checks a frame's length against
@@ -204,6 +205,57 @@ def main():
         return 1
     print("geometry ok: crops inside the picture, even, aspect kept, reads in-plane")
     return 0
+
+
+def picture_ok(uv, pitch, w, h):
+    """Mirror of decode.c's picture_ok(): a VPP surface with an entirely empty
+    chroma plane is a dropped frame that BT.601 would paint green."""
+    live = 0
+    for gy in range(8):
+        ry = ((gy * h) // 8) & ~1
+        for gx in range(16):
+            rx = ((gx * w) // 16) & ~1
+            base = (ry // 2) * pitch + rx
+            if uv[base] > 16 or uv[base + 1] > 16:
+                live += 1
+    return live != 0
+
+
+def blank_checks():
+    """An all-zero chroma plane (the frame MSDK hands back after a torn NAL,
+    or the first one after a session restart) must be rejected; an ordinary
+    picture, including a white map and a black night one, must survive. NV12
+    neutral chroma is 128 whatever the brightness, so a real frame always has
+    samples well above 16."""
+    bad = 0
+    cases = [(1920, 720), (1920, 1080), (1280, 720), (1088, 480)]
+    for (w, h) in cases:
+        pitch = (w + 63) & ~63
+        rows = h // 2
+        size = pitch * rows + 4      # slack for the last interleaved sample
+
+        blank = bytearray(size)      # chroma never written: what paints green
+        if picture_ok(blank, pitch, w, h):
+            print("BLANK %dx%d: an empty chroma plane was accepted" % (w, h))
+            bad += 1
+
+        # a real map: neutral 128 U/V is the common case (grey/white roads)
+        neutral = bytearray([128]) * size
+        if not picture_ok(neutral, pitch, w, h):
+            print("BLANK %dx%d: neutral chroma 128 was rejected" % (w, h))
+            bad += 1
+
+        # a night / black picture: luma dark but chroma still neutral
+        if not picture_ok(bytearray([129]) * size, pitch, w, h):
+            print("BLANK %dx%d: night chroma was rejected" % (w, h))
+            bad += 1
+
+        # a fully saturated colour frame must also survive
+        colour = bytearray([240]) * size
+        if not picture_ok(colour, pitch, w, h):
+            print("BLANK %dx%d: saturated chroma was rejected" % (w, h))
+            bad += 1
+    return bad
 
 
 def chroma_checks():
