@@ -164,6 +164,24 @@ ok('a torn CLMF stream resyncs: short, bogus-length and garbage bytes never reac
     assert.strictEqual(seen[0][0], 0x5a, 'the good frame was not the one delivered');
 });
 
+ok('a frame split across many socket chunks is assembled once', () => {
+    const w = 64, h = 32, want = atlas.atlasSize(w, h);
+    const s = new CarlifeSource({ w, h, fps: 10, sockPath: '/tmp/none.sock' });
+    s.running = true;
+    s.format = 'clmf';
+    const seen = [];
+    s.on('frame', (b) => seen.push(b));
+    const p = packet(want, 9);
+    p.set(Buffer.alloc(want, 0x3c), 12);
+    /* Seven bytes at a time: both the header and the atlas are split. */
+    for (let i = 0; i < p.length; i += 7) s._feed(p.slice(i, i + 7));
+    assert.strictEqual(seen.length, 1, 'a chunked frame became ' + seen.length + ' frames');
+    assert.strictEqual(seen[0].length, want, 'a chunked frame lost bytes');
+    assert.strictEqual(seen[0][0], 0x3c, 'the wrong bytes reached the layer');
+    assert.strictEqual(s.parts.length, 0, 'socket chunks were left behind');
+    assert.strictEqual(s.partLen, 0, 'a partial byte count was left behind');
+});
+
 ok('a decode socket that goes away clears its state before the next one', () => {
     const w = 64, h = 32;
     const s = new CarlifeSource({ w, h, fps: 10, sockPath: '/tmp/none.sock' });

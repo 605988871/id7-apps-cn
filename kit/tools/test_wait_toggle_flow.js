@@ -177,7 +177,34 @@ const ctx = {
      * picture is present, but the setting itself is not lost. */
     settings.set('showWait', true);
     assert.strictEqual(values.showWait, true);
-    console.log('wait_toggle_flow ok: both layers hide, and each comes back with its own picture');
+
+    /* The fine-tuning buttons write hudX/hudY. A change must rebuild the HUD
+     * layer at the new rectangle, not just save the number. */
+    const hudBefore = cr.videos[cr.videos.length - 1];
+    settings.set('hudX', 40);
+    const hudAfter = cr.videos[cr.videos.length - 1];
+    assert.notStrictEqual(hudAfter, hudBefore, 'a position change did not rebuild the HUD layer');
+    assert.ok(hudAfter.x > hudBefore.x, 'hudX did not move the layer right: ' +
+        hudBefore.x + ' -> ' + hudAfter.x);
+
+    /* At 100% width the default safe box is exactly as wide as the card. The
+     * old clamp to that box made every left/right press a no-op. */
+    settings.set('hudWidth', 100);
+    const fullBefore = cr.videos[cr.videos.length - 1];
+    settings.set('hudX', 80);
+    const fullAfter = cr.videos[cr.videos.length - 1];
+    assert.ok(fullAfter.x > fullBefore.x, 'hudX did nothing at hudWidth 100: ' +
+        fullBefore.x + ' -> ' + fullAfter.x);
+
+    /* A burst from the decoder must not become a burst on the renderer. */
+    const mapRef = 1;
+    const beforeBurst = cr.frames.filter((f) => f.ref === mapRef).length;
+    for (let i = 0; i < 10; i++) map.send(mapBuf);
+    const afterBurst = cr.frames.filter((f) => f.ref === mapRef).length;
+    assert.ok(afterBurst - beforeBurst <= 1,
+        'pacing let ' + (afterBurst - beforeBurst) + ' frames through in one tick');
+
+    console.log('wait_toggle_flow ok: hiding, recovery, HUD position at 100%, and burst pacing');
 })().catch((e) => {
     console.log('FAIL wait_toggle_flow\n     ' + (e && e.stack ? e.stack : e));
     process.exit(1);

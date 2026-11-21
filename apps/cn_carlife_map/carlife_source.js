@@ -309,6 +309,11 @@ class CarlifeSource extends FrameSource {
         this.server = null;
         this.client = null;
         this.buf = Buffer.alloc(0);
+        /* CLMF frames arrive in stream-socket chunks. Keep the chunks whole
+         * until a frame is complete instead of copying a growing partial frame
+         * on every data event - see _feed. */
+        this.parts = [];
+        this.partLen = 0;
         this.remote = '';
         this.format = '';                       /* '', 'clmf' or 'h264' */
         this.h264Bytes = 0;
@@ -350,6 +355,8 @@ class CarlifeSource extends FrameSource {
     }
 
     _start() {
+        this.parts = [];
+        this.partLen = 0;
         /* A retry runs _start again, and these two intervals are the only
          * things here that outlive a failed attempt: without this, every
          * backoff step added another 200 ms ticker and another rate timer,
@@ -390,6 +397,8 @@ class CarlifeSource extends FrameSource {
             try { fs.unlinkSync(this.sockPath); } catch (e) {}
         }
         this.buf = Buffer.alloc(0);
+        this.parts = [];
+        this.partLen = 0;
     }
 
     _connect() {
@@ -433,6 +442,8 @@ class CarlifeSource extends FrameSource {
     _attach(s, label) {
         this.client = s;
         this.buf = Buffer.alloc(0);
+        this.parts = [];
+        this.partLen = 0;
         this.remote = label;
         this.emit('status', 'capture connected: ' + label);
         s.on('data', (d) => { try { this._feed(d); } catch (e) { this._fail('feed: ' + e.message); } });
@@ -473,13 +484,26 @@ class CarlifeSource extends FrameSource {
         }
         if (this.format === 'h264') { this._takeH264(d); return; }
 
-        this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
-        while (this.buf.length >= HEAD) {
+        /* A full map frame is 783 KB but a stream socket may deliver it in
+         * 64 KB pieces. Copying every piece into one growing buffer used to
+         * move about half a megabyte per piece; keep the pieces whole and
+         * assemble only when the parser actually needs the bytes. */
+        if (d && d.length) { this.parts.push(d); this.partLen += d.length; }
+        for (;;) {
+            if (this.buf.length < HEAD) {
+                const want = HEAD - this.buf.length;
+                if (this.partLen < want) break;
+                this._takeParts(want);
+            }
             const magic = this.buf.readUInt32LE(0);
             if (magic !== MAGIC) { this.buf = this.buf.slice(1); continue; }
             const len = this.buf.readUInt32LE(4);
             if (len < 1 || len > MAX_PACKET) { this.buf = this.buf.slice(4); continue; }
-            if (this.buf.length < HEAD + len) break;
+            const need = HEAD + len - this.buf.length;
+            if (need > 0) {
+                if (this.partLen < need) break;
+                this._takeParts(need);
+            }
             const payload = this.buf.slice(HEAD, HEAD + len);
             this.buf = this.buf.slice(HEAD + len);
             if (len === this.expected) {
@@ -491,6 +515,29 @@ class CarlifeSource extends FrameSource {
             }
         }
         if (this.buf.length > MAX_PACKET + HEAD) this.buf = Buffer.alloc(0);
+    }
+
+    /** Move n bytes from the socket's chunks into the parser's buffer. */
+    _takeParts(n) {
+        const take = [];
+        let left = n;
+        while (left > 0 && this.parts.length) {
+            const p = this.parts[0];
+            if (p.length <= left) {
+                take.push(p);
+                this.parts.shift();
+                this.partLen -= p.length;
+                left -= p.length;
+            } else {
+                take.push(p.slice(0, left));
+                this.parts[0] = p.slice(left);
+                this.partLen -= left;
+                left = 0;
+            }
+        }
+        if (!take.length) return;
+        this.buf = this.buf.length ? Buffer.concat([this.buf].concat(take))
+                  : (take.length === 1 ? take[0] : Buffer.concat(take));
     }
 
     /* Every real picture, counted before it is emitted: this is the signal

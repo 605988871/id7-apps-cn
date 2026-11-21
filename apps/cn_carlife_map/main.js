@@ -72,6 +72,15 @@ async function run(ctx) {
      * owns it and reuses it. */
     let mapZoomBuf = null;
     let lastAtlas = null, lastSeq = 0, frames = 0;
+    /* The decoder can produce pictures faster than the renderer can take
+     * them. Sending every one made both screens stutter: the socket blocked,
+     * frames piled up and arrived in bursts. Pace both layers at the setting's
+     * rate instead - the renderer holds the last frame, so the extra ones
+     * were never seen. `frames` still counts everything received, and the
+     * two `Sent` counters say what actually reached the glass. */
+    let mapSentAt = 0, hudSentAt = 0, mapFrames = 0;
+    let mapWasLive = false, cardWasLive = false;
+    const frameGap = () => 1000 / Math.max(1, Number(settings.get('fps')) || 15);
     /* The HUD gets a frame of its own size, from its own source: a layer's
      * frame must be exactly its vw x vh, and cluster-render drops any frame
      * that is not, silently. */
@@ -148,10 +157,16 @@ async function run(ctx) {
         }
         const dx = Number(settings.get('hudX')) || 0;
         const dy = Number(settings.get('hudY')) || 0;
+        /* The safe box is only where the picture starts: it leaves BMW's own
+         * speed and limit sign visible by default. It must not be a wall for
+         * the fine-tuning buttons - at hudWidth 100 the box is exactly as wide
+         * as the card, so clamping to it made every left/right press a no-op.
+         * Once the driver moves the card, the whole 800x480 HUD scene is fair
+         * game; that is what the buttons are for. */
         let x = Math.round((HUD_BOX.x + HUD_BOX.right - w) / 2 + dx);
         let y = Math.round((HUD_BOX.y + HUD_BOX.bottom - h) / 2 + dy);
-        x = Math.max(HUD_BOX.x, Math.min(HUD_BOX.right - w, x));
-        y = Math.max(HUD_BOX.y, Math.min(HUD_BOX.bottom - h, y));
+        x = Math.max(0, Math.min(800 - w, x));
+        y = Math.max(0, Math.min(480 - h, y));
         return { x: x, y: y, w: w, h: h };
     }
 
@@ -201,6 +216,7 @@ async function run(ctx) {
         hudSeenShown = false;
         hudSwapAt = 0;
         hidden.hud = false;                    /* a new layer starts visible */
+        hudSentAt = 0;                         /* and must get its first frame at once */
         hudKind = wantHudKind();
         /* The HUD is a shared surface: whatever else draws on it - BMW's own
          * speed and limit sign, another app's content - sits underneath this
@@ -257,6 +273,12 @@ async function run(ctx) {
         const ref = which === 'map' ? mapLayer : hudLayer;
         if (!ref || hidden[which] === !visible) return;
         hidden[which] = !visible;
+        /* A layer that comes back must show the next picture immediately, not
+         * wait out a pacing interval that started while it was invisible. */
+        if (visible) {
+            if (which === 'map') mapSentAt = 0;
+            else hudSentAt = 0;
+        }
         if (cr && cr.ready) cr.set(ref, { visible: visible ? 1 : 0 });
     };
     const syncVisibility = safe('visibility', () => {
@@ -290,14 +312,18 @@ async function run(ctx) {
     const sendMap = safe('map frame', (atlas, seq) => {
         if (!mapLayer || !atlas) return;
         syncVisibility();
+        const now = Date.now();
+        if (mapSentAt && now - mapSentAt < frameGap()) return;
+        mapSentAt = now;
+        const put = (out) => { if (cr.frame(mapLayer, out, seq)) mapFrames++; };
         const z = Number(settings.get('mapZoom')) || 100;
-        if (z <= 100) { cr.frame(mapLayer, atlas, seq); return; }
+        if (z <= 100) { put(atlas); return; }
         if (!mapZoomBuf || mapZoomBuf.length !== atlasSize(MAP_W, MAP_H)) {
             mapZoomBuf = Buffer.alloc(atlasSize(MAP_W, MAP_H));
         }
         const win = zoomWindow(MAP_W, MAP_H, z, 0, 0);
         const out = scaleAtlas(atlas, MAP_W, MAP_H, win, MAP_W, MAP_H, mapZoomBuf);
-        if (out) cr.frame(mapLayer, out, seq);
+        if (out) put(out);
     });
 
     /* The HUD's frame, in whichever shape the mode asks for.
@@ -309,6 +335,9 @@ async function run(ctx) {
     const sendHud = safe('hud frame', (atlas) => {
         if (!cr || !cr.ready || !hudLayer || !hudW || !hudH) return;
         syncVisibility();
+        const sentAt = Date.now();
+        if (hudSentAt && sentAt - hudSentAt < frameGap()) return;
+        hudSentAt = sentAt;
         let frame;
         /* Is there a real picture yet? A CarLife source counts the frames it
          * has actually received; until it has one, the map layer is a status
@@ -397,6 +426,7 @@ async function run(ctx) {
         }
         if (hudSource) { try { hudSource.removeAllListeners(); hudSource.stop(); } catch (e) {} }
         hudSource = null; hudBuf = null; hudSourceKind = kind;
+        cardWasLive = false;
         /* The card is a second stream, and it must never be dialled onto the
          * map's endpoint: a producer serves one connection, so the card would
          * either be refused or steal the map's. CarLife's source already has a
@@ -429,6 +459,9 @@ async function run(ctx) {
             if (buf.length !== atlasSize(hudW, hudH)) return;
             hudBuf = buf;
             hudCards++;
+            const liveNow = hudSource.live > 0;
+            if (liveNow && !cardWasLive) hudSentAt = 0;
+            cardWasLive = liveNow;
             sendHud(null);
         }));
         hudSource.on('status', safe('hud status', () => {}));
@@ -459,6 +492,7 @@ async function run(ctx) {
         if (hudLayer) { if (cr) cr.drop(hudLayer); hudLayer = 0; layerState.hud = 'off'; hudW = hudH = 0; hudAtlas = null; }
         hidden.map = false;
         hidden.hud = false;                    /* both layers are made visible */
+        mapSentAt = hudSentAt = 0;             /* no pacing debt across a rebuild */
 
         wantHud = wants(t, 'hud');
         if (!cr || !cr.ready || t === 'off') {
@@ -557,6 +591,7 @@ async function run(ctx) {
         srcKind = kind;
         srcFps = fps;
         if (source) { source.removeAllListeners(); source.stop(); source = null; }
+        mapWasLive = false;
         source = createSource({
             kind: kind, w: MAP_W, h: MAP_H, fps: fps,
             /* CarLife's own picture is local: the app listens on a socket and
@@ -573,6 +608,11 @@ async function run(ctx) {
             lastAtlas = atlas;
             lastSeq = seq;
             frames++;
+            /* The first real picture after a wait goes through at once, even
+             * if a status page was sent a moment ago. */
+            const liveNow = source.live > 0;
+            if (liveNow && !mapWasLive) { mapSentAt = 0; hudSentAt = 0; }
+            mapWasLive = liveNow;
             if (!cr || !cr.ready) return;
             sendMap(atlas, seq);
             if (hudLayer) sendHud(atlas);
@@ -604,6 +644,7 @@ async function run(ctx) {
             renderStatus = cr.backend + ' ' + cr.targets;
             log.info('cluster-render: ' + renderStatus);
             hidden.map = hidden.hud = false;   /* the client remade every layer */
+            mapSentAt = hudSentAt = 0;
             setLayers();
             syncVisibility();
         }));
@@ -1021,8 +1062,13 @@ async function run(ctx) {
         cv.text('Map     : ' + layerState.map + '   ' + (targetEvents.map || ''), 40, 199, 22, '#a8d8c0');
         cv.text('HUD     : ' + layerState.hud + '   ' + (targetEvents.hud || '') +
             (hudBlocked ? '  (busy)' : '') + hudTag, 40, 228, 22, '#a8d8c0');
-        cv.text('Frames  : ' + frames + '   last seq ' + lastSeq + '   HUD ' + hudFrames +
-            (hudW ? ' (' + hudW + 'x' + hudH + ')' : '') +
+        /* `in` counts everything the source delivered; `map`/`HUD` count what
+         * the renderer accepted after pacing. The HUD rectangle's x/y are
+         * printed with the size so a position button that does nothing is
+         * visible as a number that does not change. */
+        const hr = hudW ? hudRect() : null;
+        cv.text('Frames  : in ' + frames + '  map ' + mapFrames + '  HUD ' + hudFrames +
+            (hr ? ' (' + hr.w + 'x' + hr.h + ' @' + hr.x + ',' + hr.y + ')' : '') +
             '   wait ' + (settings.get('showWait') === false ? 'off' : 'on'), 40, 257, 22, '#a8d8c0');
         cv.text('HUD card: ' + hudCardInfo(), 40, 284, 21, '#a8d8c0');
         cv.text('USB tap : ' + readTap(), 40, 311, 20, '#e0c88a');
