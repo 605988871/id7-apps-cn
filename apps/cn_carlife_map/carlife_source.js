@@ -453,6 +453,11 @@ class CarlifeSource extends FrameSource {
             this.client = null;
             this.buf = Buffer.alloc(0);
             this.format = '';
+            /* Listening mode leaves the server up for the capture side to
+             * redial; a client connection (an override file set `host`) has
+             * nobody dialling in, so it must reconnect itself or the source
+             * sits at "capture went away" for ever. */
+            if (this.host) { this._retry('capture went away, reconnecting'); return; }
             this.emit('status', 'capture went away, waiting');
         };
         s.on('close', gone);

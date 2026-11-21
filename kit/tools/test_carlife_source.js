@@ -198,6 +198,34 @@ ok('a decode socket that goes away clears its state before the next one', () => 
     assert.strictEqual(s.buf.length, 0, 'partial bytes survived the disconnect');
 });
 
+ok('a client connection (override host) reconnects after it drops', () => {
+    const s = new CarlifeSource({ w: 64, h: 32, fps: 10, sockPath: '/tmp/none.sock', host: '127.0.0.1', port: 1 });
+    s.running = true;
+    let retried = false;
+    s._retry = (why) => { retried = true; };    /* capture instead of really dialling */
+    const handlers = {};
+    const emitter = new (require('events').EventEmitter)();
+    emitter.on = function (ev, fn) { handlers[ev] = fn; return this; };
+    s._attach(emitter, 'tcp 127.0.0.1:1');
+    handlers.close();                            /* the peer dropped the link */
+    assert.strictEqual(retried, true, 'a dropped client did not reconnect');
+    assert.strictEqual(s.client, null, 'the gone client was not cleared');
+});
+
+ok('a listening source does not dial after its capture goes away', () => {
+    const s = new CarlifeSource({ w: 64, h: 32, fps: 10, sockPath: '/tmp/none.sock' });
+    s.running = true;
+    let retried = false;
+    s._retry = () => { retried = true; };
+    const handlers = {};
+    const emitter = new (require('events').EventEmitter)();
+    emitter.on = function (ev, fn) { handlers[ev] = fn; return this; };
+    s._attach(emitter, 'local');
+    handlers.close();                            /* capture side redials itself */
+    assert.strictEqual(retried, false, 'a listener tried to dial its own socket');
+    assert.strictEqual(s.client, null, 'the gone client was not cleared');
+});
+
 ok('a status page never grows the layer: its frame is exactly vw x vh', () => {
     for (const [w, h] of [[1088, 480], [480, 168], [344, 120]]) {
         const s = new CarlifeSource({ w: w, h: h, fps: 5, sockPath: '/tmp/none.sock' });

@@ -104,7 +104,11 @@ function zoomWindow(sw, sh, zoom, panX, panY) {
  */
 function scaleAtlas(src, sw, sh, win, dw, dh, out) {
     const need = atlasSize(dw, dh);
-    if (dw < 4 || dh < 2 || !src || src.length < need) return null;
+    /* The source must hold the whole sw x sh picture, not the dw x dh output:
+     * a zoom window is a cut of the source, so a smaller output is fed by a
+     * full-size source and checking src against the output would misjudge it
+     * (and a larger output would pass a source that is in fact too small). */
+    if (dw < 4 || dh < 2 || !src || src.length < atlasSize(sw, sh)) return null;
     const a = out && out.length === need ? out : Buffer.alloc(need);
     const du = dw * dh, su = sw * sh;
     const chw = dw >> 1, chh = dh >> 1;

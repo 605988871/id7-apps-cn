@@ -261,11 +261,11 @@ static void out_write(Out *o, const unsigned char *p, size_t n)
             if (ms > 0) continue;
             waited = SEND_WAIT_MS;
         }
-        /* Only a reader that truly went away closes the socket. Closing on a
-         * full buffer makes the app rebuild its source and sit at "waiting
-         * for CarLife" for a hiccup that cost one frame. CLMF carries a magic
-         * on every frame, so the app resyncs after a discarded one anyway. */
-        if (e != EPIPE && e != ECONNRESET) { o->drops++; return; }
+        /* The 12-byte header is already on the socket, so a frame that stops
+         * here leaves the reader a length that no longer matches the bytes
+         * that follow - a garbled picture, not a dropped one. Close so the
+         * reader resyncs cleanly at the next header. EAGAIN already had its
+         * brief grace period above; only a complete frame keeps the socket. */
         out_shut(o);
         o->drops++;
         return;
@@ -1024,8 +1024,10 @@ int main(int argc, char **argv)
 
         pfd[0].fd = lfd;
         pfd[0].events = POLLIN;
+        pfd[0].revents = 0;
         pfd[1].fd = client;
         pfd[1].events = POLLIN;
+        pfd[1].revents = 0;
         if (client >= 0) nfd = 2;
 
         if (poll(pfd, (nfds_t)nfd, 200) < 0 && errno != EINTR) {

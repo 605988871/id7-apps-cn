@@ -109,4 +109,21 @@ function rampAtlas(sw, sh) {
         'short atlas accepted');
 }
 
-console.log('map_zoom ok: windows, pan, resample, chroma planes');
+/* An upscale is the other direction: a small source cut up to a larger output.
+ * The guard must read the source size (sw x sh), not the output (dw x dh), or
+ * a legitimate upscale is refused as "short" and the layer goes blank. */
+{
+    const sw = 240, sh = 104, dw = 480, dh = 208;
+    const src = rampAtlas(sw, sh);
+    const out = scaleAtlas(src, sw, sh, { x: 0, y: 0, w: sw, h: sh }, dw, dh);
+    assert.ok(out, 'a legitimate upscale was refused');
+    assert.strictEqual(out.length, atlasSize(dw, dh), 'upscaled atlas length');
+    /* Luma still ramps dark to bright across the wider output. */
+    assert.ok(out[0] < 60, 'upscaled left luma dark: ' + out[0]);
+    assert.ok(out[dw - 1] > 200, 'upscaled right luma bright: ' + out[dw - 1]);
+    /* A source too small for its own sw x sh is still refused on an upscale. */
+    assert.strictEqual(scaleAtlas(Buffer.alloc(atlasSize(sw, sh) - 1), sw, sh, { x: 0, y: 0, w: sw, h: sh }, dw, dh), null,
+        'short source accepted on an upscale');
+}
+
+console.log('map_zoom ok: windows, pan, resample, chroma planes, upscale guard');
