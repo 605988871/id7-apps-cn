@@ -62,17 +62,38 @@ them is not root. A third, the install record, also lives under
 
 ```
 state: tap
-pid: 2795  comm: carlife
-devices: 18d1:2d01 1d6b:0002
-config: cfg1, 2if: if0 ff/42: 81/a02/512 02/a02/512
-open: open=0
-ctrl: 6 calls, reqs 51 52 53
-in:  1720 calls, 24104 KB
-out: 44 calls, 31 KB
-last in: ep=0x81  chan=0 len=16384 type=0x00020001
-last out: ep=0x02  chan=3 len=12 type=0x00068001
-log: 96 KB of 256, writes 41
+pid: 15803  comm: carlife
+devices: 1d6b:0003 0424:2530 2d95:7000 0424:4502 090c:1000 1d6b:0002
+config: cfg1, 2if: if0 ff/ff: 81/a02/512 01/a02/512 if1 ff/42: 02/a02/512 82/a02/512
+open: open 18d1:2d01 ok
+ctrl: 11 calls, reqs 51 52 53
+in:  4266 calls, 3922 KB
+out: 24 calls, 0 KB
+last in: ep=0x81 chan=2001 len=262136, 652 of 262144 bytes
+last out: ep=0x01 10 bytes
+async: 4301 submits, 8552 loops
+frames: 1203 in / 44 out, 0 resync, 1000x42 2000x23 2001x1130
+log: 256 KB of 256, writes 73
 ```
+
+**A transfer is not a message.** This is what the first reading on the car got
+wrong, so it is worth being blunt about it: a 200 KB picture does not arrive in
+one `libusb_bulk_transfer`, and only the *first* of its bulk reads starts with
+the `[chan][len]` header. Reading the first eight bytes of every transfer
+reported `chan=2147614720 len=3641496067` on a 652-byte read — picture data where
+a channel number was expected. `frames:` is that fixed: the shim walks each
+endpoint's bytes as one stream, so the counters land on message boundaries. It is
+the line that says whether `[chan][len]` is really the framing on this unit
+(`0 resync`), which channel carries the picture (`2001` dominating), and how many
+messages a second the phone sends. `resync` counts the places where a header was
+not where a header should be; anything but zero means the layout assumption is
+wrong and the stand-in device has to be rethought, not tuned.
+
+`test/framer_test.py` lifts those functions out of `shim.c` and runs six cases
+against them — split messages, two messages in one transfer, a mid-message chunk,
+zero-length messages, garbage then a clean message — because a wrong count in
+there looks like a quiet channel, which is the hardest kind of wrong to notice
+from the screen.
 
 `tap.txt` is the call log, one line per call, capped at 256 KB so a long drive
 cannot fill shm. The first three transfers of each endpoint carry the first
@@ -119,14 +140,21 @@ failure it prevents is invisible from the outside:
 It does not replace anything. The next build is the one that presents a device
 carlife can open when no phone is on the port, and bridges the bulk packets to
 the phone over TCP on the same channel offsets `carlife-link` already uses
-(`0, 1000, 2000, 2001, 2002, 2100` added to `7240`). The frame layouts on both
-sides are known; what this session buys is the call sequence and the exact
-channel numbers, so that build has something to check itself against.
+(`0, 1000, 2000, 2001, 2002, 2100` added to `7240`). What this session buys is the
+call sequence, the interface and endpoint shape a stand-in has to present
+(`cfg1, 2if`, class `ff`, `81` in / `01` out with 512-byte packets), and — from
+`frames:` — the channel numbers with their traffic share, so the bridge has
+something to check itself against before it is driven.
+
+One thing to keep in mind for that build: carlife moves data with the **async**
+API (`async: … submits`), so a stand-in has to *complete* transfers rather than
+return bytes from a blocking call.
 
 ## Build
 
 ```sh
 ./build.sh
+python test/framer_test.py     # the stream framer, six cases
 ```
 
 `zig cc -fPIC -shared -target x86_64-linux-gnu.2.27`, then

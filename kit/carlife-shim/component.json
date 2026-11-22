@@ -1,7 +1,7 @@
 {
   "id": "carlife-shim",
   "kind": "tool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "CarLife 接管（观察）",
   "description": "在原车 carlife 进程里挂一层 LD_PRELOAD 库，先只观察它怎样跟 USB 上的手机说话：枚举到什么、打开哪台设备、bulk 缓冲区多大、AOA 头里的通道号是什么。日志写在 /dev/shm/carlife-shim，「CarLife 诊断」应用直接显示；卸载即恢复（只动一个 drop-in 文件）",
   "mguHmi": [

@@ -126,6 +126,15 @@ struct libusb_transfer {
 #define SHM_DIR "/dev/shm/carlife-shim"
 #define LOG_CAP (256 * 1024)
 
+/* A CarLife message is [channel u32][length u32] followed by that many bytes,
+ * but a transfer is not a message: a 200 KB picture arrives as several bulk
+ * reads, and only the first of them starts with a header. Reading the first
+ * eight bytes of every transfer - which is what the state line used to do -
+ * reports picture data as a channel number, and a 3.6 GB length for a 652-byte
+ * read. The framer below reassembles the byte stream per endpoint so the counts
+ * land on real message boundaries. */
+#define FRAME_MAX (8u * 1024u * 1024u)
+
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int log_fd = -1;
 static size_t log_bytes;
@@ -149,6 +158,18 @@ static char last_out[140] = "(nothing yet)";
 static int64_t state_ms;
 static unsigned long state_writes;
 
+struct framer {
+    unsigned char hdr[8];
+    int have;                        /* header bytes collected, 0..8 */
+    int payload;                     /* 1 while the body of a message is passing */
+    unsigned long rem;               /* body bytes still to come */
+    uint32_t chan;                   /* channel of the last complete header */
+    unsigned long frames, resync, bytes;
+    struct { uint32_t chan; unsigned long n; } ch[8];
+    int nch;
+};
+static struct framer fin, fout;
+
 static int64_t now_ms(void)
 {
     struct timespec ts;
@@ -169,6 +190,70 @@ static void hex16(char *out, size_t cap, const unsigned char *p, int n)
     for (i = 0; i < n && o + 3 < cap; i++)
         o += (size_t)snprintf(out + o, cap - o, "%02x", p[i]);
     out[o] = '\0';
+}
+
+/* One message counted on its channel. Eight slots is more than CarLife uses; a
+ * ninth channel is dropped rather than growing the array - this runs inside
+ * carlife and allocates nothing. */
+static void count_chan(struct framer *f, uint32_t chan)
+{
+    int i;
+    for (i = 0; i < f->nch; i++)
+        if (f->ch[i].chan == chan) { f->ch[i].n++; return; }
+    if (f->nch < (int)(sizeof f->ch / sizeof f->ch[0])) {
+        f->ch[f->nch].chan = chan;
+        f->ch[f->nch].n = 1;
+        f->nch++;
+    }
+}
+
+/* Walk a transfer's bytes as a stream: header, body, header, body. Each
+ * iteration either consumes a byte or changes state, so this terminates, and it
+ * never writes to the buffer it is handed. */
+static void frame_bytes(struct framer *f, const unsigned char *p, int n)
+{
+    int i = 0;
+
+    if (n <= 0) return;
+    f->bytes += (unsigned long)n;
+    while (i < n) {
+        if (f->payload) {
+            unsigned long left = (unsigned long)(n - i);
+            unsigned long take = f->rem < left ? f->rem : left;
+            i += (int)take;
+            f->rem -= take;
+            if (!f->rem) f->payload = 0;
+            continue;
+        }
+        while (f->have < 8 && i < n) f->hdr[f->have++] = p[i++];
+        if (f->have < 8) return;
+        {
+            uint32_t chan = rd32(f->hdr), len = rd32(f->hdr + 4);
+            f->have = 0;
+            if (len > FRAME_MAX) {
+                /* not a header at this offset: stop guessing until the next
+                 * transfer, where a boundary is plausible again */
+                f->resync++;
+                return;
+            }
+            f->chan = chan;
+            f->frames++;
+            count_chan(f, chan);
+            f->payload = 1;
+            f->rem = len;
+        }
+    }
+}
+
+/* "1000x80 2000x23 2001x1100", in the order the channels first appeared. */
+static void chan_text(const struct framer *f, char *out, size_t cap)
+{
+    size_t o = 0;
+    int i;
+    for (i = 0; i < f->nch && o + 26 < cap; i++)
+        o += (size_t)snprintf(out + o, cap - o, "%s%ux%lu", i ? " " : "",
+                              (unsigned)f->ch[i].chan, f->ch[i].n);
+    if (!o) snprintf(out, cap, "(none)");
 }
 
 /* One line of the long log, timestamped, dropped once the file is full: the
@@ -226,6 +311,16 @@ static void put_state(void)
     ADD("out: %lu calls, %llu KB\n", out_calls, out_bytes / 1024);
     ADD("last in: %.130s\n", last_in);
     ADD("last out: %.130s\n", last_out);
+    /* Messages, not transfers: this is the line that tells a stand-in device
+     * whether the AOA header is really [chan][len] on this unit, which channel
+     * carries the picture, and whether any transfer boundary fell inside one.
+     * One line, not two: the shim block has to fit a column on the screen. */
+    {
+        char ci[120];
+        chan_text(&fin, ci, sizeof ci);
+        ADD("frames: %lu in / %lu out, %lu resync, %.70s\n",
+            fin.frames, fout.frames, fin.resync + fout.resync, ci);
+    }
     if (async_submits)
         ADD("async: %lu submits, %lu loops\n", async_submits, async_events);
     ADD("log: %lu KB of %d, writes %lu\n",
@@ -275,26 +370,37 @@ static int missing(const char *name)
     return NOT_SUPPORTED;
 }
 
-/* The eight bytes that make this whole shim possible. `len` is what the header
- * claims, `avail` is what the transfer actually carried - they agree on every
- * good packet, so a mismatch is the one thing worth shouting about. */
+/* What this one transfer looks like on its own. `len` is what the header at
+ * offset zero claims, and it only has to agree with `avail` when the transfer
+ * happens to carry exactly one message - a picture is split across several.
+ * The framer's counters are the authority; this line is the per-transfer view. */
 static void describe_aoa(char *out, size_t cap, const unsigned char *d, int avail)
 {
     uint32_t chan, len, type;
 
-    if (avail < 16) {
-        snprintf(out, cap, "%d bytes, no header", avail);
+    if (avail < 8) {
+        snprintf(out, cap, "%d bytes", avail);
         return;
     }
     chan = rd32(d);
     len = rd32(d + 4);
-    type = rd32(d + 12);
-    if ((long)len + 8 != (long)avail) {
-        snprintf(out, cap, "chan=%u len=%u but %d bytes (mismatch) type=0x%08x",
-                 chan, len, avail, type);
+    type = avail >= 16 ? rd32(d + 12) : 0;
+    if (len > FRAME_MAX) {
+        /* 0x80020000 on a 652-byte read is picture data, not a channel: this
+         * transfer started in the middle of a message */
+        snprintf(out, cap, "%d bytes, mid-message (hdr %u/%u)", avail, chan, len);
         return;
     }
-    snprintf(out, cap, "chan=%u len=%u type=0x%08x", chan, len, type);
+    if ((unsigned long)len + 8 == (unsigned long)avail) {
+        snprintf(out, cap, "chan=%u len=%u type=0x%08x", chan, len, type);
+        return;
+    }
+    if ((unsigned long)len + 8 > (unsigned long)avail) {
+        snprintf(out, cap, "chan=%u len=%u, %d of %lu bytes", chan, len, avail,
+                 (unsigned long)len + 8);
+        return;
+    }
+    snprintf(out, cap, "chan=%u len=%u, %d bytes (next header inside)", chan, len, avail);
 }
 
 static void log_bulk(const char *dir, unsigned char ep, const unsigned char *d,
@@ -316,8 +422,13 @@ static void log_bulk(const char *dir, unsigned char ep, const unsigned char *d,
     calls = slot->calls;
 
     describe_aoa(desc, sizeof desc, d, avail);
-    if (dir[0] == 'i') snprintf(last_in, sizeof last_in, "ep=0x%02x  %.120s", ep, desc);
-    else snprintf(last_out, sizeof last_out, "ep=0x%02x  %.120s", ep, desc);
+    if (dir[0] == 'i') {
+        snprintf(last_in, sizeof last_in, "ep=0x%02x  %.120s", ep, desc);
+        frame_bytes(&fin, d, avail);
+    } else {
+        snprintf(last_out, sizeof last_out, "ep=0x%02x  %.120s", ep, desc);
+        frame_bytes(&fout, d, avail);
+    }
 
     /* The first three of a kind get the bytes; after that only every 200th, or
      * the log becomes sixteen kilobytes of video per second and nothing else.
@@ -468,8 +579,26 @@ EXPORT int libusb_open(libusb_device *dev, libusb_device_handle **h)
     if (!real) return missing("libusb_open");
     r = real(dev, h);
     pthread_mutex_lock(&lock);
-    snprintf(open_text, sizeof open_text, "open=%d", r);
-    tap("open -> %d", r);
+    /* Which device was opened, not just that something was: a stand-in has to
+     * present this vid:pid, and the bus list alone never says which one carlife
+     * picked out of it. */
+    {
+        static int (*desc_of)(libusb_device *, struct libusb_device_descriptor *);
+        struct libusb_device_descriptor d;
+        int got = 0;
+        if (r == 0 && dev) {
+            if (!desc_of) desc_of = (int (*)(libusb_device *, struct libusb_device_descriptor *))
+                sym("libusb_get_device_descriptor");
+            memset(&d, 0, sizeof d);
+            got = desc_of && desc_of(dev, &d) == 0;
+        }
+        if (got)
+            snprintf(open_text, sizeof open_text, "open %04x:%04x ok", d.idVendor, d.idProduct);
+        else
+            snprintf(open_text, sizeof open_text, "open=%d", r);
+        tap("open -> %d%s", r, got ? "" : " (no descriptor)");
+        if (got) tap("  opened %04x:%04x class=%02x", d.idVendor, d.idProduct, d.bDeviceClass);
+    }
     pthread_mutex_unlock(&lock);
     return r;
 }

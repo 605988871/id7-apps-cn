@@ -1,7 +1,7 @@
 {
   "id": "carlife-probe",
   "kind": "tool",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "title": "CarLife 诊断",
   "description": "只读地看原车 carlife 进程怎么取手机的：它是直接操作 USB 设备（AOA），还是拿到了一块 USB 网卡在里面跑 IP。答案写在 /dev/shm/carlife-probe/report.txt，「CarLife 诊断」应用分屏显示（iDrive 7）",
   "mguHmi": [

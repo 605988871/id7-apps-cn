@@ -22,7 +22,7 @@ set -u
 DIR=/dev/shm/carlife-probe
 OUT=$DIR/report.txt
 EVERY=${1:-0}
-VER=0.3.0                                   # stamped into the report: the screen shows it
+VER=0.3.1                                   # stamped into the report: the screen shows it
 
 mkdir -p "$DIR" 2>/dev/null
 chmod 0777 "$DIR" 2>/dev/null               # the app reads it as tm_oap_app
@@ -130,10 +130,16 @@ report() {
     SOF=/var/opt/carlife-shim/current/carlife-shim.so
     if [ -f "$SOF" ]; then
         SOINFO="$(wc -c < "$SOF" 2>/dev/null | tr -d ' ') B"
-        case "$(head -c 5 "$SOF" 2>/dev/null | od -An -tx1 | tr -s ' ' | sed 's/^ //')" in
-            '7f 45 4c 46 02') SOINFO="$SOINFO  ELF64" ;;
-            '7f 45 4c 46 01') SOINFO="$SOINFO  ELF32" ;;
-            *) SOINFO="$SOINFO  not ELF" ;;
+        # Space-free hex: this unit's od pads with a tab, so the first version of
+        # this check compared "7f 45 4c 46 02" against "\t7f 45 ..." and called a
+        # perfectly good library "not ELF". A checker that lies is worse than none.
+        MAGIC=$(head -c 5 "$SOF" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \t\n')
+        case "$MAGIC" in
+            7f454c4602) SOINFO="$SOINFO  ELF64" ;;
+            7f454c4601) SOINFO="$SOINFO  ELF32" ;;
+            7f454c46*) SOINFO="$SOINFO  ELF" ;;
+            '') SOINFO="$SOINFO  ELF? (no od)" ;;
+            *) SOINFO="$SOINFO  not ELF ($MAGIC)" ;;
         esac
     else
         SOINFO='(none)'

@@ -7,7 +7,7 @@
       "title": "CarLife 诊断"
     }
   },
-  "version": "0.2.3",
+  "version": "0.2.4",
   "vendor": "custom",
   "loggingId": "OAA5",
   "iconGlyph": "wrench",
@@ -17,7 +17,7 @@
   "requires": {
     "idrive7-renderd": "2.1.18",
     "mgu-inputgate": "1.1.0",
-    "carlife-probe": "0.3.0"
+    "carlife-probe": "0.3.1"
   },
   "screens": [
     {
