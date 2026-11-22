@@ -93,6 +93,24 @@ report() {
     printf 'access: %s\n' "$ACC"
     printf 'node: %s\n' "${NODE:-(none)}"
 
+    # What the shim inside carlife itself has seen, written by that library and
+    # not by this script. `state: absent` is not the same as an empty report:
+    # absent means nobody is preloaded into carlife, so there is nothing to ask.
+    sec shim
+    if [ -r /dev/shm/carlife-shim/state.txt ]; then
+        sed -n '1,12p' /dev/shm/carlife-shim/state.txt
+    else
+        printf 'state: absent\n'
+    fi
+
+    # The last install or rollback of that library, in its own words.
+    sec boot
+    if [ -r /dev/shm/carlife-shim/boot.txt ]; then
+        sed -n '1,6p' /dev/shm/carlife-shim/boot.txt | sed 's/^=== //; s/ ===$//'
+    else
+        printf '(none)\n'
+    fi
+
     sec proc
     if [ -z "$P" ]; then
         printf 'carlife: not running\n'

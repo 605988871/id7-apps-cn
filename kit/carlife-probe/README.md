@@ -67,6 +67,17 @@ real session looks like, and whether usbfs is mounted.
 knows; ports it does mention mean the CarLife conversation is compiled in twice,
 once per transport, which is what makes a shim feasible at all.
 
+## `## shim` and `## boot`
+
+The report carries two sections it does not compute: `## shim` is
+`/dev/shm/carlife-shim/state.txt`, written by `carlife-shim` inside the `carlife`
+process, and `## boot` is that tool's install verdict. `state: absent` means
+nothing is preloaded into `carlife` — not the same as "preloaded and silent",
+which would leave a `state: tap` line with numbers that never move.
+
+This probe still writes nothing but its own report; those two sections are
+copied, not produced.
+
 ## Reading it from a terminal
 
 ```sh

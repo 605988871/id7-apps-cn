@@ -14,12 +14,18 @@ interface) rather than a raw USB device (AOA). The screen says which one it is:
 | `USB 当网卡` | a `usb0`/`rndis` interface appeared and `carlife` holds sockets | serve the same conversation from an application: no kernel work |
 | `原车 CarLife 没运行` | `carlife` was not running when the report was taken | open it in the HMI, read again |
 
-Four screens, `Next page` / `Previous page` to move, `Read again` to re-read:
+Five screens, `Next page` / `Previous page` to move, `Read again` to re-read:
 
-1. **判据** — the verdict, the three facts behind it, the process, the network
-2. **USB** — devices on the bus, and whether a gadget (`udc`) or `usbip` exists
-3. **其他** — shared memory, systemd unit and its `ExecStart`, kernel USB log
-4. **读法** — what each verdict means, and how to take the reading
+1. **判据** — the verdict, the facts behind it (including `access` and `link`),
+   the process, the network
+2. **USB** — devices on the bus, the accessory's interfaces and endpoints, and
+   whether a gadget (`udc`) or `usbip` exists
+3. **其他** — shared memory, systemd unit and its `ExecStart`, the binary, the
+   kernel USB log
+4. **接管** — what `carlife-shim` has seen from inside `carlife` (devices,
+   config, control requests, bulk packets with their AOA channel), and the
+   install's own verdict: loaded, or rolled back
+5. **读法** — what each verdict means, and how to take the reading
 
 ## Where the numbers come from
 

@@ -75,6 +75,16 @@
       "mguHmi": [
         "ID7"
       ]
+    },
+    {
+      "id": "carlife-shim",
+      "path": "kit/carlife-shim",
+      "title": "CarLife 接管（观察）",
+      "description": "在原车 carlife 进程里挂一层 LD_PRELOAD 库，观察它怎样跟 USB 上的手机说话：设备、接口、bulk 缓冲、AOA 头里的通道号。画面与仪表仍由原车负责；这一版只记录，不改传输。日志由「CarLife 诊断」显示（iDrive 7）",
+      "uninstallable": true,
+      "mguHmi": [
+        "ID7"
+      ]
     }
   ]
 }

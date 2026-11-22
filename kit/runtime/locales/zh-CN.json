@@ -2682,5 +2682,7 @@
   "Already confirmed: carlife reads a USB device directly and nothing goes over the network. The only way in is to replace that level inside the process; Binary says whether that means libusb.": "已经确认：原车 CarLife 直接读写 USB 设备，不经过网络。要接管这条路，得在这个进程里把 USB 这一级换下来；是 libusb 还是直接读写，看二进制这一页。",
   "A USB network interface appeared and carlife runs sockets on top: an application can answer those instead of a device.": "多出一块 USB 网卡，carlife 在上面跑 socket：数据可由应用来应答",
   "Get a picture from the car's own wired CarLife first, then come back here: the report is rewritten every three seconds.": "先把原车有线 CarLife 打开、看到画面，再回到这个应用；报告每三秒重写",
-  "Read-only on purpose: a probe that changes what it measures is worth nothing.": "这个应用只读不写：会改被测物的话，测量没有意义"
+  "Read-only on purpose: a probe that changes what it measures is worth nothing.": "这个应用只读不写：会改被测物的话，测量没有意义",
+  "Shim": "接管",
+  "Installed": "装入状态"
 }

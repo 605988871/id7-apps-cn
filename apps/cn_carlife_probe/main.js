@@ -36,6 +36,8 @@ const SEC_NAME = {
     shm: 'Memory',
     service: 'Units',
     kernel: 'Kernel',
+    shim: 'Shim',
+    boot: 'Installed',
 };
 
 /* Four words, each meaning a different amount of work for us. */
@@ -51,6 +53,7 @@ const SCREENS = [
     { name: 'Key facts' },
     { name: 'USB', secs: ['usb', 'aoa'] },
     { name: 'The rest', secs: ['gadget', 'service', 'binary', 'kernel'] },
+    { name: 'Shim', secs: ['shim', 'boot'] },
     { name: 'How to read', help: true },
 ];
 
