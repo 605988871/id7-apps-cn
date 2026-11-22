@@ -664,4 +664,4 @@ third_party/doomgeneric/  Doom's engine source (GPL-2.0) with the changes for th
 
 ---
 
-**繁體中文譯者：加速度SpeedUP（[JSD-SpeedUP](https://github.com/JSD-SpeedUP)）。簡體中文原譯：JackieZ123430（[idrive7-apps-cn](https://github.com/JackieZ123430/idrive7-apps-cn)）。**
+**繁體中文譯者：加速度SpeedUP（[JSD-SpeedUP](https://github.com/JSD-SpeedUP)）。簡體中文原譯：JackieZ123430（[idrive7-apps-cn](https://github.com/605988871/id7-apps-cn)）。**

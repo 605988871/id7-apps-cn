@@ -2,7 +2,7 @@
 
 简体中文翻译 Translation by：**抖音 小白科技杂物社 / BiliBili 小白151 / GitHub JackieZ123430**。
 
-- 翻译仓库：https://github.com/JackieZ123430/idrive7-apps-cn
+- 翻译仓库：https://github.com/605988871/idrive7-apps-cn（原作者 JackieZ123430，当前由此仓库维护）
 - 上游项目：https://github.com/cauliflowermossgrape/idrive7-apps
 - 中文翻译部分 Copyright (c) 2026 小白151 (GitHub: JackieZ123430)，按仓库 MIT 许可证提供。
 

@@ -350,7 +350,7 @@ light and num atlases with the Spanish letters added (every English glyph unchan
 descriptions stay English. Guide: [Español](README.es.md). Spanish translation by Rubén Ríos ([rubenrios](https://github.com/rubenrios)).
 
 Chinese translation by 小白151
-([JackieZ123430](https://github.com/JackieZ123430), [idrive7-apps-cn](https://github.com/JackieZ123430/idrive7-apps-cn));
+([JackieZ123430](https://github.com/JackieZ123430), [idrive7-apps-cn](https://github.com/605988871/id7-apps-cn));
 guides: [中文](README.zh-CN.md), [Русский](README.ru.md).
 
 The `.mgu` files contain BMW's SDK, so keep them for your own car and don't publish them.

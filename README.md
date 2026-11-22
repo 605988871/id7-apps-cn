@@ -215,7 +215,7 @@ node kit/tools/preview.js dist/redline preview wait=10   # 在电脑上预览 ->
 
 Windows 将 `python3` 换成 `python`。**本中文版仓库已将默认语言设为简体中文**，不带参数即构建中文包；如需英文，传 `--language en`。语言在构建时固定，不受车机语言设置影响。安装另一语言包相当于更新同一应用，不会另装一套。
 
-Translation by：小白151（[JackieZ123430](https://github.com/JackieZ123430)，[idrive7-apps-cn](https://github.com/JackieZ123430/idrive7-apps-cn)）。本中文指南即 [README.zh-CN.md](README.zh-CN.md)。示例中的版本后缀会随应用版本和语言修订变化。
+Translation by：小白151（[JackieZ123430](https://github.com/JackieZ123430)，[idrive7-apps-cn](https://github.com/605988871/id7-apps-cn)）。本中文指南即 [README.zh-CN.md](README.zh-CN.md)。示例中的版本后缀会随应用版本和语言修订变化。
 
 `.mgu` 文件包含 BMW SDK，仅供自己的车机使用，请勿公开发布。
 

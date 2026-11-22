@@ -21,10 +21,10 @@ credit = zh_credit()
 # corner of a 1088x480 cluster only covered the speed or the clock.
 assert credit['corner'] == ''
 assert credit['settingsTitle'] == 'Translation by: 抖音 小白科技杂物社 / BiliBili 小白151'
-assert credit['settingsLink'] == 'GitHub JackieZ123430 · github.com/JackieZ123430/idrive7-apps-cn'
+assert credit['settingsLink'] == 'GitHub JackieZ123430 · 维护于 github.com/605988871/id7-apps-cn'
 assert credit['comment'] == [
     'Translation by: 抖音 小白科技杂物社 / BiliBili 小白151 / GitHub JackieZ123430',
-    'https://github.com/JackieZ123430/idrive7-apps-cn',
+    'Maintained at https://github.com/605988871/id7-apps-cn',
 ]
 revisions = json.loads((root / 'kit/tools/locale-revisions.json').read_text(encoding='utf-8'))
 # The translation credit ships in Chinese builds only (build.py adds it from kit/localization/credit.zh-CN.json):
