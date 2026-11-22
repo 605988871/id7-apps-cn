@@ -1,5 +1,5 @@
 at: 2026-11-22 21:53:44
-probe: 0.3.1
+probe: 0.3.2
 kernel: 5.4.70-rt41-mgu
 pids: 2869
 
@@ -86,20 +86,13 @@ devices: 1d6b:0003 0424:2530 2d95:7000 0424:4502 090c:1000 1d6b:0002
 config: cfg1, 2if: if0 ff/42: 81/a02/512 02/a02/512 if1 01/02: 83/a01/192
 open: open 18d1:2d01 ok
 ctrl: 6 calls, reqs 51 52 53
-in:  1720 calls, 24104 KB
-out: 44 calls, 31 KB
-last in: ep=0x81  chan=0 len=16384 type=0x00020001
-last out: ep=0x01 10 bytes
-async: 4301 submits, 8552 loops
-frames: 1203 in / 44 out, 0 resync, 1000x42 2000x23 2001x1130
-log: 96 KB of 256, writes 41
-
-## boot
-state: watching
-unit: carlife.service
-drop-in: /etc/systemd/system/carlife.service.d/carlife-shim.conf
-so: /var/opt/carlife-shim/current/carlife-shim.so
-pid: 2795  unit: active  in maps: yes
+io: 2777 in 2382 KB, 26 out 0 KB
+first in: 00000280 43060bd9 652B
+first out: 00000006 00068008 10B
+last in: ep=0x81 00000280 43060bd9 not a header
+last out: ep=0x01 00000280 43060bd9 not a header
+frames: 1203 in / 44 out, aligned, 1000x42 2000x23 2001x1130
+async: 2814 submits, 5626 loops
 
 ## install
 so: 68736 B  ELF64

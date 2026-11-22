@@ -79,7 +79,9 @@ or removal, read from `/var/opt/carlife-shim/current/boot.txt` first and only th
 from `/dev/shm` (a reboot empties `/dev/shm`, and a reboot is exactly when the
 record is wanted). `state: absent` means nothing is preloaded into `carlife` — not
 the same as "preloaded and silent", which would leave `state: tap` with numbers
-that never move.
+that never move. The fourteen lines copied here are the whole of that file; the
+shim's two hex dumps (`head.txt`, and the log's first pages) are read by the app
+directly, because 24 bytes per line does not belong in a report.
 
 `## install` is the part this probe *does* compute, because the two sections above
 are only as honest as the tool that writes them:

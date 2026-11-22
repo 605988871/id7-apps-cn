@@ -72,7 +72,8 @@ fi
 # writes its own files on load: that shell's pid is in state.txt and tap.txt has
 # been truncated. Left there it reads like "carlife has the shim" with the pid of
 # a process that has already exited - the worst kind of wrong answer.
-rm -f "$SHM/state.txt" "$SHM/state.txt.tmp" "$SHM/tap.txt" 2>/dev/null
+rm -f "$SHM/state.txt" "$SHM/state.txt.tmp" "$SHM/tap.txt" \
+      "$SHM/head.txt" "$SHM/head.tmp" 2>/dev/null
 
 PID=$(pidof carlife 2>/dev/null | awk '{print $1}')
 UNIT=''

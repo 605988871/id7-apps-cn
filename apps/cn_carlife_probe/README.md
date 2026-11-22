@@ -31,12 +31,15 @@ Six screens, `Next page` / `Previous page` to move, `Read again` to re-read:
    carlife, and the install record. `loaded: no` with a drop-in present is one
    restart away; with no drop-in it is a failed install, and the line at the
    bottom of the page says which
-5. **接管记录** — the shim's own `tap.txt`, one screenful at a time: the AOA
-   handshake, the strings sent to the phone, the first bulk headers. Pages are
-   cut by drawn rows, so a long bulk line keeps its hex. On this page
-   `Next page` / `Previous page` scroll the log instead of changing screens, and
-   only leave the page at either end — the log is what a stand-in device has to
-   be written against, and ssh is not an option on this unit
+5. **接管记录** — `head.txt` first, then the shim's own `tap.txt`, one screenful
+   at a time. The head comes first on purpose: eight transfers of each direction,
+   twenty-four bytes each, which is the only thing that settles whether a message
+   starts with an eight-byte `[chan][len]` header or a four-byte length. The log
+   after it is the call sequence a stand-in device has to follow — the AOA
+   handshake, the strings sent to the phone, the bulk headers. Pages are cut by
+   drawn rows, so a long bulk line keeps its hex. On this page `Next page` /
+   `Previous page` scroll instead of changing screens, and only leave the page at
+   either end
 6. **读法** — what each verdict means, and how to take the reading
 
 ## Where the numbers come from

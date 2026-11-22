@@ -25,7 +25,7 @@
  * async API, and which channel numbers it actually puts in the header. A shim
  * that guesses those is a shim that crashes the one process the car needs.
  *
- * Two files under /dev/shm/carlife-shim, both world-readable because the app
+ * Three files under /dev/shm/carlife-shim, all world-readable because the app
  * that shows them is not root:
  *
  *   state.txt  a dozen lines, rewritten twice a second - what the app draws.
@@ -33,6 +33,12 @@
  *              never loaded" from "it loaded and the phone never came".
  *   tap.txt    the call log itself, capped at 256 KB so a long drive cannot
  *              fill shm. Long lines, read by a human.
+ *   head.txt   the first bytes of each direction, one line per transfer, kept
+ *              for the first eight transfers and then frozen. This exists
+ *              because "is there an eight-byte header at all" is the one
+ *              question the aggregate counters cannot answer: a log full of
+ *              picture data looks the same whether the header is four bytes,
+ *              eight bytes or absent.
  *
  * Failure policy: if a real symbol is missing the call fails with
  * LIBUSB_ERROR_NOT_SUPPORTED instead of crashing, and the log says so. The
@@ -134,6 +140,19 @@ struct libusb_transfer {
  * read. The framer below reassembles the byte stream per endpoint so the counts
  * land on real message boundaries. */
 #define FRAME_MAX (8u * 1024u * 1024u)
+/* CarLife's channels are small numbers: the one clean session on this unit used
+ * 1000, 2000 and 2001, and the patent's example table stays in the thousands.
+ * A four-digit ceiling is what makes this a filter rather than a formality - at
+ * 0xffff, picture bytes land on "channel 55563" often enough to stop the slide;
+ * at 10000 they do not. */
+#define CHAN_MAX 10000u
+
+/* Keep this many transfers and this many bytes of each, then stop writing:
+ * a file that stops changing is a file the screen can page without the
+ * pagination being redone twice a second. */
+#define HEAD_TX 8
+#define HEAD_TXBYTES 24
+#define HEAD_LINE ((HEAD_TXBYTES) * 3 + 1)
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int log_fd = -1;
@@ -156,7 +175,6 @@ static char open_text[80] = "(not opened)";
 static char last_in[140] = "(nothing yet)";
 static char last_out[140] = "(nothing yet)";
 static int64_t state_ms;
-static unsigned long state_writes;
 
 struct framer {
     unsigned char hdr[8];
@@ -169,6 +187,29 @@ struct framer {
     int nch;
 };
 static struct framer fin, fout;
+
+/* The first transfers of each direction, verbatim. The counters say how much
+ * came through; only the bytes say where a message begins. */
+struct head {
+    unsigned long total;             /* bytes seen, kept or not */
+    int nt;                          /* transfers kept */
+    int done;
+    struct {
+        unsigned long off;           /* stream offset of the first byte kept */
+        int got, want;
+        unsigned char b[HEAD_TXBYTES];
+        int n;
+    } t[HEAD_TX];
+};
+static struct head hin, hout;
+static int head_dirty;
+
+/* The first transfer in each direction, as the framer reads it: two
+ * little-endian words. If the screen shows 00000280 43060bd9 for a 652-byte
+ * read, there is no eight-byte header on this stream and the next build has to
+ * look for four - which is a different device to write. */
+static char first_in[48] = "(nothing yet)";
+static char first_out[48] = "(nothing yet)";
 
 static int64_t now_ms(void)
 {
@@ -192,6 +233,58 @@ static void hex16(char *out, size_t cap, const unsigned char *p, int n)
     out[o] = '\0';
 }
 
+/* Bytes as four-byte groups, which is how the header has to be read: a u32 at a
+ * time, little-endian. Running the pairs together makes that reading an
+ * exercise in counting characters on a 1920-wide screen. */
+static void hex_group(char *out, size_t cap, const unsigned char *p, int n)
+{
+    size_t o = 0;
+    int i;
+    for (i = 0; i < n && o + 10 < cap; i++) {
+        o += (size_t)snprintf(out + o, cap - o, "%02x", p[i]);
+        if (i % 4 == 3 && i != n - 1 && o + 2 < cap) out[o++] = ' ';
+    }
+    out[o] = '\0';
+}
+
+/* Keep the head of the stream, not a window of it: a 652-byte transfer followed
+ * by a 1 KB one needs both of their first bytes side by side, and a contiguous
+ * window would hold only the first. */
+static void head_add(struct head *h, const unsigned char *p, int got, int want)
+{
+    int k, take;
+
+    if (got > 0 && h->nt < HEAD_TX) {
+        k = h->nt++;
+        h->t[k].off = h->total;
+        h->t[k].got = got;
+        h->t[k].want = want;
+        take = got < HEAD_TXBYTES ? got : HEAD_TXBYTES;
+        memcpy(h->t[k].b, p, (size_t)take);
+        h->t[k].n = take;
+        head_dirty = 1;
+        if (h->nt == HEAD_TX) h->done = 1;
+    }
+    if (got > 0) h->total += (unsigned long)got;
+}
+
+/* The first eight bytes of a transfer, in wire order, plus the size that came:
+ * "00000280 43060bd9  652B". Two words to compare against the length of the
+ * read, which is the whole decision. */
+static const char *head_text(const unsigned char *d, int avail)
+{
+    static char out[48];
+    char hx[HEAD_LINE];
+
+    if (avail <= 0) {
+        snprintf(out, sizeof out, "(no bytes)");
+        return out;
+    }
+    hex_group(hx, sizeof hx, d, avail < 8 ? avail : 8);
+    snprintf(out, sizeof out, "%s  %dB", hx, avail);
+    return out;
+}
+
 /* One message counted on its channel. Eight slots is more than CarLife uses; a
  * ninth channel is dropped rather than growing the array - this runs inside
  * carlife and allocates nothing. */
@@ -207,9 +300,30 @@ static void count_chan(struct framer *f, uint32_t chan)
     }
 }
 
+/* A header the framer is willing to believe: a small channel number and a
+ * length that fits in a buffer. Both tests matter. Without the channel test a
+ * picture's first four bytes (00 00 02 80 reads as 0x80020000) pass whenever
+ * the next word happens to be small, and the count then drifts for the rest of
+ * the session. */
+static int plausible(uint32_t chan, uint32_t len)
+{
+    /* A length of zero is refused, and that single test does most of the work:
+     * eight zero bytes - the commonest eight bytes in a video stream - pass
+     * every other check, and so does 0b d9 00 00 00 00 00 00, which is "channel
+     * 217, nothing". A message that carries nothing is worth missing; a stream
+     * that locks onto one every few hundred bytes is not. */
+    return len > 0 && len <= FRAME_MAX && chan <= CHAN_MAX;
+}
+
 /* Walk a transfer's bytes as a stream: header, body, header, body. Each
  * iteration either consumes a byte or changes state, so this terminates, and it
- * never writes to the buffer it is handed. */
+ * never writes to the buffer it is handed.
+ *
+ * When eight bytes do not look like a header the stream is one byte further in
+ * than assumed, so it slides one byte and looks again. The earlier build gave up
+ * until the next transfer instead, which on a stream that starts mid-message
+ * meant it never recovered: 2777 transfers produced one message and two hundred
+ * resyncs. Sliding is what makes a framer self-synchronising. */
 static void frame_bytes(struct framer *f, const unsigned char *p, int n)
 {
     int i = 0;
@@ -229,18 +343,18 @@ static void frame_bytes(struct framer *f, const unsigned char *p, int n)
         if (f->have < 8) return;
         {
             uint32_t chan = rd32(f->hdr), len = rd32(f->hdr + 4);
-            f->have = 0;
-            if (len > FRAME_MAX) {
-                /* not a header at this offset: stop guessing until the next
-                 * transfer, where a boundary is plausible again */
-                f->resync++;
-                return;
+            if (plausible(chan, len)) {
+                f->have = 0;
+                f->chan = chan;
+                f->frames++;
+                count_chan(f, chan);
+                f->payload = 1;
+                f->rem = len;
+                continue;
             }
-            f->chan = chan;
-            f->frames++;
-            count_chan(f, chan);
-            f->payload = 1;
-            f->rem = len;
+            f->resync++;
+            memmove(f->hdr, f->hdr + 1, 7);
+            f->have = 7;
         }
     }
 }
@@ -289,9 +403,45 @@ static void write_all(int fd, const char *p, int n)
     }
 }
 
+/* head.txt: one line per transfer, first eight of each direction. Written as
+ * it fills and then never again, so its mtime settles and the screen can page
+ * it without redoing the layout. */
+static void put_head(void)
+{
+    char body[1800], path[160], hex[HEAD_LINE];
+    int n = 0, fd, d, i;
+
+    n += snprintf(body + n, sizeof body - (size_t)n,
+                  "carlife-shim head - pid %d\n", (int)getpid());
+    for (d = 0; d < 2; d++) {
+        struct head *h = d ? &hout : &hin;
+        n += snprintf(body + n, sizeof body - (size_t)n,
+                      "%s %lu bytes, %d transfers\n", d ? "out" : "in", h->total, h->nt);
+        if (!h->nt) n += snprintf(body + n, sizeof body - (size_t)n, "  (nothing yet)\n");
+        for (i = 0; i < h->nt && n < (int)sizeof body - 120; i++) {
+            hex_group(hex, sizeof hex, h->t[i].b, h->t[i].n);
+            n += snprintf(body + n, sizeof body - (size_t)n,
+                          "  t%d @%lu want=%d got=%d  %s\n",
+                          i + 1, h->t[i].off, h->t[i].want, h->t[i].got, hex);
+        }
+    }
+
+    snprintf(path, sizeof path, "%s/head.tmp", SHM_DIR);
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    write_all(fd, body, n);
+    close(fd);
+    snprintf(path, sizeof path, "%s/head.txt", SHM_DIR);
+    {
+        char tmp[160];
+        snprintf(tmp, sizeof tmp, "%s/head.tmp", SHM_DIR);
+        rename(tmp, path);
+    }
+}
+
 static void put_state(void)
 {
-    char body[1600], path[160];
+    char body[2048], path[160];
     int n = 0, fd;
 
 #define ADD(...) do { \
@@ -307,8 +457,12 @@ static void put_state(void)
     ADD("config: %.190s\n", cfg_text);
     ADD("open: %.70s\n", open_text);
     ADD("ctrl: %lu calls, reqs %.60s\n", ctrl_calls, req_text[0] ? req_text : "(none yet)");
-    ADD("in:  %lu calls, %llu KB\n", in_calls, in_bytes / 1024);
-    ADD("out: %lu calls, %llu KB\n", out_calls, out_bytes / 1024);
+    /* Two counts on one line: the page has fourteen rows for thirteen facts, and
+     * the log's own size is something the app can stat for itself. */
+    ADD("io: %lu in %llu KB, %lu out %llu KB\n",
+        in_calls, in_bytes / 1024, out_calls, out_bytes / 1024);
+    ADD("first in: %.40s\n", first_in);
+    ADD("first out: %.40s\n", first_out);
     ADD("last in: %.130s\n", last_in);
     ADD("last out: %.130s\n", last_out);
     /* Messages, not transfers: this is the line that tells a stand-in device
@@ -318,13 +472,19 @@ static void put_state(void)
     {
         char ci[120];
         chan_text(&fin, ci, sizeof ci);
-        ADD("frames: %lu in / %lu out, %lu resync, %.70s\n",
-            fin.frames, fout.frames, fin.resync + fout.resync, ci);
+        /* `aligned` is the word that matters: it means the eight-byte header was
+         * found at every message boundary and the framer never had to slide, so
+         * [chan][len] is the real layout and a stand-in can be written against
+         * it. The slide count only appears once it is not zero - a page that
+         * always carries it makes the good session look as noisy as the bad. */
+        if (fin.resync + fout.resync)
+            ADD("frames: %lu in / %lu out, slid %lu, %.50s\n",
+                fin.frames, fout.frames, fin.resync + fout.resync, ci);
+        else
+            ADD("frames: %lu in / %lu out, aligned, %.50s\n", fin.frames, fout.frames, ci);
     }
     if (async_submits)
         ADD("async: %lu submits, %lu loops\n", async_submits, async_events);
-    ADD("log: %lu KB of %d, writes %lu\n",
-        (unsigned long)(log_bytes / 1024), LOG_CAP / 1024, ++state_writes);
 #undef ADD
 
     snprintf(path, sizeof path, "%s/state.tmp", SHM_DIR);
@@ -377,18 +537,21 @@ static int missing(const char *name)
 static void describe_aoa(char *out, size_t cap, const unsigned char *d, int avail)
 {
     uint32_t chan, len, type;
+    char hx[HEAD_LINE];
 
     if (avail < 8) {
-        snprintf(out, cap, "%d bytes", avail);
+        snprintf(out, cap, "%d bytes, too few for a header", avail);
         return;
     }
     chan = rd32(d);
     len = rd32(d + 4);
     type = avail >= 16 ? rd32(d + 12) : 0;
-    if (len > FRAME_MAX) {
-        /* 0x80020000 on a 652-byte read is picture data, not a channel: this
-         * transfer started in the middle of a message */
-        snprintf(out, cap, "%d bytes, mid-message (hdr %u/%u)", avail, chan, len);
+    if (!plausible(chan, len)) {
+        /* The transfer began in the middle of a message: those eight bytes are
+         * picture, not a channel. Shown in wire order, because the useful
+         * comparison is against the length of the read, not against 0x80020000. */
+        hex_group(hx, sizeof hx, d, 8);
+        snprintf(out, cap, "%s not a header", hx);
         return;
     }
     if ((unsigned long)len + 8 == (unsigned long)avail) {
@@ -424,10 +587,21 @@ static void log_bulk(const char *dir, unsigned char ep, const unsigned char *d,
     describe_aoa(desc, sizeof desc, d, avail);
     if (dir[0] == 'i') {
         snprintf(last_in, sizeof last_in, "ep=0x%02x  %.120s", ep, desc);
+        if (first) snprintf(first_in, sizeof first_in, "%.40s", head_text(d, avail));
+        head_add(&hin, d, avail, want);
         frame_bytes(&fin, d, avail);
     } else {
         snprintf(last_out, sizeof last_out, "ep=0x%02x  %.120s", ep, desc);
+        if (first) snprintf(first_out, sizeof first_out, "%.40s", head_text(d, avail));
+        head_add(&hout, d, avail, want);
         frame_bytes(&fout, d, avail);
+    }
+    /* At most 2 x HEAD_TX writes for the whole session: the file is frozen once
+     * both directions have their eight samples, and a file that stops changing is
+     * one the screen can page without recomputing the layout. */
+    if (head_dirty) {
+        put_head();
+        head_dirty = 0;
     }
 
     /* The first three of a kind get the bytes; after that only every 200th, or
@@ -599,6 +773,15 @@ EXPORT int libusb_open(libusb_device *dev, libusb_device_handle **h)
         tap("open -> %d%s", r, got ? "" : " (no descriptor)");
         if (got) tap("  opened %04x:%04x class=%02x", d.idVendor, d.idProduct, d.bDeviceClass);
     }
+    /* A new open is a new byte stream. Half a header left over from the previous
+     * session would be prepended to the first bytes of this one, and the framer
+     * would then be reading everything eight bytes out of step. */
+    if (r == 0) {
+        fin.have = fin.payload = 0;
+        fin.rem = 0;
+        fout.have = fout.payload = 0;
+        fout.rem = 0;
+    }
     pthread_mutex_unlock(&lock);
     return r;
 }
@@ -615,6 +798,12 @@ EXPORT libusb_device_handle *libusb_open_device_with_vid_pid(libusb_context *ctx
     pthread_mutex_lock(&lock);
     tap("open_with_vid_pid(%04x:%04x) -> %s", vid, pid, h ? "handle" : "none");
     snprintf(open_text, sizeof open_text, "open %04x:%04x = %s", vid, pid, h ? "ok" : "none");
+    if (h) {
+        fin.have = fin.payload = 0;
+        fin.rem = 0;
+        fout.have = fout.payload = 0;
+        fout.rem = 0;
+    }
     pthread_mutex_unlock(&lock);
     return h;
 }

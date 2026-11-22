@@ -22,7 +22,7 @@ set -u
 DIR=/dev/shm/carlife-probe
 OUT=$DIR/report.txt
 EVERY=${1:-0}
-VER=0.3.1                                   # stamped into the report: the screen shows it
+VER=0.3.2                                   # stamped into the report: the screen shows it
 
 mkdir -p "$DIR" 2>/dev/null
 chmod 0777 "$DIR" 2>/dev/null               # the app reads it as tm_oap_app
@@ -106,7 +106,7 @@ report() {
     # shim inside carlife, and printing it would answer a different question.
     if [ -n "$SPID" ] && [ -r "$ST" ] && [ -d "/proc/$SPID" ] && \
        [ "$(cat "/proc/$SPID/comm" 2>/dev/null)" = carlife ]; then
-        sed -n '1,12p' "$ST"
+        sed -n '1,14p' "$ST"
     else
         printf 'state: absent\n'
     fi
@@ -130,17 +130,22 @@ report() {
     SOF=/var/opt/carlife-shim/current/carlife-shim.so
     if [ -f "$SOF" ]; then
         SOINFO="$(wc -c < "$SOF" 2>/dev/null | tr -d ' ') B"
-        # Space-free hex: this unit's od pads with a tab, so the first version of
-        # this check compared "7f 45 4c 46 02" against "\t7f 45 ..." and called a
-        # perfectly good library "not ELF". A checker that lies is worse than none.
-        MAGIC=$(head -c 5 "$SOF" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \t\n')
-        case "$MAGIC" in
-            7f454c4602) SOINFO="$SOINFO  ELF64" ;;
-            7f454c4601) SOINFO="$SOINFO  ELF32" ;;
-            7f454c46*) SOINFO="$SOINFO  ELF" ;;
-            '') SOINFO="$SOINFO  ELF? (no od)" ;;
-            *) SOINFO="$SOINFO  not ELF ($MAGIC)" ;;
-        esac
+        # This unit has no od. The earlier check used one and, when it was
+        # missing, reported "ELF?" for a library that was loading fine - a
+        # checker that lies is worse than no checker. `head -c` and a string
+        # compare need nothing but the shell, and the four magic bytes contain
+        # no NUL, so command substitution keeps them intact.
+        M4=$(head -c 4 "$SOF" 2>/dev/null)
+        C5=$(head -c 5 "$SOF" 2>/dev/null | tail -c 1)
+        if [ "$M4" = "$(printf '\177ELF')" ]; then
+            if [ "$C5" = "$(printf '\002')" ]; then SOINFO="$SOINFO  ELF64"
+            elif [ "$C5" = "$(printf '\001')" ]; then SOINFO="$SOINFO  ELF32"
+            else SOINFO="$SOINFO  ELF"; fi
+        elif [ -z "$M4" ]; then
+            SOINFO="$SOINFO  unreadable"
+        else
+            SOINFO="$SOINFO  not ELF"
+        fi
     else
         SOINFO='(none)'
     fi

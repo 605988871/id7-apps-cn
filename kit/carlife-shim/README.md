@@ -54,27 +54,35 @@ Every one of those is a line in `tap.txt` after one ordinary wired session.
 
 ## What it writes
 
-Two files under `/dev/shm/carlife-shim`, both world-readable — the app that shows
-them is not root. A third, the install record, also lives under
+Three files under `/dev/shm/carlife-shim`, all world-readable — the app that shows
+them is not root. A fourth, the install record, also lives under
 `/var/opt/carlife-shim/current` so that it outlives a reboot.
 
-`state.txt`, rewritten twice a second, a dozen lines, is what the app draws:
+`state.txt`, rewritten twice a second, thirteen lines, is what the app draws:
 
 ```
 state: tap
-pid: 15803  comm: carlife
+pid: 9694  comm: carlife
 devices: 1d6b:0003 0424:2530 2d95:7000 0424:4502 090c:1000 1d6b:0002
 config: cfg1, 2if: if0 ff/ff: 81/a02/512 01/a02/512 if1 ff/42: 02/a02/512 82/a02/512
 open: open 18d1:2d01 ok
 ctrl: 11 calls, reqs 51 52 53
-in:  4266 calls, 3922 KB
-out: 24 calls, 0 KB
-last in: ep=0x81 chan=2001 len=262136, 652 of 262144 bytes
-last out: ep=0x01 10 bytes
-async: 4301 submits, 8552 loops
-frames: 1203 in / 44 out, 0 resync, 1000x42 2000x23 2001x1130
-log: 256 KB of 256, writes 73
+io: 2777 in 2382 KB, 26 out 0 KB
+first in: 00000280 43060bd9 652B
+first out: 00000006 00068008 10B
+last in: ep=0x81 00000280 43060bd9 not a header
+last out: ep=0x01 00000280 43060bd9 not a header
+frames: 1203 in / 44 out, aligned, 1000x42 2000x23 2001x1130
+async: 2814 submits, 5626 loops
 ```
+
+`first in` and `first out` are the first transfer of each direction after
+`libusb_open`, printed as the two four-byte words the framer reads plus the size
+that arrived, in wire order. They exist because the aggregate counts cannot tell
+four bytes of length from eight bytes of channel-and-length: on a 652-byte read,
+`00000280 43060bd9` is a 640-byte length followed by picture, while
+`d0070000 10000000` would be channel 2000 carrying 16 bytes. Everything else on
+that page is a total; these two lines are the evidence.
 
 **A transfer is not a message.** This is what the first reading on the car got
 wrong, so it is worth being blunt about it: a 200 KB picture does not arrive in
@@ -82,24 +90,50 @@ one `libusb_bulk_transfer`, and only the *first* of its bulk reads starts with
 the `[chan][len]` header. Reading the first eight bytes of every transfer
 reported `chan=2147614720 len=3641496067` on a 652-byte read — picture data where
 a channel number was expected. `frames:` is that fixed: the shim walks each
-endpoint's bytes as one stream, so the counters land on message boundaries. It is
-the line that says whether `[chan][len]` is really the framing on this unit
-(`0 resync`), which channel carries the picture (`2001` dominating), and how many
-messages a second the phone sends. `resync` counts the places where a header was
-not where a header should be; anything but zero means the layout assumption is
-wrong and the stand-in device has to be rethought, not tuned.
+endpoint's bytes as one stream, so the counters land on message boundaries.
 
-`test/framer_test.py` lifts those functions out of `shim.c` and runs six cases
-against them — split messages, two messages in one transfer, a mid-message chunk,
-zero-length messages, garbage then a clean message — because a wrong count in
-there looks like a quiet channel, which is the hardest kind of wrong to notice
-from the screen.
+The second reading then exposed a worse fault in the same line. Once the framer
+decided a header was not a header it gave up *until the next transfer*, which on
+a stream that begins mid-message means it never recovers: the car reported
+`frames: 1 in / 0 out, 229 resync` after 2777 transfers. It now slides one byte
+and looks again, which is what makes a framer self-synchronising. `aligned` means
+it never had to slide — `[chan][len]` was found at every boundary and a stand-in
+device can be written against it. `slid N` means it did, and the number says how
+far from a clean parse the assumptions are.
+
+Two tests keep that honest. A header is only believed when the channel is small
+(`<= 10000`), the length is at most 8 MB, **and the length is not zero**: eight
+zero bytes pass every other check, and a stream of them inside a picture is the
+commonest way to lock onto nonsense. `test/framer_test.py` lifts the functions
+out of `shim.c` and runs seven cases — split messages, two messages in one
+transfer, a mid-message chunk, an empty message, garbage then a clean message, and
+the car's own case of a picture that starts mid-frame with a header after it —
+because a wrong count in there looks like a quiet channel, which is the hardest
+kind of wrong to notice from the screen.
 
 `tap.txt` is the call log, one line per call, capped at 256 KB so a long drive
 cannot fill shm. The first three transfers of each endpoint carry the first
 sixteen bytes in hex; after that only every two-hundredth line survives, or the
 log is sixteen kilobytes of video per second and nothing else. Errors and short
 reads are always kept.
+
+`head.txt` is the small one, and it is the one that settles the argument: the
+first eight transfers of each direction, twenty-four bytes each, with the size
+requested and the size that arrived.
+
+```
+carlife-shim head - pid 9694
+in 2382 bytes, 8 transfers
+  t1 @0 want=262144 got=652  00000280 43060bd9 00000280 43060bd9
+  t2 @652 want=262144 got=652  00000280 43060bd9 00000280 43060bd9
+out 40 bytes, 3 transfers
+  t1 @0 want=512 got=10  00000006 00068008 0000
+```
+
+A contiguous window would only have shown the first of those reads, and the
+question is precisely whether the second one starts the same way. The file is
+written while it fills and then frozen, so its mtime settles and the screen can
+page it without redoing the layout twice a second.
 
 `boot.txt` is the install's record, and it is written twice: to
 `/var/opt/carlife-shim/current/boot.txt`, which survives a reboot, and to

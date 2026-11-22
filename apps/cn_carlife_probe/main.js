@@ -38,6 +38,12 @@ const REPORT = '/dev/shm/carlife-probe/report.txt';
  * the shim itself; the fields that matter for writing a stand-in device (the AOA
  * handshake, the bulk headers, the endpoint sizes) are all in its first pages. */
 const TAP = '/dev/shm/carlife-shim/tap.txt';
+/* The first bytes of each direction, one line per transfer, written by the shim
+ * before the log has anything worth reading - which is the point: a summary says
+ * "652 bytes arrived", only the bytes say whether those 652 start with a header.
+ * Frozen by the shim once it has eight transfers each way, so this file's mtime
+ * settles and the page below stops being re-laid out. */
+const HEAD = '/dev/shm/carlife-shim/head.txt';
 const READ_MS = 2000;
 const STALE_MS = 15000;
 const SIZE = 20, LINE = 26;
@@ -216,10 +222,12 @@ mgu.run({
             });
         }
 
-        /* The shim's own log, one screenful at a time. The AOA handshake and the
-         * first bulk headers are what a stand-in device has to imitate, so page
-         * one is where the reading starts; the buttons scroll this page and only
-         * leave it at either end.
+        /* The shim's own log, one screenful at a time, with the first bytes of
+         * each direction above it. The order is deliberate: the bytes come first
+         * because they answer the question the log can only suggest - whether a
+         * message starts with an eight-byte [chan][len] header at all. The log
+         * after them is the call sequence that a stand-in device has to follow.
+         * The buttons scroll this page and only leave it at either end.
          *
          * Pages are cut by drawn rows, not by file lines: a bulk line carries its
          * header and its hex, and cutting between lines would drop a tail. The
@@ -227,20 +235,35 @@ mgu.run({
          * what would make this page slow, and the file changes every few seconds
          * while a phone is talking. */
         function loadTap(cv) {
-            let at = 0, text = null;
+            let at = 0, head = '', text = '', opened = false;
             try {
-                at = fs.statSync(TAP).mtimeMs;
-                if (tap.lines && at === tap.at) return;
-                if (tapRows.length && Date.now() - tapMs < 800) return;
+                at += fs.statSync(HEAD).mtimeMs;
+                head = fs.readFileSync(HEAD, 'utf8');
+                opened = true;
+            } catch (e) { head = ''; }
+            try {
+                at += fs.statSync(TAP).mtimeMs;
                 text = fs.readFileSync(TAP, 'utf8');
-            } catch (e) {
+                opened = true;
+            } catch (e) { text = ''; }
+            if (!opened) {
                 tap = { at: 0, lines: null };
                 tapRows = [];
                 return;
             }
+            if (tap.lines && at === tap.at) return;
+            if (tapRows.length && Date.now() - tapMs < 800) return;
             tapMs = Date.now();
-            const lines = text.split(/\r?\n/);
-            if (lines.length && !lines[lines.length - 1]) lines.pop();
+
+            const lines = [];
+            const add = (s) => {
+                const parts = s.split(/\r?\n/);
+                if (parts.length && !parts[parts.length - 1]) parts.pop();
+                parts.forEach((l) => lines.push(l));
+            };
+            if (head) { add(head); lines.push(''); }
+            if (text) add(text);
+
             const rows = [];
             lines.forEach((l) => { wrap(cv, l, 1480, TAP_SZ).forEach((p) => rows.push(p)); });
             tap = { at, lines };
