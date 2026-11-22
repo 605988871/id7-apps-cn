@@ -16,6 +16,7 @@ pid 2869 comm: carlife
 exe: /usr/bin/carlife
 cmd: /usr/bin/carlife
 libs: libusb-1.0.so.0 libGL.so.1
+link: dynamic
 fd count: 57  sockets: 21  usbfs: 1
   fd 13 socket:[47237]
   fd 21 /dev/bus/usb/001/005

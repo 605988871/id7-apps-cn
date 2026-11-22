@@ -73,6 +73,13 @@ report() {
     else ACC='usbfs ioctl'
     fi
 
+    # A static binary ignores LD_PRELOAD entirely, so this is the other half of
+    # whether a shim is even loadable: any libc or loader mapping means dynamic.
+    if [ -z "$P" ]; then DYN=--
+    elif [ -n "$(grep -oE '/(libc|ld-)[^ ]*\.so' /proc/${P%% *}/maps 2>/dev/null | head -1)" ]; then DYN=dynamic
+    else DYN=static
+    fi
+
     printf 'at: %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
     printf 'kernel: %s\n' "$(uname -r 2>/dev/null)"
     printf 'pids: %s\n' "${P:-none}"
@@ -101,6 +108,7 @@ report() {
         # on: a libusb in maps means the usb conversation can be replaced inside the
         # process; no libusb means raw usbfs ioctls, a harder but bounded job.
         printf 'libs: %s\n' "$(nn "$(grep -oE '(libusb[^ ]*|libmfx[^ ]*|libva[^ ]*|avcodec[^ ]*|libGL[^ ]*|libEGL[^ ]*)' /proc/$p/maps 2>/dev/null | sed 's|.*/||' | sort -u | head -6 | tr '\n' ' ' | sed 's/ *$//')")"
+        printf 'link: %s\n' "$DYN"
         printf 'fd count: %s  sockets: %s  usbfs: %s\n' \
             "$(ls /proc/$p/fd 2>/dev/null | wc -l | tr -d ' ')" "$SOCKN" "$USBN"
         printf '%s\n' "$FDS" | awk '$0 ~ /usb|socket|dri/ {print "  fd " $9 " " $11}' | head -2

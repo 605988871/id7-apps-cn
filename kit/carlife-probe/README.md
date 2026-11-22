@@ -36,10 +36,16 @@ screen, and a probe that changes what it measures is worthless.
 ## The verdict line
 
 `verdict: AOA | IP | bare | idle`, plus the facts behind it (`usbfs_fd`,
-`usbfs_n`, `sockets`, `usb_net_iface`, `node`). `bare` means `carlife` was not
-running when the report was taken — open CarLife in the HMI and read again.
-`idle` means it runs but holds no usbfs handle and no USB network interface: no
-phone is plugged in, so the layer cannot be judged yet.
+`usbfs_n`, `sockets`, `usb_net_iface`, `access`, `node`). `bare` means `carlife`
+was not running when the report was taken — open CarLife in the HMI and read
+again. `idle` means it runs but holds no usbfs handle and no USB network
+interface: no phone is plugged in, so the layer cannot be judged yet.
+
+`access` is the word the next step hangs on: `libusb` means the USB conversation
+goes through a library that can be replaced from outside the binary; `usbfs ioctl`
+means raw syscalls, which have to be intercepted one level lower. `link: static`
+in the process section rules a shim out entirely — a static binary never loads
+one — so it has to be read together with `access`.
 
 On this unit the answer is **AOA**, and it is not a matter of opinion: the phone
 enumerates as `18d1:2d01` (Google's accessory ID, with audio) behind the xHCI host
