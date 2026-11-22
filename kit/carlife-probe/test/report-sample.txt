@@ -1,0 +1,47 @@
+at: 2026-11-22 21:40:02
+kernel: 5.4.70-rt41-mgu
+pids: 1487
+
+## verdict
+verdict: AOA
+usbfs_fd: yes
+sockets: 0
+usb_net_iface: (none)
+
+## proc
+pid 1487 comm: carlife
+exe: /opt/hmi/bin/carlife
+cmd: /opt/hmi/bin/carlife --vehicle --aoa --ui
+fd count: 17
+  fd 6 /dev/bus/usb/001/004
+  fd 11 anon_inode:[eventfd]
+libs: libusb-1.0.so.0 libusbaccess.so libGL.so.1
+cwd: /
+
+## net
+ifaces: eth0 lo sit0
+  eth0 169.254.7.31/16
+carlife sockets:
+
+## usb
+  1-1 18d1:2d01 class=0 Pixel 8
+  1-1.1 0424:2744 class=9 USB2744
+  usb1 1d6b:0002 class=9 xhci-hcd
+
+## gadget
+udc: (none)
+usbip modules: (none)
+gadget modules: udc-core.ko libcomposite.ko
+loaded: xhci_hcd dwc3
+
+## shm
+  mgu-video-carlife
+  carlife-wireless
+
+## service
+units: carlife.service
+  ExecStart=/opt/hmi/bin/carlife --vehicle --aoa --ui
+
+## kernel
+usb 1-1: new high-speed USB device number 4 using xhci_hcd
+usb 1-1: Product: Pixel 8

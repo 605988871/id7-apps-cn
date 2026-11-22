@@ -65,6 +65,16 @@
       "mguHmi": [
         "ID7"
       ]
+    },
+    {
+      "id": "carlife-probe",
+      "path": "kit/carlife-probe",
+      "title": "CarLife 诊断",
+      "description": "只读地看原车 carlife 进程怎么取手机的：它直接操作 USB 设备（AOA），还是拿到一块 USB 网卡在里面跑 IP；结果由「CarLife 诊断」应用分屏显示（iDrive 7）",
+      "uninstallable": true,
+      "mguHmi": [
+        "ID7"
+      ]
     }
   ]
 }
