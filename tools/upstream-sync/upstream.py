@@ -35,7 +35,7 @@ APPS = ROOT / 'apps'
 LOCALE = ROOT / 'kit' / 'runtime' / 'locales' / 'zh-CN.json'
 CJK = re.compile('[\u4e00-\u9fff]')
 DEFAULTS = {
-    'url': 'https://github.com/cauliflowermossgrape/idrive7-apps',
+    'url': 'https://github.com/cauliflowermossgrape/idrive7-apps.git',
     'branch': 'main',
     'baseline': '',
 }

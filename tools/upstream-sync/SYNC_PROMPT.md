@@ -26,7 +26,7 @@
 |---|---|
 | 本地仓库 | `D:\id7-apps-cn`，分支 `master` |
 | `origin` | `https://github.com/605988871/id7-apps-cn`（用户本人的仓库） |
-| `upstream` | `https://github.com/cauliflowermossgrape/idrive7-apps`，分支 `main` |
+| `upstream` | `https://github.com/cauliflowermossgrape/idrive7-apps.git`，分支 `main`（写成不带 `.git` 也行，是同一个仓库） |
 | 同步基线 | `.upstream/config.json` 的 `baseline`（指向已同步到的上游提交） |
 | 同步工具 | `tools/upstream-sync/upstream.py`，子命令 `status` / `merge` / `done` / `gaps` |
 | 应用目录约定 | `apps/cn_<上游名>`，`app.json` 的 `id` 也是 `cn_` 开头（如 `cn_service`） |
@@ -48,7 +48,7 @@ git status -sb
 git log --oneline -3
 python3 tools/upstream-sync/upstream.py status
 # status 走本地缓存，必要时用实时接口复核上游 HEAD：
-git ls-remote https://github.com/cauliflowermossgrape/idrive7-apps refs/heads/main
+git ls-remote https://github.com/cauliflowermossgrape/idrive7-apps.git refs/heads/main
 ```
 
 判定：

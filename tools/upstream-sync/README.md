@@ -1,6 +1,6 @@
 # 把上游更新并进这个中文仓库
 
-上游是 [`cauliflowermossgrape/idrive7-apps`](https://github.com/cauliflowermossgrape/idrive7-apps)
+上游是 [`cauliflowermossgrape/idrive7-apps`](https://github.com/cauliflowermossgrape/idrive7-apps.git)
 （`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀，界面与文档换成中文。
 
 **开新会话做同步时，直接把 [`SYNC_PROMPT.md`](SYNC_PROMPT.md) 整段贴给 AI**，或只说「按
@@ -29,7 +29,7 @@
 
 ```json
 {
-  "url": "https://github.com/cauliflowermossgrape/idrive7-apps",
+  "url": "https://github.com/cauliflowermossgrape/idrive7-apps.git",
   "branch": "main",
   "baseline": "df4c5fcbdc37d6c153280ab54090ac17c031c560"
 }
