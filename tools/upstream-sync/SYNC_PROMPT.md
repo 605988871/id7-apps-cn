@@ -4,6 +4,12 @@
 
 > 按 `D:\id7-apps-cn\tools\upstream-sync\SYNC_PROMPT.md` 执行一次上游同步。
 
+**桌面副本**：`C:\Users\60598\Desktop\id7-apps-cn-上游同步.md`，方便随时打开复制。仓库里这份是源文件——**改了源文件要重新复制过去**，否则桌面那份会停在旧版本：
+
+```bash
+cp D:/id7-apps-cn/tools/upstream-sync/SYNC_PROMPT.md "C:/Users/60598/Desktop/id7-apps-cn-上游同步.md"
+```
+
 执行者动手前必须先读 `.upstream/config.json` 和 `git log -1`：本文件末尾的「当前快照」可能已经过期，**基线以配置文件为准，不要以本文为准**。
 
 ---
