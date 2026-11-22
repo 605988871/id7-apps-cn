@@ -14,10 +14,10 @@ interface) rather than a raw USB device (AOA). The screen says which one it is:
 | `USB 当网卡` | a `usb0`/`rndis` interface appeared and `carlife` holds sockets | serve the same conversation from an application: no kernel work |
 | `原车 CarLife 没运行` | `carlife` was not running when the report was taken | open it in the HMI, read again |
 
-Five screens, `Next page` / `Previous page` to move, `Read again` to re-read:
+Six screens, `Next page` / `Previous page` to move, `Read again` to re-read:
 
-1. **判据** — the verdict, the facts behind it (including `access` and `link`),
-   the process, the network
+1. **判据** — the verdict, the facts behind it (including `access`, `link` and
+   the probe's own version), the process, the network
 2. **USB** — devices on the bus, the accessory's interfaces and endpoints, and
    whether a gadget (`udc`) or `usbip` exists
 3. **其他** — shared memory, systemd unit and its `ExecStart`, the binary, the
@@ -25,7 +25,13 @@ Five screens, `Next page` / `Previous page` to move, `Read again` to re-read:
 4. **接管** — what `carlife-shim` has seen from inside `carlife` (devices,
    config, control requests, bulk packets with their AOA channel), and the
    install's own verdict: loaded, or rolled back
-5. **读法** — what each verdict means, and how to take the reading
+5. **接管记录** — the shim's own `tap.txt`, one screenful at a time: the AOA
+   handshake, the strings sent to the phone, the first bulk headers. Pages are
+   cut by drawn rows, so a long bulk line keeps its hex. On this page
+   `Next page` / `Previous page` scroll the log instead of changing screens, and
+   only leave the page at either end — the log is what a stand-in device has to
+   be written against, and ssh is not an option on this unit
+6. **读法** — what each verdict means, and how to take the reading
 
 ## Where the numbers come from
 

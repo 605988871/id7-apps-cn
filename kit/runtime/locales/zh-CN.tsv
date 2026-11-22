@@ -2702,3 +2702,6 @@ Get a picture from the car's own wired CarLife first, then come back here: the r
 Read-only on purpose: a probe that changes what it measures is worth nothing.	这个应用只读不写：会改被测物的话，测量没有意义
 Shim	接管
 Installed	装入状态
+Shim log	接管记录
+No shim log yet	还没有接管记录
+Install CarLife Shim, plug the phone in and run a wired session, then read this page.	先装 CarLife 接管，插上手机跑一次有线 CarLife，再回到这一页

@@ -11,7 +11,8 @@
  * question is answered by looking, not by guessing.
  *
  * It reads /dev/shm/carlife-probe/report.txt (rewritten every three seconds by
- * carlife-probe.service) and draws it in five screens. Nothing here writes.
+ * carlife-probe.service) and, on its own page, the shim's long call log, and
+ * draws them in six screens. Nothing here writes.
  *
  * Both halves of the install name themselves on the screen - the app version in
  * the top right corner, the probe's own version beside `access` - because the one
@@ -31,10 +32,17 @@ const APP_VER = (() => {
 
 const W = 1600, H = 520;
 const REPORT = '/dev/shm/carlife-probe/report.txt';
+/* The shim's long log. It is written by carlife-shim inside carlife at 0644, so
+ * this app can read it without being root - which is the whole reason the log is
+ * on the screen instead of behind an ssh login. The file is capped at 256 KB by
+ * the shim itself; the fields that matter for writing a stand-in device (the AOA
+ * handshake, the bulk headers, the endpoint sizes) are all in its first pages. */
+const TAP = '/dev/shm/carlife-shim/tap.txt';
 const READ_MS = 2000;
 const STALE_MS = 15000;
 const SIZE = 20, LINE = 26;
 const COL_W = 700;
+const TAP_SZ = 16, TAP_LINE = 22, TAP_ROWS = 16;
 
 const SEC_NAME = {
     verdict: 'Verdict',
@@ -65,6 +73,7 @@ const SCREENS = [
     { name: 'USB', secs: ['usb', 'aoa'] },
     { name: 'The rest', secs: ['gadget', 'service', 'binary', 'kernel'] },
     { name: 'Shim', secs: ['shim', 'boot'] },
+    { name: 'Shim log', tap: true },
     { name: 'How to read', help: true },
 ];
 
@@ -73,6 +82,10 @@ mgu.run({
         const { ui, log } = ctx;
         let page = 0;
         let doc = { ok: false, at: 0, meta: {}, sec: {} };
+        let tapPage = 0;
+        let tap = { at: 0, lines: null };
+        let tapRows = [];
+        let tapMs = 0;
 
         /* ---------- the report ---------- */
         function load() {
@@ -102,12 +115,13 @@ mgu.run({
         const field = (k, d) => doc.meta[k] || d || '--';
 
         /* ---------- drawing ---------- */
-        function wrap(cv, str, width) {
+        function wrap(cv, str, width, size) {
+            const px = size || SIZE;
             const out = [];
             let line = '';
             for (const ch of String(str)) {
                 const next = line + ch;
-                if (line && cv.textWidth(next, SIZE, { literal: true }) > width) {
+                if (line && cv.textWidth(next, px, { literal: true }) > width) {
                     // Break after a separator when one is close by, so a wrapped
                     // path reads as two paths rather than two broken words.
                     let cut = line.length;
@@ -189,6 +203,61 @@ mgu.run({
             });
         }
 
+        /* The shim's own log, one screenful at a time. The AOA handshake and the
+         * first bulk headers are what a stand-in device has to imitate, so page
+         * one is where the reading starts; the buttons scroll this page and only
+         * leave it at either end.
+         *
+         * Pages are cut by drawn rows, not by file lines: a bulk line carries its
+         * header and its hex, and cutting between lines would drop a tail. The
+         * wrap is done once per change - measuring 300 lines a frame at 2 fps is
+         * what would make this page slow, and the file changes every few seconds
+         * while a phone is talking. */
+        function loadTap(cv) {
+            let at = 0, text = null;
+            try {
+                at = fs.statSync(TAP).mtimeMs;
+                if (tap.lines && at === tap.at) return;
+                if (tapRows.length && Date.now() - tapMs < 800) return;
+                text = fs.readFileSync(TAP, 'utf8');
+            } catch (e) {
+                tap = { at: 0, lines: null };
+                tapRows = [];
+                return;
+            }
+            tapMs = Date.now();
+            const lines = text.split(/\r?\n/);
+            if (lines.length && !lines[lines.length - 1]) lines.pop();
+            const rows = [];
+            lines.forEach((l) => { wrap(cv, l, 1480, TAP_SZ).forEach((p) => rows.push(p)); });
+            tap = { at, lines };
+            tapRows = rows;
+        }
+
+        function drawTap(cv, t) {
+            loadTap(cv);
+            const rows = tapRows;
+            const pages = Math.max(1, Math.ceil(rows.length / TAP_ROWS));
+            if (tapPage > pages - 1) tapPage = pages - 1;
+            const from = tapPage * TAP_ROWS;
+            const to = Math.min(from + TAP_ROWS, rows.length);
+            const title = rows.length
+                ? translate('Shim log') + '  ' + (from + 1) + '-' + to + ' / ' + rows.length
+                : translate('Shim log');
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, title);
+
+            if (!rows.length) {
+                cv.text(translate('No shim log yet'), sh.x + 26, 140, 36, t.crit, { font: 'bold' });
+                wrap(cv, translate('Install CarLife Shim, plug the phone in and run a wired session, then read this page.'), 1440)
+                    .forEach((s, i) => cv.text(s, sh.x + 26, 198 + i * 28, 22, t.text, { literal: true }));
+                return;
+            }
+
+            for (let i = from; i < to; i++) {
+                cv.text(rows[i], sh.x + 26, sh.y + 62 + (i - from) * TAP_LINE, TAP_SZ, t.text, { literal: true });
+            }
+        }
+
         function drawMissing(cv, t) {
             const sh = G.panel(cv, t, 24, 44, 1552, 468, translate('Key facts'));
             cv.text(translate('No report yet'), sh.x + 26, 140, 40, t.crit, { font: 'bold' });
@@ -203,6 +272,7 @@ mgu.run({
             const scr = SCREENS[page];
             if (!doc.ok) drawMissing(cv, t);
             else if (scr.help) drawHelp(cv, t);
+            else if (scr.tap) drawTap(cv, t);
             else if (scr.name === 'Key facts') drawKey(cv, t);
             else drawDump(cv, t, scr.secs);
 
@@ -217,12 +287,25 @@ mgu.run({
         }
 
         /* ---------- controls ---------- */
-        const step = (d) => { page = (page + d + SCREENS.length) % SCREENS.length; return render(); };
+        const tapLast = () => Math.max(0, Math.ceil(tapRows.length / TAP_ROWS) - 1);
+        const step = (d) => {
+            if (SCREENS[page].tap) {
+                const want = tapPage + d;
+                // inside the log: the buttons page it; at either end they leave it,
+                // so the screen cannot become a dead end with the buttons alone
+                if (want >= 0 && want <= tapLast()) { tapPage = want; return render(); }
+            }
+            page = (page + d + SCREENS.length) % SCREENS.length;
+            if (SCREENS[page].tap) tapPage = 0;
+            return render();
+        };
         ui.text('BTN_ACTION', translate('Read again'));
         ui.onClick('BTN_ACTION', () => { load(); return render(); });
         ui.onClick('BTN_PAGE', () => step(1));
         ui.onClick('BTN_PREV', () => step(-1));
-        ctx.onTab((i) => { if (i !== page) { page = i; render(); } });
+        ctx.onTab((i) => {
+            if (i !== page) { page = i; if (SCREENS[page].tap) tapPage = 0; render(); }
+        });
 
         load();
         setInterval(load, READ_MS);
