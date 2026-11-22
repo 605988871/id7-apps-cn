@@ -183,6 +183,15 @@ mgu.run({
         function drawDump(cv, t, secs) {
             const sh = G.panel(cv, t, 24, 44, 1552, 468, translate(SCREENS[page].name));
             flow(cv, t, secs, sh.y + 84, 14);
+            /* `state: absent` is the probe saying it read no shim inside carlife:
+             * either the tool is not installed, or nothing has restarted carlife
+             * since. Those look identical on this page, and "installed but not
+             * running" is the one that wastes a trip to the car. */
+            if (secs.indexOf('shim') >= 0 &&
+                /^state:\s*absent/m.test((doc.sec.shim || []).join('\n'))) {
+                cv.text(translate('Not inside carlife: install CarLife Shim, then restart carlife'),
+                    sh.x + 26, sh.y + 448, 18, t.dim, { literal: true });
+            }
         }
 
         function drawHelp(cv, t) {
