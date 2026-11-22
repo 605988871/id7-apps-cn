@@ -116,12 +116,13 @@ mgu.run({
 
             const err = field('error', 'none');
             const host = field('host');
-            row(cv, t, sh.x + 26, 214, 'Phone', host === '--' ? '--' : `${host}  ·  ${translate('port')} ${field('base')}`);
-            row(cv, t, sh.x + 26, 258, 'Command', localize(field('cmd')));
-            row(cv, t, sh.x + 26, 302, 'Video', localize(field('video')));
-            row(cv, t, sh.x + 26, 346, 'Stream', localize(field('stream')));
-            row(cv, t, sh.x + 26, 390, 'Audio', localize(field('audio')));
-            row(cv, t, sh.x + 26, 434, 'Touch', localize(field('touch')));
+            row(cv, t, sh.x + 26, 200, 'Phone', host === '--' ? '--' : `${host}  ·  ${translate('port')} ${field('base')}`);
+            row(cv, t, sh.x + 26, 240, 'Scan', field('scan'));
+            row(cv, t, sh.x + 26, 280, 'Command', localize(field('cmd')));
+            row(cv, t, sh.x + 26, 320, 'Video', localize(field('video')));
+            row(cv, t, sh.x + 26, 360, 'Stream', localize(field('stream')));
+            row(cv, t, sh.x + 26, 400, 'Audio', localize(field('audio')));
+            row(cv, t, sh.x + 26, 440, 'Touch', localize(field('touch')));
             cv.text(translate('Error') + '  ' + err, sh.x + 26, 484, 24, err === 'none' ? t.dim : t.crit, { font: 'bold' });
 
             if (pending) cv.text(translate('Asking for a fresh connection'), 1576 - 24, 140, 24, t.accent2, { align: 'right', font: 'bold' });

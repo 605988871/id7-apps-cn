@@ -542,11 +542,13 @@ static sock_t tcp_start_v4(uint32_t ip, int port)
     return s;
 }
 
-/* Fills `host` with the first neighbour that answers on the cmd port. */
-static int discover(int port, char *host, size_t hostlen)
+/* Fills `host` with the first neighbour that answers on the cmd port, and
+ * `swept` with the /24s it looked at, space separated. */
+static int discover(int port, char *host, size_t hostlen, char *swept, size_t sweptlen)
 {
     uint32_t self[8];
     int nself = local_ipv4(self, 8), i, j;
+    if (swept && sweptlen) swept[0] = '\0';
     /* Every adapter, not the first three: local_ipv4 puts default-gateway ones
      * first, and a phone is always reachable through the default route. The
      * APIPA subnets are skipped, and so is any /24 already swept, so a laptop
@@ -559,6 +561,12 @@ static int discover(int port, char *host, size_t hostlen)
         for (j = 0; j < i; j++)
             if ((self[j] & 0xffffff00u) == net) seen = 1;
         if (seen) continue;
+        if (swept && sweptlen) {
+            size_t used = strlen(swept);
+            if (used + 1 < sweptlen)
+                snprintf(swept + used, sweptlen - used, "%s%u.%u.%u.0/24", used ? " " : "",
+                         (net >> 24) & 0xffu, (net >> 16) & 0xffu, (net >> 8) & 0xffu);
+        }
         for (batch = 1; batch <= 254; batch += DISC_BATCH) {
             sock_t fds[DISC_BATCH];
             uint32_t ips[DISC_BATCH];
@@ -712,6 +720,10 @@ typedef struct {
     char report_path[260];
     char state[40];
     char error[200];
+    /* the /24s the last look for the phone swept: when a driver reports "no
+     * phone", this is the one line that says whether it looked in the right
+     * place at all */
+    char scan[200];
 
     int req_w, req_h, req_fps;
     int got_w, got_h, got_fps;
@@ -966,6 +978,7 @@ static void write_report(link_t *l)
     fprintf(f, "state: %s\n", l->state);
     fprintf(f, "host: %s\n", l->host);
     fprintf(f, "base: %d\n", l->base_port);
+    fprintf(f, "scan: %s\n", l->scan[0] ? l->scan : "none");
     fprintf(f, "up: %.0f s\n", secs);
     fprintf(f, "cmd: %s rx=%lu tx=%lu match=%s\n", l->ch[CH_CMD].open ? "open" : "closed",
             l->cmd_rx, l->cmd_tx, l->matched ? "yes" : "no");
@@ -1411,7 +1424,7 @@ int main(int argc, char **argv)
     if (L.find_mode) {
         char found[64];
         snprintf(L.state, sizeof L.state, "looking for the phone");
-        if (discover(L.base_port, found, sizeof found) == 0) {
+        if (discover(L.base_port, found, sizeof found, L.scan, sizeof L.scan) == 0) {
             snprintf(L.host, sizeof L.host, "%s", found);
             logline(&L, "found the phone at %s", L.host);
         } else {
@@ -1451,7 +1464,7 @@ int main(int argc, char **argv)
             if (L.find_mode) {
                 char found[64];
                 snprintf(L.state, sizeof L.state, "looking for the phone");
-                if (discover(L.base_port, found, sizeof found) == 0) {
+                if (discover(L.base_port, found, sizeof found, L.scan, sizeof L.scan) == 0) {
                     if (strcmp(found, L.host)) logline(&L, "found the phone at %s", found);
                     snprintf(L.host, sizeof L.host, "%s", found);
                 } else {

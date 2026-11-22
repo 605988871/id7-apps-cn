@@ -99,9 +99,15 @@ guessed at.
 ## The report
 
 `--report /dev/shm/carlife-wireless/report.txt`, rewritten once a second, one
-`key: value` per line - `state`, `host`, `cmd`, `video`, `stream`, `audio`,
-`touch`, `error`. The app draws it, so it is also the only debugging channel the
-car has: everything that decides a picture is a line on that screen.
+`key: value` per line - `state`, `host`, `scan`, `cmd`, `video`, `stream`,
+`audio`, `touch`, `error`. The app draws it, so it is also the only debugging
+channel the car has: everything that decides a picture is a line on that screen.
+
+`scan` is the /24s the last look for the phone covered, space separated. When a
+driver reports "no phone", it answers the one question the rest of the report
+cannot: did the car look on the network the phone is actually on? A car whose
+hotspot handed out 192.168.43.x and a scan line saying `10.96.1.0/24` is a
+network problem, not a CarLife one.
 
 ## Testing it without a car
 
