@@ -3,6 +3,10 @@
 上游是 [`cauliflowermossgrape/idrive7-apps`](https://github.com/cauliflowermossgrape/idrive7-apps)
 （`main` 分支）。本仓库是它的中文分支：应用加了 `cn_` 前缀，界面与文档换成中文。
 
+**开新会话做同步时，直接把 [`SYNC_PROMPT.md`](SYNC_PROMPT.md) 整段贴给 AI**，或只说「按
+`tools/upstream-sync/SYNC_PROMPT.md` 执行」。那份文件是一份自包含的提示词：同步流程、冲突取舍、
+增量汉化口径、验证命令和报告格式都在里面，不需要再口头交代一遍。
+
 ## 和普通 fork 不一样的地方
 
 **一、没有共同祖先。** 本仓库的第一个提交是整包导入（732 个文件，没有上游历史）。
@@ -27,12 +31,12 @@
 {
   "url": "https://github.com/cauliflowermossgrape/idrive7-apps",
   "branch": "main",
-  "baseline": "e35c3c114147acdb1fdc61fd6c2218d99b9f776e"
+  "baseline": "df4c5fcbdc37d6c153280ab54090ac17c031c560"
 }
 ```
 
-基线现在是上游的 `e35c3c1`（2026-11-20 上午），也就是提交
-`a011790 同步上游 6c28dee..e35c3c1` 同步到的那一个。基线的含义只有一条：
+基线现在是上游的 `df4c5fcb`（2026-11-21），也就是提交
+`e2e393a 同步上游 df4c5fc` 同步到的那一个。基线的含义只有一条：
 **从这个上游提交到现在的上游改动，都还没进本仓库。** 基线选错的后果是重复合并
 已经合过的东西，所以每次合并成功后脚本会自动把它推到新的上游提交。
 
