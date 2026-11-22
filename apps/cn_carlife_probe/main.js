@@ -30,7 +30,9 @@ const SEC_NAME = {
     proc: 'Process',
     net: 'Network',
     usb: 'USB devices',
+    aoa: 'Direct USB (AOA)',
     gadget: 'Virtual USB',
+    binary: 'Binary',
     shm: 'Memory',
     service: 'Units',
     kernel: 'Kernel',
@@ -41,13 +43,14 @@ const VERDICT = {
     AOA: ['Direct USB (AOA)', 'accent2'],
     IP: ['Network over USB', 'accent'],
     bare: ['carlife is not running', 'crit'],
+    idle: ['No phone on USB', 'dim'],
     unknown: ['Not enough to tell', 'dim'],
 };
 
 const SCREENS = [
     { name: 'Key facts' },
-    { name: 'USB', secs: ['usb', 'gadget'] },
-    { name: 'The rest', secs: ['gadget', 'shm', 'service', 'kernel'] },
+    { name: 'USB', secs: ['usb', 'aoa'] },
+    { name: 'The rest', secs: ['gadget', 'service', 'binary', 'kernel'] },
     { name: 'How to read', help: true },
 ];
 
@@ -90,8 +93,16 @@ mgu.run({
             let line = '';
             for (const ch of String(str)) {
                 const next = line + ch;
-                if (line && cv.textWidth(next, SIZE, { literal: true }) > width) { out.push(line); line = ch; }
-                else line = next;
+                if (line && cv.textWidth(next, SIZE, { literal: true }) > width) {
+                    // Break after a separator when one is close by, so a wrapped
+                    // path reads as two paths rather than two broken words.
+                    let cut = line.length;
+                    for (let k = line.length - 1; k > Math.max(0, line.length - 14); k--) {
+                        if ('/_- .'.indexOf(line[k]) >= 0) { cut = k + 1; break; }
+                    }
+                    out.push(line.slice(0, cut));
+                    line = line.slice(cut) + ch;
+                } else line = next;
             }
             out.push(line);
             return out;
@@ -127,7 +138,8 @@ mgu.run({
 
         function evidence() {
             return 'pid ' + field('pids') + '    usbfs: ' + field('usbfs_fd') +
-                '    sockets: ' + field('sockets') + '    usb-net: ' + field('usb_net_iface');
+                ' (' + field('usbfs_n') + ')    sockets: ' + field('sockets') +
+                '    usb-net: ' + field('usb_net_iface') + '    access: ' + field('access');
         }
 
         function drawKey(cv, t) {
@@ -147,7 +159,7 @@ mgu.run({
         function drawHelp(cv, t) {
             const sh = G.panel(cv, t, 24, 44, 1552, 468, translate('How to read'));
             const lines = [
-                ['AOA', 'carlife reads a USB device directly: reaching it from software means building a virtual USB device first.'],
+                ['AOA', 'Already confirmed: carlife reads a USB device directly and nothing goes over the network. The only way in is to replace that level inside the process; Binary says whether that means libusb.'],
                 ['Network over USB', 'A USB network interface appeared and carlife runs sockets on top: an application can answer those instead of a device.'],
                 ['How to take it', 'Get a picture from the car\'s own wired CarLife first, then come back here: the report is rewritten every three seconds.'],
                 ['Nothing here writes', 'Read-only on purpose: a probe that changes what it measures is worth nothing.'],

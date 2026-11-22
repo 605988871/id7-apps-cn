@@ -23,9 +23,11 @@ software route.
 
 ## What it reads
 
-`/proc/<pid>/{cmdline,exe,cwd,maps,fd}`, `/sys/class/net`, `ip addr`, `ss -tnp`,
-`/sys/bus/usb/devices`, `/sys/class/udc`, `/lib/modules/$(uname -r)/...`,
-`lsmod`, `/dev/shm`, `systemctl cat`, `dmesg | grep usb`.
+`/proc/<pid>/{cmdline,exe,maps,fd}`, `/proc/net/{unix,tcp,tcp6}`, `/sys/class/net`,
+`ip addr`, `/sys/bus/usb/devices` (including the descriptors and endpoints of the
+device `carlife` opened), the strings in the `carlife` binary, `/sys/class/udc`,
+`/sys/kernel/debug/usb/usbmon`, `/lib/modules/$(uname -r)/...`, `lsmod`,
+`/dev/shm`, `systemctl cat`, `dmesg | grep usb`.
 
 Nothing is written outside `/dev/shm/carlife-probe`, and nothing is loaded,
 started or stopped: the report is taken while a wired CarLife session is on the
@@ -33,9 +35,31 @@ screen, and a probe that changes what it measures is worthless.
 
 ## The verdict line
 
-`verdict: AOA | IP | bare | unknown`, plus the three facts behind it
-(`usbfs_fd`, `sockets`, `usb_net_iface`). `bare` means `carlife` was not running
-when the report was taken — open CarLife in the HMI and read again.
+`verdict: AOA | IP | bare | idle`, plus the facts behind it (`usbfs_fd`,
+`usbfs_n`, `sockets`, `usb_net_iface`, `node`). `bare` means `carlife` was not
+running when the report was taken — open CarLife in the HMI and read again.
+`idle` means it runs but holds no usbfs handle and no USB network interface: no
+phone is plugged in, so the layer cannot be judged yet.
+
+On this unit the answer is **AOA**, and it is not a matter of opinion: the phone
+enumerates as `18d1:2d01` (Google's accessory ID, with audio) behind the xHCI host
+controller, `carlife` holds `/dev/bus/usb/001/005`, and no `usb0`/`rndis`
+interface ever appears. The cable carries CarLife frames wrapped in USB bulk, not
+IP.
+
+## The two sections that decide what comes next
+
+`## aoa` walks sysfs for the device `carlife` actually opened and prints its
+interfaces and endpoints — the shape a replacement has to imitate: one
+vendor-specific interface (`class=ff`) with a bulk pair, plus an isochronous
+audio interface. `## gadget` answers whether a virtual device is even possible
+here: a UDC, `usbip`/`vhci` (module or built in), `usbmon` for capturing what the
+real session looks like, and whether usbfs is mounted.
+
+`## binary` counts the strings the binary was built with (`7240`, `8240`,
+`accessory`, `aoa`, `wifi`). Ports it never mentions cannot be a transport it
+knows; ports it does mention mean the CarLife conversation is compiled in twice,
+once per transport, which is what makes a shim feasible at all.
 
 ## Reading it from a terminal
 
