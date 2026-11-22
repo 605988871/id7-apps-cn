@@ -106,6 +106,11 @@ if (glyph === 'gauge') {
     c.convex([[96, 56], [74, 64], [78, 78], [94, 74]], A);
     c.convex([[70, 82], [64, 94], [76, 94]], '#000000');     // nose
     for (let i = 0; i < 4; i++) c.fillRect(52 + i * 11, 104, 3, 16, '#000000');   // teeth
+} else if (glyph === 'link') {
+    // a screen with three waves over it: the picture arrives without a cable
+    c.strokeRoundRect(20, 72, 100, 50, 12, 6, W);
+    [14, 26, 38].forEach((r) => c.arc(70, 64, r, r + 6, -140, -40, A, { round: true }));
+    c.circle(70, 64, 5, A);
 } else if (glyph === 'ambient') {
     // a door panel's light line in three colours, and the glow under it
     c.strokeRoundRect(14, 30, 112, 80, 16, 6, W);

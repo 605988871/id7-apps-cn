@@ -1,0 +1,20 @@
+[Unit]
+Description=CarLife wireless link (the head unit side, over Wi-Fi)
+Documentation=file:/var/opt/carlife-link/current/README.md
+After=network.target
+# one link, always on: it looks for the phone itself, so it can start before
+# there is anything to connect to
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# --find: the phone's address is whatever the hotspot's DHCP handed out
+ExecStart=/var/opt/carlife-link/current/carlife-link run --find --report /dev/shm/carlife-wireless/report.txt --ctl 7399
+Restart=always
+RestartSec=5
+# the app runs as tm_oap_app and reads the report; nothing here needs the app's
+# uid, and nothing in the app needs root
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

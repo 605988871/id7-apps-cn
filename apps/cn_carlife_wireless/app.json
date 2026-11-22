@@ -1,0 +1,78 @@
+{
+  "id": "cn_carlife_wireless",
+  "title": "Wireless CarLife",
+  "description": "手机不插线：车机作为主机连上手机的 CarLife 无线服务，接管握手、画面与反控。当前版本打通链路并把每一步的状态写在屏幕上",
+  "texts": {
+    "zh-CN": {
+      "title": "无线 CarLife"
+    }
+  },
+  "version": "0.1.0",
+  "vendor": "custom",
+  "loggingId": "OAA1",
+  "iconGlyph": "link",
+  "mguHmi": [
+    "ID7",
+    "ID8"
+  ],
+  "requires": {
+    "idrive7-renderd": "2.1.18",
+    "mgu-inputgate": "1.1.0",
+    "carlife-link": "0.1.0"
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Wireless CarLife",
+      "buttons": [
+        [
+          "BTN_ACTION",
+          "Reconnect"
+        ],
+        [
+          "BTN_PAGE",
+          "Next page"
+        ],
+        [
+          "BTN_PREV",
+          "Previous page"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "layout",
+      "label": "Screen layout",
+      "type": "choice",
+      "default": "full",
+      "options": [
+        [
+          "full",
+          "Full screen"
+        ],
+        [
+          "standard",
+          "Standard"
+        ]
+      ]
+    },
+    {
+      "key": "renderer",
+      "label": "Renderer",
+      "type": "choice",
+      "default": "auto",
+      "options": [
+        [
+          "auto",
+          "GPU 60 fps (default)"
+        ],
+        [
+          "software",
+          "Software"
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "carlife-link",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "CarLife 无线链路",
+  "description": "车机自己做无线 CarLife 的主机：在局域网里找到手机，连上它的六个 CarLife 通道，完成握手，收下画面与声音的数据并把触摸送回去。状态写在 /dev/shm/carlife-wireless/report.txt，「无线 CarLife」应用显示它（iDrive 7）",
+  "mguHmi": [
+    "ID7"
+  ],
+  "uninstallable": true,
+  "files": [
+    {
+      "path": "carlife-link",
+      "mode": "0755"
+    },
+    {
+      "path": "install.sh",
+      "mode": "0755"
+    },
+    {
+      "path": "remove.sh",
+      "mode": "0755"
+    }
+  ],
+  "units": [
+    {
+      "name": "carlife-link.service"
+    }
+  ],
+  "enable": [
+    {
+      "unit": "carlife-link.service",
+      "target": "multi-user.target"
+    }
+  ],
+  "postInstall": [
+    "install.sh"
+  ]
+}
