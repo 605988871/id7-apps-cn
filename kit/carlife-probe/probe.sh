@@ -22,6 +22,7 @@ set -u
 DIR=/dev/shm/carlife-probe
 OUT=$DIR/report.txt
 EVERY=${1:-0}
+VER=0.2.0                                   # stamped into the report: the screen shows it
 
 mkdir -p "$DIR" 2>/dev/null
 chmod 0777 "$DIR" 2>/dev/null               # the app reads it as tm_oap_app
@@ -81,6 +82,7 @@ report() {
     fi
 
     printf 'at: %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
+    printf 'probe: %s\n' "$VER"
     printf 'kernel: %s\n' "$(uname -r 2>/dev/null)"
     printf 'pids: %s\n' "${P:-none}"
 

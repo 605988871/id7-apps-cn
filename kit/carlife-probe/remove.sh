@@ -1,5 +1,5 @@
 #!/bin/sh
-# carlife-probe 0.1.0 - undoing what install.sh did, by hand.
+# carlife-probe 0.2.0 - undoing what install.sh did, by hand.
 #
 # The Store has no uninstall hook: run this before uninstalling the tool if the
 # unit and the report directory are to go with it. Left behind, the unit is

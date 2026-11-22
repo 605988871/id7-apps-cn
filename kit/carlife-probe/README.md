@@ -47,6 +47,10 @@ means raw syscalls, which have to be intercepted one level lower. `link: static`
 in the process section rules a shim out entirely — a static binary never loads
 one — so it has to be read together with `access`.
 
+`probe:` is this script's own version, stamped into every report so the app can
+show which half of the install is on the unit. A screen reading `probe: --` is
+displaying a report from an older probe: update the tool, not the app.
+
 On this unit the answer is **AOA**, and it is not a matter of opinion: the phone
 enumerates as `18d1:2d01` (Google's accessory ID, with audio) behind the xHCI host
 controller, `carlife` holds `/dev/bus/usb/001/005`, and no `usb0`/`rndis`

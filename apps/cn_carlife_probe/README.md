@@ -34,6 +34,11 @@ Five screens, `Next page` / `Previous page` to move, `Read again` to re-read:
 writes, nothing started or stopped — a probe that changes what it measures is
 worthless.
 
+Both versions are on the screen, because the usual confusion is which build the
+unit is running: the top right says `v0.2.0` (this app), and `probe:` in the
+facts line says which probe wrote the report. `probe: --` means the tool is older
+than the app, so the `接管` page will be empty until the tool is updated.
+
 Take the reading with a **wired CarLife session on screen**: the process facts
 only exist while the native CarLife is running and talking to a phone.
 

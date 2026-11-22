@@ -1,5 +1,5 @@
 #!/bin/sh
-# carlife-probe (root) 0.1.0 - runs after every install from the Store.
+# carlife-probe (root) 0.2.0 - runs after every install from the Store.
 #
 # Same three steps as carlife-link's installer, for the same reason: a unit that
 # cannot start is present, enabled and still silent, so prove it first, then

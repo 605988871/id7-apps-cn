@@ -11,12 +11,23 @@
  * question is answered by looking, not by guessing.
  *
  * It reads /dev/shm/carlife-probe/report.txt (rewritten every three seconds by
- * carlife-probe.service) and draws it in four screens. Nothing here writes.
+ * carlife-probe.service) and draws it in five screens. Nothing here writes.
+ *
+ * Both halves of the install name themselves on the screen - the app version in
+ * the top right corner, the probe's own version beside `access` - because the one
+ * question that has cost time here is "which build is on the car right now".
  */
 const fs = require('fs');
+const path = require('path');
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const { t: translate } = require('./kit/i18n');
+
+/* The build's own manifest, next to kit/: absent in a dev tree, so never fatal. */
+const APP_VER = (() => {
+    try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'kit', 'app-spec.json'), 'utf8')).version || ''; }
+    catch (e) { return ''; }
+})();
 
 const W = 1600, H = 520;
 const REPORT = '/dev/shm/carlife-probe/report.txt';
@@ -142,7 +153,8 @@ mgu.run({
         function evidence() {
             return 'pid ' + field('pids') + '    usbfs: ' + field('usbfs_fd') +
                 ' (' + field('usbfs_n') + ')    sockets: ' + field('sockets') +
-                '    usb-net: ' + field('usb_net_iface') + '    access: ' + field('access');
+                '    usb-net: ' + field('usb_net_iface') + '    access: ' + field('access') +
+                '    probe: ' + field('probe');
         }
 
         function drawKey(cv, t) {
@@ -197,8 +209,8 @@ mgu.run({
             if (doc.ok) {
                 const age = Math.round((Date.now() - doc.at) / 1000);
                 const stale = Date.now() - doc.at > STALE_MS;
-                cv.text(translate('updated') + ' ' + age + ' s', 1576 - 24, 126, SIZE,
-                    stale ? t.crit : t.dim, { align: 'right' });
+                const stamp = (APP_VER ? 'v' + APP_VER + '   ' : '') + translate('updated') + ' ' + age + ' s';
+                cv.text(stamp, 1576 - 24, 126, SIZE, stale ? t.crit : t.dim, { align: 'right' });
             }
             G.frame(cv, t, SCREENS.map((s) => translate(s.name)), page);
             await ui.image('MAIN_GFX', cv);
