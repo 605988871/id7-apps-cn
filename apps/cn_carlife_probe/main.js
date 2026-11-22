@@ -57,6 +57,7 @@ const SEC_NAME = {
     kernel: 'Kernel',
     shim: 'Shim',
     boot: 'Installed',
+    install: 'Install check',
 };
 
 /* Four words, each meaning a different amount of work for us. */
@@ -72,7 +73,7 @@ const SCREENS = [
     { name: 'Key facts' },
     { name: 'USB', secs: ['usb', 'aoa'] },
     { name: 'The rest', secs: ['gadget', 'service', 'binary', 'kernel'] },
-    { name: 'Shim', secs: ['shim', 'boot'] },
+    { name: 'Shim', secs: ['shim', 'install'] },
     { name: 'Shim log', tap: true },
     { name: 'How to read', help: true },
 ];
@@ -183,14 +184,17 @@ mgu.run({
         function drawDump(cv, t, secs) {
             const sh = G.panel(cv, t, 24, 44, 1552, 468, translate(SCREENS[page].name));
             flow(cv, t, secs, sh.y + 84, 14);
-            /* `state: absent` is the probe saying it read no shim inside carlife:
-             * either the tool is not installed, or nothing has restarted carlife
-             * since. Those look identical on this page, and "installed but not
-             * running" is the one that wastes a trip to the car. */
-            if (secs.indexOf('shim') >= 0 &&
-                /^state:\s*absent/m.test((doc.sec.shim || []).join('\n'))) {
-                cv.text(translate('Not inside carlife: install CarLife Shim, then restart carlife'),
-                    sh.x + 26, sh.y + 448, 18, t.dim, { literal: true });
+            /* `state: absent` is the probe saying it read no shim inside carlife.
+             * The install section now says *why*: a drop-in that is on disk but
+             * not in the process is one restart away, while no drop-in at all is
+             * a failed install. Those two used to look identical here, and
+             * "installed but not restarted" is the one that wastes a trip. */
+            if (secs.indexOf('install') >= 0 && field('loaded') === 'no') {
+                const ready = field('drop-in') !== 'absent';
+                cv.text(translate(ready
+                    ? 'The drop-in is in place: restart carlife once'
+                    : 'Not inside carlife: install CarLife Shim, then restart carlife'),
+                sh.x + 26, sh.y + 448, 18, t.dim, { literal: true });
             }
         }
 

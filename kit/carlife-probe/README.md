@@ -71,16 +71,31 @@ real session looks like, and whether usbfs is mounted.
 knows; ports it does mention mean the CarLife conversation is compiled in twice,
 once per transport, which is what makes a shim feasible at all.
 
-## `## shim` and `## boot`
+## `## shim`, `## boot` and `## install`
 
-The report carries two sections it does not compute: `## shim` is
-`/dev/shm/carlife-shim/state.txt`, written by `carlife-shim` inside the `carlife`
-process, and `## boot` is that tool's install verdict. `state: absent` means
-nothing is preloaded into `carlife` — not the same as "preloaded and silent",
-which would leave a `state: tap` line with numbers that never move.
+`## shim` is `/dev/shm/carlife-shim/state.txt`, written by `carlife-shim` inside
+the `carlife` process; `## boot` is that tool's own account of the last install
+or removal, read from `/var/opt/carlife-shim/current/boot.txt` first and only then
+from `/dev/shm` (a reboot empties `/dev/shm`, and a reboot is exactly when the
+record is wanted). `state: absent` means nothing is preloaded into `carlife` — not
+the same as "preloaded and silent", which would leave `state: tap` with numbers
+that never move.
 
-This probe still writes nothing but its own report; those two sections are
-copied, not produced.
+`## install` is the part this probe *does* compute, because the two sections above
+are only as honest as the tool that writes them:
+
+| line | read from | what it settles |
+|---|---|---|
+| `so:` | `wc -c` + ELF magic of `current/carlife-shim.so` | the library is on disk and is what it claims to be |
+| `drop-in:` | `/etc/systemd/system/*.d/carlife-shim.conf` | the LD_PRELOAD line exists at all |
+| `loaded:` | `grep carlife-shim /proc/<pid>/maps` | the library is **inside the running process** — the only proof that matters |
+| `rootfs:` | `/proc/mounts` for `/` | a read-only root, which is why a drop-in write can fail without a word |
+| `unit:` | the process's cgroup | the unit a drop-in would have to attach to; empty means carlife was started by something other than systemd |
+| `record:` / `recorded:` | the install record | which of the tool's own outcomes was last written |
+
+The combination is what names the repair: `drop-in:` absent + `record:` present is
+a failed install, `drop-in:` present + `loaded: no` is a carlife that has not been
+restarted since, and `rootfs: ro` with no drop-in is a write that was refused.
 
 ## Reading it from a terminal
 

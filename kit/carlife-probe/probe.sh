@@ -22,7 +22,7 @@ set -u
 DIR=/dev/shm/carlife-probe
 OUT=$DIR/report.txt
 EVERY=${1:-0}
-VER=0.2.0                                   # stamped into the report: the screen shows it
+VER=0.3.0                                   # stamped into the report: the screen shows it
 
 mkdir -p "$DIR" 2>/dev/null
 chmod 0777 "$DIR" 2>/dev/null               # the app reads it as tm_oap_app
@@ -99,19 +99,62 @@ report() {
     # not by this script. `state: absent` is not the same as an empty report:
     # absent means nobody is preloaded into carlife, so there is nothing to ask.
     sec shim
-    if [ -r /dev/shm/carlife-shim/state.txt ]; then
-        sed -n '1,12p' /dev/shm/carlife-shim/state.txt
+    ST=/dev/shm/carlife-shim/state.txt
+    SPID=$(sed -n 's/^pid: \([0-9]*\).*/\1/p' "$ST" 2>/dev/null | head -1)
+    # The file names the process that wrote it. A state.txt from a process that
+    # has exited - the installer's own load test leaves exactly that - is not a
+    # shim inside carlife, and printing it would answer a different question.
+    if [ -n "$SPID" ] && [ -r "$ST" ] && [ -d "/proc/$SPID" ] && \
+       [ "$(cat "/proc/$SPID/comm" 2>/dev/null)" = carlife ]; then
+        sed -n '1,12p' "$ST"
     else
         printf 'state: absent\n'
     fi
 
-    # The last install or rollback of that library, in its own words.
+    # The last install or rollback of that library, in its own words. /var/opt
+    # first: /dev/shm is empty after a boot, and a boot is when the record is
+    # wanted - the drop-in stays on disk, the shm copy does not.
+    REC=''
+    [ -r /var/opt/carlife-shim/current/boot.txt ] && REC=/var/opt/carlife-shim/current/boot.txt
+    [ -z "$REC" ] && [ -r /dev/shm/carlife-shim/boot.txt ] && REC=/dev/shm/carlife-shim/boot.txt
     sec boot
-    if [ -r /dev/shm/carlife-shim/boot.txt ]; then
-        sed -n '1,6p' /dev/shm/carlife-shim/boot.txt | sed 's/^=== //; s/ ===$//'
+    if [ -n "$REC" ]; then
+        sed -n '1,6p' "$REC" | sed 's/^=== //; s/ ===$//'
     else
         printf '(none)\n'
     fi
+
+    # What the install left on disk, checked here rather than taken on trust:
+    # the library inside a process is the only proof that LD_PRELOAD took, and
+    # a record that says "watching" while maps says no is a lie worth catching.
+    SOF=/var/opt/carlife-shim/current/carlife-shim.so
+    if [ -f "$SOF" ]; then
+        SOINFO="$(wc -c < "$SOF" 2>/dev/null | tr -d ' ') B"
+        case "$(head -c 5 "$SOF" 2>/dev/null | od -An -tx1 | tr -s ' ' | sed 's/^ //')" in
+            '7f 45 4c 46 02') SOINFO="$SOINFO  ELF64" ;;
+            '7f 45 4c 46 01') SOINFO="$SOINFO  ELF32" ;;
+            *) SOINFO="$SOINFO  not ELF" ;;
+        esac
+    else
+        SOINFO='(none)'
+    fi
+    DROP=$(ls /etc/systemd/system/*.d/carlife-shim.conf 2>/dev/null | head -1)
+    LDMAPS=no
+    [ -n "$P" ] && grep -q 'carlife-shim' /proc/${P%% *}/maps 2>/dev/null && LDMAPS=yes
+    UNITN=''
+    [ -n "$P" ] && UNITN=$(tr '/' '\n' < /proc/${P%% *}/cgroup 2>/dev/null | grep -E '\.service$' | head -1)
+
+    sec install
+    printf 'so: %s\n' "$SOINFO"
+    printf 'drop-in: %s\n' "${DROP:-absent}"
+    printf 'loaded: %s\n' "$LDMAPS"
+    printf 'rootfs: %s\n' "$(awk '$2=="/"{print $4}' /proc/mounts 2>/dev/null | head -1 | cut -d, -f1)"
+    printf 'unit: %s\n' "${UNITN:-(none - carlife is not under systemd)}"
+    printf 'unit.txt: %s\n' "$([ -r /var/opt/carlife-shim/current/unit.txt ] && echo present || echo absent)"
+    printf 'record: %s\n' "${REC:-absent}"
+    [ -n "$REC" ] && printf 'recorded: %s\n' "$(sed -n 's/^state: //p' "$REC" | head -1)"
+    # the one line of that record that explains a failure, when there is one
+    [ -n "$REC" ] && sed -n '/^\(loadtest\|hint\|cgroup\|after restart\): /p' "$REC" | head -2
 
     sec proc
     if [ -z "$P" ]; then

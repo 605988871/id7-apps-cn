@@ -22,9 +22,15 @@ Six screens, `Next page` / `Previous page` to move, `Read again` to re-read:
    whether a gadget (`udc`) or `usbip` exists
 3. **其他** — shared memory, systemd unit and its `ExecStart`, the binary, the
    kernel USB log
-4. **接管** — what `carlife-shim` has seen from inside `carlife` (devices,
-   config, control requests, bulk packets with their AOA channel), and the
-   install's own verdict: loaded, or rolled back
+4. **接管** — two columns that answer different halves of one question. Left:
+   what `carlife-shim` has seen from inside `carlife` (devices, config, control
+   requests, bulk packets with their AOA channel). Right: **安装核对** — what the
+   install actually left on disk, checked by the probe itself: the library on
+   disk and its ELF type, the drop-in file, whether the library is in the running
+   process's `maps` (`loaded`), the root file system's mode, the unit that owns
+   carlife, and the install record. `loaded: no` with a drop-in present is one
+   restart away; with no drop-in it is a failed install, and the line at the
+   bottom of the page says which
 5. **接管记录** — the shim's own `tap.txt`, one screenful at a time: the AOA
    handshake, the strings sent to the phone, the first bulk headers. Pages are
    cut by drawn rows, so a long bulk line keeps its hex. On this page
@@ -41,9 +47,10 @@ writes, nothing started or stopped — a probe that changes what it measures is
 worthless.
 
 Both versions are on the screen, because the usual confusion is which build the
-unit is running: the top right says `v0.2.0` (this app), and `probe:` in the
-facts line says which probe wrote the report. `probe: --` means the tool is older
-than the app, so the `接管` page will be empty until the tool is updated.
+unit is running: the top right says `v<version>` (this app, from `app.json`), and
+`probe:` in the facts line says which probe wrote the report. `probe: --` means
+the tool is older than the app, so the `接管` page will be empty until the tool is
+updated.
 
 Take the reading with a **wired CarLife session on screen**: the process facts
 only exist while the native CarLife is running and talking to a phone.

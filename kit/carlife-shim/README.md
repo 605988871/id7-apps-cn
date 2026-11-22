@@ -54,8 +54,9 @@ Every one of those is a line in `tap.txt` after one ordinary wired session.
 
 ## What it writes
 
-Both under `/dev/shm/carlife-shim`, both world-readable — the app that shows
-them is not root.
+Two files under `/dev/shm/carlife-shim`, both world-readable — the app that shows
+them is not root. A third, the install record, also lives under
+`/var/opt/carlife-shim/current` so that it outlives a reboot.
 
 `state.txt`, rewritten twice a second, a dozen lines, is what the app draws:
 
@@ -79,6 +80,13 @@ sixteen bytes in hex; after that only every two-hundredth line survives, or the
 log is sixteen kilobytes of video per second and nothing else. Errors and short
 reads are always kept.
 
+`boot.txt` is the install's record, and it is written twice: to
+`/var/opt/carlife-shim/current/boot.txt`, which survives a reboot, and to
+`/dev/shm/carlife-shim/boot.txt`, which the probe reads first. The shm copy alone
+was a mistake — `/dev/shm` is empty after every boot, so a reboot made a failed
+install look exactly like an install that never ran, and those two need different
+repairs.
+
 ## How it gets into carlife
 
 `install.sh` writes one file, `/etc/systemd/system/<unit>.d/carlife-shim.conf`:
@@ -89,20 +97,22 @@ Environment=LD_PRELOAD=/var/opt/carlife-shim/current/carlife-shim.so
 ```
 
 It never edits the unit itself, so the rollback is `rm` of one file, and
-`remove.sh` does exactly that. Four things it does in order, each because the
+`remove.sh` does exactly that. Five things it does in order, each because the
 failure it prevents is invisible from the outside:
 
-1. `LD_PRELOAD=$SO /bin/true` first — a `.so` built against a newer glibc fails
-   *here*, before carlife is restarted, with the reason in `boot.txt`.
+1. `LD_PRELOAD=$SO /bin/sh -c ':'` first — a `.so` built against a newer glibc
+   fails *here*, before carlife is restarted, with the reason in `boot.txt`.
 2. the unit is found by asking the running process (its cgroup), not by guessing
    a name; falling back to scanning `ExecStart=...carlife`.
-3. restart, then **look**: is the library in the new process's `maps`, and is
+3. `/` is remounted read-write if it is not: this unit ships a read-only root, and
+   every write below would otherwise fail without a word — the drop-in simply
+   never appears, and the restart that follows proves nothing. The write is read
+   back before anything is restarted, and `/` goes back to read-only afterwards.
+4. restart, then **look**: is the library in the new process's `maps`, and is
    the process still there after two seconds?
-4. if not, the drop-in is removed, `daemon-reload`, restart again, and
+5. if not, the drop-in is removed, `daemon-reload`, restart again, and
    `boot.txt` says "rolled back". A tool that leaves carlife down is worse than
    no tool.
-
-`boot.txt` holds the outcome of the last install or removal.
 
 ## What it does not do yet
 
