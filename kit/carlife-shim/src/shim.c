@@ -53,9 +53,12 @@
  * install script watches for exactly that and rolls itself back.
  */
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -64,6 +67,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 
@@ -183,6 +187,88 @@ static char open_text[80] = "(not opened)";
 static char last_in[140] = "(nothing yet)";
 static char last_out[140] = "(nothing yet)";
 static int64_t state_ms;
+
+/* ---- stand-in device and channel bridge (0.6.0) --------------------------
+ *
+ * The whole point of this file up to 0.5.0 was to find out how carlife talks
+ * to a phone. It found out: one AOA accessory device, two bulk endpoints, and
+ * messages framed as [channel u32 BE][length u32 BE][body], with the header in
+ * a transfer of its own. This block acts on that.
+ *
+ * Two pieces, and they fail independently:
+ *
+ *   the fake device  - answers enumeration, the 51/52/53 handshake and the
+ *                      configuration descriptor, so a carlife with nothing
+ *                      plugged into the port still reaches its read loop.
+ *   the bridge       - carries whole messages over TCP to a machine that
+ *                      plays the phone. The wire format is the *same* eight
+ *                      byte header, not the bare body: then this side needs no
+ *                      knowledge of what a channel means, and the far side does
+ *                      not have to reproduce USB framing rules.
+ *
+ * Everything is appended behind the real enumeration, so a phone that is
+ * actually there still sorts first and nothing about the wired path changes
+ * until carlife picks the stand-in.
+ */
+#define FAKE_CH_MAX 4                   /* channels 1..3; slot 0 is not a channel */
+#define FAKE_BODY_MAX (16 * 1024)       /* bytes handed back in one bulk read */
+#define FAKE_MSG_MAX (8u * 1024u * 1024u)   /* same ceiling the framer uses */
+#define FAKE_BASE_PORT 7240             /* 1 -> 7240, 2 -> 8240, 3 -> 9240 */
+
+struct bmsg {
+    struct bmsg *next;
+    uint32_t chan, len;
+    unsigned char body[1];
+};
+
+/* Reassembly buffer for one TCP channel: whole messages, since the header says
+ * how long the body is and a body can arrive in any number of reads. */
+struct bstream {
+    unsigned char *buf;
+    size_t cap, have;
+};
+
+/* One lock for all bridge state - queues, sockets, the in-flight message. Held
+ * across a connect (400 ms at worst) and across a short send wait (200 ms), so
+ * the other direction can stall that long. It must never be held across the
+ * poll that waits for a phone to send something, or the two directions deadlock
+ * into a standstill that looks exactly like "no data". */
+static pthread_mutex_t blink = PTHREAD_MUTEX_INITIALIZER;
+static int ch_fd[FAKE_CH_MAX] = { -1, -1, -1, -1 };
+static int64_t ch_try_ms[FAKE_CH_MAX];
+static struct bmsg *ch_head[FAKE_CH_MAX], *ch_tail[FAKE_CH_MAX];
+static unsigned long ch_qbytes[FAKE_CH_MAX];
+static unsigned long br_dropped;
+static struct bstream ch_rx[FAKE_CH_MAX];
+static struct bmsg *in_cur;              /* message being handed to carlife */
+static int in_off;                       /* 8 = header done, else header bytes done */
+static int in_rr;                        /* round-robin start channel */
+static unsigned long br_in_msgs, br_out_msgs, br_timeouts;
+static unsigned long long br_in_bytes, br_out_bytes;
+static char peer[64];
+static char br_note[96] = "(idle)";
+
+/* The transfer direction that is currently being reassembled out of carlife's
+ * writes. Kept as file statics rather than in a struct because there is exactly
+ * one OUT endpoint and therefore exactly one such stream. */
+static unsigned char out_hdr[8];
+static int out_have;
+static uint32_t out_chan, out_rem;
+
+struct fake_obj { unsigned int magic; };
+static struct fake_obj fake_dev_obj = { 0x46414B45u };   /* "FAKE" */
+static struct fake_obj fake_hnd_obj = { 0x48414E44u };   /* "HAND" */
+#define FAKE_DEV ((libusb_device *)&fake_dev_obj)
+#define FAKE_HND ((libusb_device_handle *)&fake_hnd_obj)
+
+static int fake_init_done;
+static int fake_on = 1;                  /* overridable, see fake_wanted() */
+static int fake_switched;                /* START seen: report 18d1:2d01 */
+static int fake_opened;                  /* a handle is outstanding */
+static int fake_claims;
+static unsigned long fake_bulk_in, fake_bulk_out;
+static libusb_device **fake_lists[8];    /* arrays we allocated, to free them */
+static int fake_nlists;
 
 struct framer {
     unsigned char hdr[8];
@@ -502,6 +588,15 @@ static void put_state(void)
     }
     if (async_submits)
         ADD("async: %lu submits, %lu loops\n", async_submits, async_events);
+    /* The stand-in's own line. `switched` is the milestone: it means carlife
+     * took the fake device all the way through the AOA handshake and asked it
+     * to come back as an accessory. Everything after that is the bridge. */
+    if (fake_on)
+        ADD("fake: on%s, claims %d, bulk %lu/%lu, %.40s\n",
+            fake_switched ? " (switched)" : "", fake_claims,
+            fake_bulk_in, fake_bulk_out, peer[0] ? peer : "no peer");
+    if (br_note[0] != '(')
+        ADD("bridge: %.90s\n", br_note);
 #undef ADD
 
     snprintf(path, sizeof path, "%s/state.tmp", SHM_DIR);
@@ -636,6 +731,605 @@ static void log_bulk(const char *dir, unsigned char ep, const unsigned char *d,
     pthread_mutex_unlock(&lock);
 }
 
+/* ===========================================================================
+ * The stand-in: enumeration, handshake, descriptors, bridge
+ * =========================================================================*/
+
+static void be32_put(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+static int is_fake_dev(libusb_device *d)
+{
+    return d && (void *)d == (void *)&fake_dev_obj;
+}
+
+static int is_fake_hnd(libusb_device_handle *h)
+{
+    return h && (void *)h == (void *)&fake_hnd_obj;
+}
+
+static int is_fake_list(libusb_device **list)
+{
+    int i, n = fake_nlists < 8 ? fake_nlists : 8;
+    for (i = 0; i < n; i++)
+        if (fake_lists[i] == list) return 1;
+    return 0;
+}
+
+/* A ring, not a stack: carlife can re-enumerate more often than there are
+ * slots, and the oldest array is the one that has long been freed. Missing a
+ * match is not a leak - it is the real free_device_list walking an array it did
+ * not allocate and unref'ing a static struct, which takes carlife with it. */
+static void note_fake_list(libusb_device **list)
+{
+    fake_lists[fake_nlists % 8] = list;
+    fake_nlists++;
+}
+
+/* The stand-in is on by default: the reason to install this component at all is
+ * to get a carlife with no phone on the port past its USB open. Turning it off
+ * has to be possible without uninstalling, though - a real phone on a real
+ * cable must always be able to win - hence two switches that need no Store
+ * round trip: the environment the drop-in sets, and a file in /dev/shm. */
+static int fake_wanted(void)
+{
+    const char *e = getenv("CARLIFE_SHIM_FAKE");
+    if (e && (e[0] == '0' || e[0] == 'n' || e[0] == 'N')) return 0;
+    if (access(SHM_DIR "/nofake", F_OK) == 0) return 0;
+    return 1;
+}
+
+static void trim_line(char *s)
+{
+    int n = (int)strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' '))
+        s[--n] = '\0';
+}
+
+/* Where the phone side listens. Three sources, most explicit first, because the
+ * link-local address of a laptop is not a constant: the ENET cable is usually
+ * straight into a machine that picks 169.254.x.x at random, and an address
+ * baked in at install time goes stale the first time the cable is moved. */
+static void peer_resolve(void)
+{
+    const char *e;
+    FILE *f;
+    char line[160];
+
+    if (peer[0]) return;
+
+    e = getenv("CARLIFE_SHIM_PEER");
+    if (e && *e) {
+        snprintf(peer, sizeof peer, "%s", e);
+        trim_line(peer);
+        if (peer[0]) return;
+    }
+
+    f = fopen("/var/opt/carlife-shim/current/peer.txt", "r");
+    if (!f) f = fopen(SHM_DIR "/peer.txt", "r");
+    if (f) {
+        if (fgets(line, sizeof line, f)) {
+            trim_line(line);
+            if (line[0]) snprintf(peer, sizeof peer, "%s", line);
+        }
+        fclose(f);
+        if (peer[0]) return;
+    }
+
+    /* /proc/net/arp, link-local only. This unit sits at 169.254.121.209; the
+     * one other complete entry in 169.254/16 is the other end of the cable,
+     * and there is exactly one cable. */
+    f = fopen("/proc/net/arp", "r");
+    if (!f) return;
+    if (!fgets(line, sizeof line, f)) { fclose(f); return; }
+    while (fgets(line, sizeof line, f)) {
+        char ip[64], hw[32], mask[32], dev[32];
+        unsigned type, flags;
+        if (sscanf(line, "%63s %x %x %31s %31s %31s", ip, &type, &flags, hw, mask, dev) != 6)
+            continue;
+        if ((flags & 0x2) && strncmp(ip, "169.254.", 8) == 0) {
+            snprintf(peer, sizeof peer, "%s", ip);
+            break;
+        }
+    }
+    fclose(f);
+}
+
+static int64_t peer_down_ms;
+
+static void ch_drop(int ch)
+{
+    if (ch < 1 || ch >= FAKE_CH_MAX) return;
+    if (ch_fd[ch] >= 0) close(ch_fd[ch]);
+    ch_fd[ch] = -1;
+    ch_try_ms[ch] = now_ms();
+}
+
+/* Called with blink held. A refused connect is the normal state on a bench
+ * where the far side is not running yet, so one failure parks every channel
+ * for a few seconds instead of spending the whole transfer timeout retrying
+ * three of them. */
+static int ch_connect(int ch, int64_t now)
+{
+    struct sockaddr_in a;
+    struct pollfd p;
+    int fd, fl, r, err = 0;
+    socklen_t el = sizeof err;
+    int port;
+
+    if (ch < 1 || ch >= FAKE_CH_MAX) return -1;
+    if (ch_fd[ch] >= 0) return 0;
+    if (now - ch_try_ms[ch] < 2000) return -1;
+    if (now - peer_down_ms < 3000) return -1;
+    ch_try_ms[ch] = now;
+
+    peer_resolve();
+    if (!peer[0]) {
+        snprintf(br_note, sizeof br_note, "no peer (arp/env/peer.txt all empty)");
+        return -1;
+    }
+
+    port = FAKE_BASE_PORT + (ch - 1) * 1000;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, peer, &a.sin_addr) != 1) return -1;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    fl = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    r = connect(fd, (struct sockaddr *)&a, sizeof a);
+    if (r < 0 && errno == EINPROGRESS) {
+        p.fd = fd;
+        p.events = POLLOUT;
+        p.revents = 0;
+        if (poll(&p, 1, 400) <= 0) {
+            close(fd);
+            peer_down_ms = now_ms();
+            snprintf(br_note, sizeof br_note, "ch%d %s:%d no answer", ch, peer, port);
+            return -1;
+        }
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el);
+        if (err) {
+            close(fd);
+            peer_down_ms = now_ms();
+            snprintf(br_note, sizeof br_note, "ch%d %s:%d refused (%d)", ch, peer, port, err);
+            return -1;
+        }
+    } else if (r < 0) {
+        close(fd);
+        peer_down_ms = now_ms();
+        snprintf(br_note, sizeof br_note, "ch%d connect errno %d", ch, errno);
+        return -1;
+    }
+    /* Stays non-blocking: a read that waits is poll's job, and a write that
+     * blocks forever would freeze the picture with no way back. */
+    ch_fd[ch] = fd;
+    snprintf(br_note, sizeof br_note, "ch%d -> %s:%d", ch, peer, port);
+    tap("bridge ch%d -> %s:%d", ch, peer, port);
+    return 0;
+}
+
+/* Called with blink held. Whole messages only, so a partial send is finished
+ * before the next header goes out - the far side parses a stream. */
+static void ch_write(int ch, const unsigned char *p, int n)
+{
+    int o = 0;
+
+    if (ch < 1 || ch >= FAKE_CH_MAX || ch_fd[ch] < 0) return;
+    while (o < n) {
+        int w = (int)send(ch_fd[ch], p + o, (size_t)(n - o), MSG_NOSIGNAL);
+        if (w > 0) { o += w; continue; }
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd pf;
+            pf.fd = ch_fd[ch];
+            pf.events = POLLOUT;
+            pf.revents = 0;
+            if (poll(&pf, 1, 200) > 0) continue;
+        }
+        if (w < 0 && errno == EINTR) continue;
+        tap("bridge ch%d send failed, errno %d", ch, errno);
+        ch_drop(ch);
+        snprintf(br_note, sizeof br_note, "ch%d send failed (%d), dropped", ch, errno);
+        return;
+    }
+    br_out_bytes += (unsigned long long)n;
+}
+
+/* Four megabytes a channel. The far side can send faster than carlife reads -
+ * a 30 fps picture is nearly 3 MB/s - and a queue with no ceiling turns a
+ * stalled consumer into an out-of-memory kill of the process that draws the
+ * dashboard. Dropping the oldest message keeps the picture current, which is
+ * the only thing a viewer would have asked for anyway. */
+#define FAKE_QMAX (4u * 1024u * 1024u)
+
+static struct bmsg *bq_pop(int ch);
+
+static void bq_push(uint32_t chan, const unsigned char *body, uint32_t len)
+{
+    struct bmsg *m;
+    int i = (int)chan;
+
+    if (i < 1 || i >= FAKE_CH_MAX || len == 0) return;
+    m = malloc(sizeof *m + len);
+    if (!m) return;
+    m->next = NULL;
+    m->chan = chan;
+    m->len = len;
+    memcpy(m->body, body, len);
+    if (ch_tail[i]) ch_tail[i]->next = m;
+    else ch_head[i] = m;
+    ch_tail[i] = m;
+    ch_qbytes[i] += len;
+    br_in_msgs++;
+    br_in_bytes += len;
+
+    /* `head != tail` keeps the newest message even when it alone is over the
+     * limit: dropping the only thing in the queue would be worse than holding
+     * one oversized frame. */
+    while (ch_qbytes[i] > FAKE_QMAX && ch_head[i] != ch_tail[i]) {
+        struct bmsg *old = bq_pop(i);
+        if (!old) break;
+        free(old);
+        br_dropped++;
+    }
+}
+
+static struct bmsg *bq_pop(int ch)
+{
+    struct bmsg *m = ch_head[ch];
+    if (!m) return NULL;
+    ch_head[ch] = m->next;
+    if (!ch_head[ch]) ch_tail[ch] = NULL;
+    if (ch_qbytes[ch] >= m->len) ch_qbytes[ch] -= m->len;
+    else ch_qbytes[ch] = 0;
+    return m;
+}
+
+static int rx_ensure(struct bstream *s, size_t need)
+{
+    unsigned char *nb;
+    size_t cap = s->cap ? s->cap : 65536;
+
+    if (need <= s->cap) return 0;
+    while (cap < need) cap *= 2;
+    if (cap > (size_t)FAKE_MSG_MAX + 65536) return -1;
+    nb = realloc(s->buf, cap);
+    if (!nb) return -1;
+    s->buf = nb;
+    s->cap = cap;
+    return 0;
+}
+
+/* Turn whatever has arrived on one channel into messages. A byte that cannot
+ * start a header slides by one - the same rule the framer uses, for the same
+ * reason: the far side is a program we wrote, but a restart of it leaves half a
+ * write in the socket and a parser that gives up never comes back. */
+static int rx_pump(int ch)
+{
+    struct bstream *s = &ch_rx[ch];
+    size_t off = 0;
+    int got = 0;
+
+    while (s->have - off >= 8) {
+        uint32_t c = be32(s->buf + off);
+        uint32_t n = be32(s->buf + off + 4);
+        if (c < 1 || c >= FAKE_CH_MAX || n == 0 || n > FAKE_MSG_MAX) {
+            off++;
+            continue;
+        }
+        if (s->have - off - 8 < (size_t)n) break;
+        bq_push(c, s->buf + off + 8, n);
+        off += 8 + (size_t)n;
+        got++;
+    }
+    if (off) {
+        memmove(s->buf, s->buf + off, s->have - off);
+        s->have -= off;
+    }
+    return got;
+}
+
+/* Called with blink held. */
+static void rx_fill(int ch, int64_t now)
+{
+    unsigned char tmp[8192];
+    int n;
+
+    (void)now;
+    if (ch < 1 || ch >= FAKE_CH_MAX || ch_fd[ch] < 0) return;
+    n = (int)read(ch_fd[ch], tmp, sizeof tmp);
+    if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        tap("bridge ch%d closed (%d, errno %d)", ch, n, n < 0 ? errno : 0);
+        snprintf(br_note, sizeof br_note, "ch%d closed by peer", ch);
+        ch_drop(ch);
+        return;
+    }
+    if (n < 0) return;
+    if (rx_ensure(&ch_rx[ch], ch_rx[ch].have + (size_t)n)) return;
+    memcpy(ch_rx[ch].buf + ch_rx[ch].have, tmp, (size_t)n);
+    ch_rx[ch].have += (size_t)n;
+    rx_pump(ch);
+}
+
+/* Called with blink held. Hands carlife the next chunk of one message: the
+ * eight-byte header on its own, then the body in pieces. The header is never
+ * split across two reads because a real device does not split it either and
+ * there is no reason to find out whether carlife's framer copes. */
+static int in_take(unsigned char *data, int len)
+{
+    int k, ch;
+
+    if (!in_cur) {
+        for (k = 0; k < 3; k++) {
+            ch = in_rr;
+            in_rr = in_rr % 3 + 1;
+            if (ch_head[ch]) {
+                in_cur = bq_pop(ch);
+                in_off = 0;
+                break;
+            }
+        }
+    }
+    if (!in_cur) return -1;
+
+    if (in_off < 8) {
+        unsigned char h[8];
+        be32_put(h, in_cur->chan);
+        be32_put(h + 4, in_cur->len);
+        memcpy(data, h, 8);
+        in_off = 8;
+        return 8;
+    }
+
+    {
+        unsigned long done = (unsigned long)(in_off - 8);
+        unsigned long rem = in_cur->len - done;
+        int n = (int)(rem < (unsigned long)len ? rem : (unsigned long)len);
+        if (n > FAKE_BODY_MAX) n = FAKE_BODY_MAX;
+        memcpy(data, in_cur->body + done, (size_t)n);
+        in_off += n;
+        if (in_off >= (int)(8 + in_cur->len)) {
+            free(in_cur);
+            in_cur = NULL;
+            in_off = 0;
+        }
+        return n;
+    }
+}
+
+static int bridge_in(unsigned char *data, int len, unsigned int timeout_ms)
+{
+    int64_t deadline = now_ms() + (int64_t)(timeout_ms ? timeout_ms : 1000);
+    int n;
+
+    if (len < 8) return -7;             /* LIBUSB_ERROR_TIMEOUT */
+
+    for (;;) {
+        pthread_mutex_lock(&blink);
+        n = in_take(data, len);
+        pthread_mutex_unlock(&blink);
+        if (n >= 0) return n;
+
+        {
+            struct pollfd pf[FAKE_CH_MAX];
+            int idx[FAKE_CH_MAX];
+            int k = 0, ch, wait;
+            int64_t now = now_ms();
+
+            wait = (int)(deadline - now);
+            if (wait <= 0) { br_timeouts++; return -7; }
+
+            pthread_mutex_lock(&blink);
+            for (ch = 1; ch < FAKE_CH_MAX; ch++) {
+                if (ch_fd[ch] < 0) ch_connect(ch, now);
+                if (ch_fd[ch] >= 0) {
+                    pf[k].fd = ch_fd[ch];
+                    pf[k].events = POLLIN;
+                    pf[k].revents = 0;
+                    idx[k] = ch;
+                    k++;
+                }
+            }
+            pthread_mutex_unlock(&blink);
+
+            if (!k) {
+                /* Nothing connected and nothing to wait on; the connect above
+                 * already spent its budget, so yield and try again. */
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = 20 * 1000 * 1000;
+                nanosleep(&ts, NULL);
+                continue;
+            }
+
+            n = poll(pf, (nfds_t)k, wait);
+            if (n == 0) { br_timeouts++; return -7; }
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                br_timeouts++;
+                return -7;
+            }
+
+            pthread_mutex_lock(&blink);
+            for (ch = 0; ch < k; ch++)
+                if (pf[ch].revents & (POLLIN | POLLHUP | POLLERR))
+                    rx_fill(idx[ch], now_ms());
+            n = in_take(data, len);
+            pthread_mutex_unlock(&blink);
+            if (n >= 0) return n;
+            if (now_ms() >= deadline) { br_timeouts++; return -7; }
+        }
+    }
+}
+
+/* carlife's writes, reassembled into whole messages and forwarded with their
+ * header intact. A header that does not parse means the stream is not where we
+ * think it is, so slide one byte and look again - never discard the rest. */
+static void bridge_out(const unsigned char *p, int n)
+{
+    int i = 0;
+
+    pthread_mutex_lock(&blink);
+    while (i < n) {
+        if (out_have < 8) {
+            int c = 8 - out_have;
+            if (c > n - i) c = n - i;
+            memcpy(out_hdr + out_have, p + i, (size_t)c);
+            out_have += c;
+            i += c;
+            if (out_have == 8) {
+                uint32_t ch = be32(out_hdr);
+                uint32_t ln = be32(out_hdr + 4);
+                if (ch < 1 || ch >= FAKE_CH_MAX || ln == 0 || ln > FAKE_MSG_MAX) {
+                    out_have = 0;
+                    out_rem = 0;
+                    continue;
+                }
+                out_chan = ch;
+                out_rem = ln;
+                br_out_msgs++;
+                if (ch_connect((int)ch, now_ms()) == 0) ch_write((int)ch, out_hdr, 8);
+            }
+            continue;
+        }
+        {
+            int c = (int)(out_rem < (uint32_t)(n - i) ? out_rem : (uint32_t)(n - i));
+            ch_write((int)out_chan, p + i, c);
+            out_rem -= (uint32_t)c;
+            i += c;
+            if (out_rem == 0) out_have = 0;
+        }
+    }
+    pthread_mutex_unlock(&blink);
+}
+
+/* A new open is a new stream in both directions: half a message left from the
+ * previous session would be glued to the first bytes of this one and every
+ * length after it would land one message out. The sockets stay up - the far
+ * side did not restart just because carlife reopened the device. */
+static void bridge_reset(void)
+{
+    struct bmsg *m, *nx;
+    int ch;
+
+    pthread_mutex_lock(&blink);
+    for (ch = 1; ch < FAKE_CH_MAX; ch++) {
+        for (m = ch_head[ch]; m; m = nx) {
+            nx = m->next;
+            free(m);
+        }
+        ch_head[ch] = ch_tail[ch] = NULL;
+        ch_qbytes[ch] = 0;
+        ch_rx[ch].have = 0;
+    }
+    if (in_cur) {
+        free(in_cur);
+        in_cur = NULL;
+    }
+    in_off = 0;
+    out_have = 0;
+    out_rem = 0;
+    pthread_mutex_unlock(&blink);
+}
+
+/* ---- descriptors ---------------------------------------------------------
+ *
+ * The shape is copied from the session log, not from the AOA spec: this unit
+ * 02 OUT and 82 IN. carlife only claims interface 0 and never touches if1 on
+ * the data path, but it is in the real descriptor and a stand-in that omits it
+ * is a stand-in that will be found out by the next carlife build. */
+static struct libusb_endpoint_descriptor fep[4];
+static struct libusb_interface_descriptor fint[2];
+static struct libusb_interface fifc[2];
+static struct libusb_config_descriptor fcfg;
+
+static void fake_desc_init(void)
+{
+    if (fake_init_done) return;
+    memset(fep, 0, sizeof fep);
+    memset(fint, 0, sizeof fint);
+    memset(fifc, 0, sizeof fifc);
+    memset(&fcfg, 0, sizeof fcfg);
+
+    fep[0].bLength = 7;
+    fep[0].bDescriptorType = 5;
+    fep[0].bEndpointAddress = 0x81;
+    fep[0].bmAttributes = 0x02;         /* bulk */
+    fep[0].wMaxPacketSize = 512;
+
+    fep[1] = fep[0];
+    fep[1].bEndpointAddress = 0x01;
+
+    fep[2] = fep[0];
+    fep[2].bEndpointAddress = 0x02;
+
+    fep[3] = fep[0];
+    fep[3].bEndpointAddress = 0x82;
+
+    fint[0].bLength = 9;
+    fint[0].bDescriptorType = 4;
+    fint[0].bInterfaceNumber = 0;
+    fint[0].bAlternateSetting = 0;
+    fint[0].bNumEndpoints = 2;
+    fint[0].bInterfaceClass = 0xff;
+    fint[0].bInterfaceSubClass = 0xff;
+    fint[0].bInterfaceProtocol = 0;
+    fint[0].endpoint = &fep[0];
+
+    fint[1] = fint[0];
+    fint[1].bInterfaceNumber = 1;
+    fint[1].bInterfaceSubClass = 0x42;
+    fint[1].endpoint = &fep[2];
+
+    fifc[0].altsetting = &fint[0];
+    fifc[0].num_altsetting = 1;
+    fifc[1].altsetting = &fint[1];
+    fifc[1].num_altsetting = 1;
+
+    fcfg.bLength = 9;
+    fcfg.bDescriptorType = 2;
+    fcfg.wTotalLength = (uint16_t)(9 + 2 * (9 + 2 * 7));
+    fcfg.bNumInterfaces = 2;
+    fcfg.bConfigurationValue = 1;
+    fcfg.iConfiguration = 0;
+    fcfg.bmAttributes = 0x80;
+    fcfg.MaxPower = 250;
+    fcfg.interface = fifc;
+
+    fake_init_done = 1;
+}
+
+/* The control pipe of a stand-in. Only three requests mean anything, and the
+ * rest fail with BUSY - which is exactly what the real phone answered to
+ * GET_DESCRIPTOR and the serial string on this unit, and carlife carried on. */
+static int fake_control(uint8_t rt, uint8_t req, uint16_t val, uint16_t idx,
+                        unsigned char *data, uint16_t len)
+{
+    (void)val;
+    (void)idx;
+
+    if (req == 51 && (rt & 0x80)) {     /* GET_PROTOCOL */
+        if (data && len >= 2) { data[0] = 0x02; data[1] = 0x00; }
+        return 2;
+    }
+    if (req == 52 && !(rt & 0x80))      /* SEND_STRING */
+        return (int)len;
+    if (req == 53 && !(rt & 0x80)) {    /* START */
+        if (!fake_switched) tap("fake: AOA START - switching to 18d1:2d01");
+        fake_switched = 1;
+        return 0;
+    }
+    return -6;                          /* LIBUSB_ERROR_BUSY */
+}
+
 EXPORT int libusb_init(libusb_context **ctx)
 {
     static int (*real)(libusb_context **);
@@ -672,19 +1366,48 @@ EXPORT ssize_t libusb_get_device_list(libusb_context *ctx, libusb_device ***list
         sym("libusb_get_device_descriptor");
 
     n = real(ctx, list);
+
+    /* The stand-in goes last, never first. With a phone on the cable the real
+     * device is still the one carlife opens; the fake is only reached when
+     * nothing else would have been found at all. The array is re-made rather
+     * than grown in place because libusb's own allocation is not ours to
+     * realloc, and libusb_free_device_list below is taught to recognise it. */
+    if (fake_on && n >= 0 && list && *list) {
+        libusb_device **nl = malloc(((size_t)n + 2) * sizeof *nl);
+        if (nl) {
+            for (i = 0; i < n; i++) nl[i] = (*list)[i];
+            nl[n] = FAKE_DEV;
+            nl[n + 1] = NULL;
+            free(*list);
+            *list = nl;
+            note_fake_list(nl);
+            n++;
+        }
+    }
+
     pthread_mutex_lock(&lock);
     tap("get_device_list -> %d", (int)n);
-    if (n > 0 && list && *list && desc_of) {
+    if (n > 0 && list && *list) {
         int o = 0;
         dev_text[0] = '\0';
         for (i = 0; i < n && i < 8; i++) {
             struct libusb_device_descriptor d;
+            int fake = is_fake_dev((*list)[i]);
             memset(&d, 0, sizeof d);
-            if (desc_of((*list)[i], &d) != 0) continue;
+            if (fake) {
+                /* Not through desc_of: that is the real libusb, and the pointer
+                 * it would be handed is not one of its own. */
+                d.idVendor = (uint16_t)(fake_switched ? 0x18d1 : 0x2d95);
+                d.idProduct = (uint16_t)(fake_switched ? 0x2d01 : 0x7000);
+                d.bNumConfigurations = 1;
+            } else if (!desc_of || desc_of((*list)[i], &d) != 0) {
+                continue;
+            }
             o += snprintf(dev_text + o, sizeof dev_text - (size_t)o, "%s%04x:%04x",
                           o ? " " : "", d.idVendor, d.idProduct);
-            tap("  dev %d: %04x:%04x class=%02x cfgs=%d",
-                (int)i, d.idVendor, d.idProduct, d.bDeviceClass, d.bNumConfigurations);
+            tap("  dev %d: %04x:%04x class=%02x cfgs=%d%s",
+                (int)i, d.idVendor, d.idProduct, d.bDeviceClass, d.bNumConfigurations,
+                fake ? " (stand-in)" : "");
         }
         if (n > 8) snprintf(dev_text + o, sizeof dev_text - (size_t)o, " +%d", (int)(n - 8));
         if (!dev_text[0]) snprintf(dev_text, sizeof dev_text, "%d unreadable", (int)n);
@@ -699,8 +1422,152 @@ EXPORT ssize_t libusb_get_device_list(libusb_context *ctx, libusb_device ***list
 EXPORT void libusb_free_device_list(libusb_device **list, int unref)
 {
     static void (*real)(libusb_device **, int);
+    static void (*unref1)(libusb_device *);
+    int i;
+
+    /* Our array: the real devices copied into it still hold the references they
+     * already had, so they are unref'd one at a time. Handing this array to the
+     * real function would have it walk a pointer it never allocated, and unref
+     * the stand-in - which is a static object, not a libusb_device. */
+    if (list && is_fake_list(list)) {
+        if (unref) {
+            if (!unref1) unref1 = (void (*)(libusb_device *))sym("libusb_unref_device");
+            for (i = 0; list[i]; i++)
+                if (!is_fake_dev(list[i]) && unref1) unref1(list[i]);
+        }
+        free(list);
+        return;
+    }
+
     if (!real) real = (void (*)(libusb_device **, int))sym("libusb_free_device_list");
     if (real) real(list, unref);
+}
+
+/* ---- device accessors the stand-in has to answer itself ------------------
+ *
+ * None of these are reached with a stand-in pointer in a session that had a
+ * phone, which is exactly why they are here: the first time one of them is not
+ * interposed, the real libusb dereferences a static struct that is eight bytes
+ * long and carlife dies inside the process that draws the dashboard. */
+EXPORT int libusb_get_device_descriptor(libusb_device *dev,
+                                        struct libusb_device_descriptor *desc)
+{
+    static int (*real)(libusb_device *, struct libusb_device_descriptor *);
+
+    if (is_fake_dev(dev)) {
+        if (!desc) return -1;
+        memset(desc, 0, sizeof *desc);
+        desc->bLength = 18;
+        desc->bDescriptorType = 1;      /* DEVICE */
+        desc->bcdUSB = 0x0200;
+        desc->bDeviceClass = 0;
+        desc->bDeviceSubClass = 0;
+        desc->bDeviceProtocol = 0;
+        desc->bMaxPacketSize0 = 64;
+        /* Before START the phone is whatever it was - the unit's own phone said
+         * 2d95:7000; after START it is an accessory and says 18d1:2d01. carlife
+         * keeps the same device pointer across the switch and only re-opens it,
+         * so this flag is the whole of the AOA re-enumeration. */
+        desc->idVendor = (uint16_t)(fake_switched ? 0x18d1 : 0x2d95);
+        desc->idProduct = (uint16_t)(fake_switched ? 0x2d01 : 0x7000);
+        desc->bcdDevice = 0x0100;
+        desc->iManufacturer = 1;
+        desc->iProduct = 2;
+        desc->iSerialNumber = 3;
+        desc->bNumConfigurations = 1;
+        return 0;
+    }
+
+    if (!real) real = (int (*)(libusb_device *, struct libusb_device_descriptor *))
+        sym("libusb_get_device_descriptor");
+    if (!real) return missing("libusb_get_device_descriptor");
+    return real(dev, desc);
+}
+
+EXPORT libusb_device *libusb_ref_device(libusb_device *dev)
+{
+    static libusb_device *(*real)(libusb_device *);
+    if (is_fake_dev(dev)) return dev;
+    if (!real) real = (libusb_device *(*)(libusb_device *))sym("libusb_ref_device");
+    return real ? real(dev) : dev;
+}
+
+EXPORT void libusb_unref_device(libusb_device *dev)
+{
+    static void (*real)(libusb_device *);
+    if (!dev || is_fake_dev(dev)) return;
+    if (!real) real = (void (*)(libusb_device *))sym("libusb_unref_device");
+    if (real) real(dev);
+}
+
+EXPORT uint8_t libusb_get_device_address(libusb_device *dev)
+{
+    static uint8_t (*real)(libusb_device *);
+    if (is_fake_dev(dev)) return 6;     /* the address the real phone had */
+    if (!real) real = (uint8_t (*)(libusb_device *))sym("libusb_get_device_address");
+    return real ? real(dev) : 0;
+}
+
+EXPORT uint8_t libusb_get_bus_number(libusb_device *dev)
+{
+    static uint8_t (*real)(libusb_device *);
+    if (is_fake_dev(dev)) return 1;
+    if (!real) real = (uint8_t (*)(libusb_device *))sym("libusb_get_bus_number");
+    return real ? real(dev) : 0;
+}
+
+EXPORT uint8_t libusb_get_port_number(libusb_device *dev)
+{
+    static uint8_t (*real)(libusb_device *);
+    if (is_fake_dev(dev)) return 1;
+    if (!real) real = (uint8_t (*)(libusb_device *))sym("libusb_get_port_number");
+    return real ? real(dev) : 0;
+}
+
+EXPORT libusb_device *libusb_get_parent(libusb_device *dev)
+{
+    static libusb_device *(*real)(libusb_device *);
+    if (is_fake_dev(dev)) return NULL;
+    if (!real) real = (libusb_device *(*)(libusb_device *))sym("libusb_get_parent");
+    return real ? real(dev) : NULL;
+}
+
+EXPORT int libusb_get_device_speed(libusb_device *dev)
+{
+    static int (*real)(libusb_device *);
+    if (is_fake_dev(dev)) return 3;     /* LIBUSB_SPEED_HIGH */
+    if (!real) real = (int (*)(libusb_device *))sym("libusb_get_device_speed");
+    return real ? real(dev) : 0;
+}
+
+EXPORT int libusb_get_port_numbers(libusb_device *dev, uint8_t *port_numbers, int port_numbers_len)
+{
+    static int (*real)(libusb_device *, uint8_t *, int);
+    if (is_fake_dev(dev)) {
+        if (port_numbers && port_numbers_len >= 1) {
+            port_numbers[0] = 1;
+            return 1;
+        }
+        return -1;
+    }
+    if (!real) real = (int (*)(libusb_device *, uint8_t *, int))sym("libusb_get_port_numbers");
+    return real ? real(dev, port_numbers, port_numbers_len) : -12;
+}
+
+EXPORT int libusb_get_port_path(libusb_context *ctx, libusb_device *dev,
+                                uint8_t *path, int path_length)
+{
+    static int (*real)(libusb_context *, libusb_device *, uint8_t *, int);
+    if (is_fake_dev(dev)) {
+        if (path && path_length >= 1) {
+            path[0] = 1;
+            return 1;
+        }
+        return -1;
+    }
+    if (!real) real = (int (*)(libusb_context *, libusb_device *, uint8_t *, int))
+        sym("libusb_get_port_path");
+    return real ? real(ctx, dev, path, path_length) : -12;
 }
 
 /* Config descriptors are where the interface shape lives: whatever stands in
@@ -736,6 +1603,18 @@ EXPORT int libusb_get_active_config_descriptor(libusb_device *dev,
 {
     static int (*real)(libusb_device *, struct libusb_config_descriptor **);
     int r;
+
+    if (is_fake_dev(dev)) {
+        fake_desc_init();
+        if (cfg) *cfg = &fcfg;
+        pthread_mutex_lock(&lock);
+        tap("get_active_config -> 0 (stand-in)");
+        describe_config(&fcfg);
+        tick();
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device *, struct libusb_config_descriptor **))
         sym("libusb_get_active_config_descriptor");
     if (!real) return missing("libusb_get_active_config_descriptor");
@@ -753,6 +1632,19 @@ EXPORT int libusb_get_config_descriptor(libusb_device *dev, uint8_t index,
 {
     static int (*real)(libusb_device *, uint8_t, struct libusb_config_descriptor **);
     int r;
+
+    if (is_fake_dev(dev)) {
+        if (index != 0) return -2;      /* LIBUSB_ERROR_NOT_FOUND */
+        fake_desc_init();
+        if (cfg) *cfg = &fcfg;
+        pthread_mutex_lock(&lock);
+        tap("get_config(%u) -> 0 (stand-in)", index);
+        describe_config(&fcfg);
+        tick();
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device *, uint8_t, struct libusb_config_descriptor **))
         sym("libusb_get_config_descriptor");
     if (!real) return missing("libusb_get_config_descriptor");
@@ -765,12 +1657,44 @@ EXPORT int libusb_get_config_descriptor(libusb_device *dev, uint8_t index,
     return r;
 }
 
+/* carlife frees the descriptor it was given; the stand-in's is a static that
+ * outlives the process, so freeing it hands libusb's allocator a pointer it
+ * never produced. One comparison, and the crash that a correct free would have
+ * caused is gone. */
+EXPORT void libusb_free_config_descriptor(struct libusb_config_descriptor *cfg)
+{
+    static void (*real)(struct libusb_config_descriptor *);
+    if (!cfg || cfg == &fcfg) return;
+    if (!real) real = (void (*)(struct libusb_config_descriptor *))
+        sym("libusb_free_config_descriptor");
+    if (real) real(cfg);
+}
+
 EXPORT int libusb_open(libusb_device *dev, libusb_device_handle **h)
 {
     static int (*real)(libusb_device *, libusb_device_handle **);
     int r;
     if (!real) real = (int (*)(libusb_device *, libusb_device_handle **))sym("libusb_open");
     if (!real) return missing("libusb_open");
+
+    if (is_fake_dev(dev)) {
+        if (h) *h = FAKE_HND;
+        fake_opened = 1;
+        bridge_reset();
+        pthread_mutex_lock(&lock);
+        snprintf(open_text, sizeof open_text, "open %s ok (stand-in)",
+                 fake_switched ? "18d1:2d01" : "2d95:7000");
+        tap("open -> 0 (stand-in %04x:%04x)",
+            fake_switched ? 0x18d1 : 0x2d95, fake_switched ? 0x2d01 : 0x7000);
+        fin.have = fin.payload = 0;
+        fin.rem = 0;
+        fout.have = fout.payload = 0;
+        fout.rem = 0;
+        tick();
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     r = real(dev, h);
     pthread_mutex_lock(&lock);
     /* Which device was opened, not just that something was: a stand-in has to
@@ -814,6 +1738,23 @@ EXPORT libusb_device_handle *libusb_open_device_with_vid_pid(libusb_context *ctx
     if (!real) real = (libusb_device_handle *(*)(libusb_context *, uint16_t, uint16_t))
         sym("libusb_open_device_with_vid_pid");
     if (!real) { missing("libusb_open_device_with_vid_pid"); return NULL; }
+
+    /* The other way to reach the stand-in. carlife on this unit enumerates and
+     * opens, so this path is not used today - but a build that reconnects by
+     * asking for 18d1:2d01 by number would otherwise get nothing and look like
+     * a dead port. */
+    if (fake_on && ((vid == 0x18d1 && pid == 0x2d01) ||
+                    (vid == 0x2d95 && pid == 0x7000))) {
+        fake_opened = 1;
+        bridge_reset();
+        pthread_mutex_lock(&lock);
+        tap("open_with_vid_pid(%04x:%04x) -> handle (stand-in)", vid, pid);
+        snprintf(open_text, sizeof open_text, "open %04x:%04x = ok (stand-in)", vid, pid);
+        tick();
+        pthread_mutex_unlock(&lock);
+        return FAKE_HND;
+    }
+
     h = real(ctx, vid, pid);
     pthread_mutex_lock(&lock);
     tap("open_with_vid_pid(%04x:%04x) -> %s", vid, pid, h ? "handle" : "none");
@@ -831,6 +1772,17 @@ EXPORT libusb_device_handle *libusb_open_device_with_vid_pid(libusb_context *ctx
 EXPORT void libusb_close(libusb_device_handle *h)
 {
     static void (*real)(libusb_device_handle *);
+
+    if (is_fake_hnd(h)) {
+        fake_opened = 0;
+        bridge_reset();
+        pthread_mutex_lock(&lock);
+        tap("close (stand-in)");
+        tick();
+        pthread_mutex_unlock(&lock);
+        return;
+    }
+
     if (!real) real = (void (*)(libusb_device_handle *))sym("libusb_close");
     pthread_mutex_lock(&lock);
     tap("close");
@@ -842,6 +1794,16 @@ EXPORT int libusb_claim_interface(libusb_device_handle *h, int n)
 {
     static int (*real)(libusb_device_handle *, int);
     int r;
+
+    if (is_fake_hnd(h)) {
+        fake_claims++;
+        pthread_mutex_lock(&lock);
+        tap("claim_interface(%d) -> 0 (stand-in)", n);
+        tick();
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_claim_interface");
     if (!real) return missing("libusb_claim_interface");
     r = real(h, n);
@@ -855,6 +1817,14 @@ EXPORT int libusb_release_interface(libusb_device_handle *h, int n)
 {
     static int (*real)(libusb_device_handle *, int);
     int r;
+
+    if (is_fake_hnd(h)) {
+        pthread_mutex_lock(&lock);
+        tap("release_interface(%d) -> 0 (stand-in)", n);
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_release_interface");
     if (!real) return missing("libusb_release_interface");
     r = real(h, n);
@@ -868,6 +1838,14 @@ EXPORT int libusb_set_configuration(libusb_device_handle *h, int cfg)
 {
     static int (*real)(libusb_device_handle *, int);
     int r;
+
+    if (is_fake_hnd(h)) {
+        pthread_mutex_lock(&lock);
+        tap("set_configuration(%d) -> 0 (stand-in)", cfg);
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_set_configuration");
     if (!real) return missing("libusb_set_configuration");
     r = real(h, cfg);
@@ -881,6 +1859,14 @@ EXPORT int libusb_set_interface_alt_setting(libusb_device_handle *h, int iface, 
 {
     static int (*real)(libusb_device_handle *, int, int);
     int r;
+
+    if (is_fake_hnd(h)) {
+        pthread_mutex_lock(&lock);
+        tap("set_alt_setting(if%d alt%d) -> 0 (stand-in)", iface, alt);
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, int, int))sym("libusb_set_interface_alt_setting");
     if (!real) return missing("libusb_set_interface_alt_setting");
     r = real(h, iface, alt);
@@ -894,6 +1880,20 @@ EXPORT int libusb_reset_device(libusb_device_handle *h)
 {
     static int (*real)(libusb_device_handle *);
     int r;
+
+    /* A real reset would make the device disappear and come back; here the
+     * disappearance is the far side dropping its sockets, which it does by
+     * itself. Reporting success is the whole of it - but the stream has to be
+     * treated as new, or the next message starts mid-header. */
+    if (is_fake_hnd(h)) {
+        bridge_reset();
+        pthread_mutex_lock(&lock);
+        tap("reset_device -> 0 (stand-in)");
+        tick();
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *))sym("libusb_reset_device");
     if (!real) return missing("libusb_reset_device");
     r = real(h);
@@ -915,11 +1915,15 @@ EXPORT int libusb_control_transfer(libusb_device_handle *h, uint8_t rt, uint8_t 
     char hex[40] = "";
     int r, i;
 
-    if (!real) real = (int (*)(libusb_device_handle *, uint8_t, uint8_t, uint16_t, uint16_t,
-                               unsigned char *, uint16_t, unsigned int))sym("libusb_control_transfer");
-    if (!real) return missing("libusb_control_transfer");
-
-    r = real(h, rt, req, val, idx, data, len, timeout);
+    r = 0;
+    if (is_fake_hnd(h)) {
+        r = fake_control(rt, req, val, idx, data, len);
+    } else {
+        if (!real) real = (int (*)(libusb_device_handle *, uint8_t, uint8_t, uint16_t, uint16_t,
+                                   unsigned char *, uint16_t, unsigned int))sym("libusb_control_transfer");
+        if (!real) return missing("libusb_control_transfer");
+        r = real(h, rt, req, val, idx, data, len, timeout);
+    }
 
     pthread_mutex_lock(&lock);
     ctrl_calls++;
@@ -948,6 +1952,31 @@ EXPORT int libusb_bulk_transfer(libusb_device_handle *h, unsigned char ep, unsig
 {
     static int (*real)(libusb_device_handle *, unsigned char, unsigned char *, int, int *, unsigned int);
     int r, got = 0;
+
+    if (is_fake_hnd(h)) {
+        if (ep & 0x80) {
+            int n = bridge_in(data, len, timeout);
+            if (n < 0) {
+                if (transferred) *transferred = 0;
+                log_bulk("in ", ep, data, 0, len, n, timeout);
+                return n;               /* TIMEOUT is the normal "nothing yet" */
+            }
+            got = n;
+            fake_bulk_in++;
+        } else {
+            /* Every byte carlife hands to the OUT pipe is accepted, because
+             * there is no device to be full: the bridge has already forwarded
+             * it (or dropped it while the far side is away), and reporting a
+             * short write would make carlife retry half a message. */
+            bridge_out(data, len);
+            got = len;
+            fake_bulk_out++;
+        }
+        if (transferred) *transferred = got;
+        log_bulk((ep & 0x80) ? "in " : "out", ep, data, got, len, 0, timeout);
+        return 0;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, unsigned char, unsigned char *, int, int *, unsigned int))
         sym("libusb_bulk_transfer");
     if (!real) return missing("libusb_bulk_transfer");
@@ -962,6 +1991,18 @@ EXPORT int libusb_interrupt_transfer(libusb_device_handle *h, unsigned char ep, 
 {
     static int (*real)(libusb_device_handle *, unsigned char, unsigned char *, int, int *, unsigned int);
     int r, got = 0;
+
+    /* An AOA accessory has no interrupt pipe. Answering one through the bulk
+     * bridge would put bytes on a channel they never belonged to; failing it is
+     * what the real device does and what any caller should handle. */
+    if (is_fake_hnd(h)) {
+        if (transferred) *transferred = 0;
+        pthread_mutex_lock(&lock);
+        tap("interrupt ep=0x%02x len=%d -> -1 (stand-in has no interrupt pipe)", ep, len);
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, unsigned char, unsigned char *, int, int *, unsigned int))
         sym("libusb_interrupt_transfer");
     if (!real) return missing("libusb_interrupt_transfer");
@@ -978,6 +2019,19 @@ EXPORT int libusb_submit_transfer(struct libusb_transfer *t)
 {
     static int (*real)(struct libusb_transfer *);
     int r;
+
+    /* Not on the path this shim uses - carlife calls the synchronous API, and
+     * the submits in the log are libusb's own, made inside it. Still refused
+     * for a stand-in handle rather than handed to a libusb that has no such
+     * device, so a future carlife build shows up as a clean failure. */
+    if (t && is_fake_hnd(t->dev_handle)) {
+        pthread_mutex_lock(&lock);
+        tap("submit ep=0x%02x type=%u len=%d -> -1 (stand-in is synchronous only)",
+            t->endpoint, t->type, t->length);
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
+
     if (!real) real = (int (*)(struct libusb_transfer *))sym("libusb_submit_transfer");
     if (!real) return missing("libusb_submit_transfer");
     r = real(t);
@@ -1022,6 +2076,14 @@ EXPORT int libusb_get_string_descriptor_ascii(libusb_device_handle *h, uint8_t i
 {
     static int (*real)(libusb_device_handle *, uint8_t, unsigned char *, int);
     int r;
+
+    if (is_fake_hnd(h)) {
+        pthread_mutex_lock(&lock);
+        tap("string_ascii(%u) -> -6 (stand-in)", index);
+        pthread_mutex_unlock(&lock);
+        return -6;
+    }
+
     if (!real) real = (int (*)(libusb_device_handle *, uint8_t, unsigned char *, int))
         sym("libusb_get_string_descriptor_ascii");
     if (!real) return missing("libusb_get_string_descriptor_ascii");
@@ -1030,6 +2092,86 @@ EXPORT int libusb_get_string_descriptor_ascii(libusb_device_handle *h, uint8_t i
     tap("string_ascii(%u) -> %d%s%.24s", index, r, r > 0 ? "  \"" : "", r > 0 ? (char *)data : "");
     pthread_mutex_unlock(&lock);
     return r;
+}
+
+/* The rest of the handle API. None of these appear in the captured session,
+ * which is why they are here: the day one does, the alternative is the real
+ * libusb walking a four-byte static struct as if it were a device handle. */
+EXPORT int libusb_get_configuration(libusb_device_handle *h, int *cfg)
+{
+    static int (*real)(libusb_device_handle *, int *);
+    if (is_fake_hnd(h)) {
+        if (cfg) *cfg = 1;
+        return 0;
+    }
+    if (!real) real = (int (*)(libusb_device_handle *, int *))sym("libusb_get_configuration");
+    return real ? real(h, cfg) : -12;
+}
+
+EXPORT int libusb_clear_halt(libusb_device_handle *h, unsigned char ep)
+{
+    static int (*real)(libusb_device_handle *, unsigned char);
+    if (is_fake_hnd(h)) {
+        pthread_mutex_lock(&lock);
+        tap("clear_halt(0x%02x) -> 0 (stand-in)", ep);
+        pthread_mutex_unlock(&lock);
+        return 0;
+    }
+    if (!real) real = (int (*)(libusb_device_handle *, unsigned char))sym("libusb_clear_halt");
+    return real ? real(h, ep) : -12;
+}
+
+EXPORT int libusb_kernel_driver_active(libusb_device_handle *h, int n)
+{
+    static int (*real)(libusb_device_handle *, int);
+    if (is_fake_hnd(h)) return 0;       /* nothing bound, nothing to detach */
+    if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_kernel_driver_active");
+    return real ? real(h, n) : -12;
+}
+
+EXPORT int libusb_detach_kernel_driver(libusb_device_handle *h, int n)
+{
+    static int (*real)(libusb_device_handle *, int);
+    if (is_fake_hnd(h)) return -2;      /* NOT_FOUND: no kernel driver */
+    if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_detach_kernel_driver");
+    return real ? real(h, n) : -12;
+}
+
+EXPORT int libusb_attach_kernel_driver(libusb_device_handle *h, int n)
+{
+    static int (*real)(libusb_device_handle *, int);
+    if (is_fake_hnd(h)) return -2;
+    if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_attach_kernel_driver");
+    return real ? real(h, n) : -12;
+}
+
+EXPORT int libusb_get_interface_alt_setting(libusb_device_handle *h, int n)
+{
+    static int (*real)(libusb_device_handle *, int);
+    if (is_fake_hnd(h)) return 0;
+    if (!real) real = (int (*)(libusb_device_handle *, int))sym("libusb_get_interface_alt_setting");
+    return real ? real(h, n) : -12;
+}
+
+EXPORT int libusb_get_status(libusb_device_handle *h, int type, int index, uint16_t *data)
+{
+    static int (*real)(libusb_device_handle *, int, int, uint16_t *);
+    if (is_fake_hnd(h)) {
+        if (data) data[0] = 0;
+        return -1;                      /* IO: the stand-in has no status pipe */
+    }
+    if (!real) real = (int (*)(libusb_device_handle *, int, int, uint16_t *))sym("libusb_get_status");
+    return real ? real(h, type, index, data) : -12;
+}
+
+EXPORT int libusb_get_string_descriptor(libusb_device_handle *h, uint8_t index, uint16_t langid,
+                                        unsigned char *data, int len)
+{
+    static int (*real)(libusb_device_handle *, uint8_t, uint16_t, unsigned char *, int);
+    if (is_fake_hnd(h)) return -6;      /* BUSY, same answer the phone gave */
+    if (!real) real = (int (*)(libusb_device_handle *, uint8_t, uint16_t, unsigned char *, int))
+        sym("libusb_get_string_descriptor");
+    return real ? real(h, index, langid, data, len) : -12;
 }
 
 /* Loaded before carlife's main(): make the directory, open the log, say who we
@@ -1045,6 +2187,7 @@ __attribute__((constructor)) static void shim_start(void)
     clock_gettime(CLOCK_REALTIME, &ts);
     mkdir(SHM_DIR, 0777);
     chmod(SHM_DIR, 0777);
+    fake_on = fake_wanted();
 
     snprintf(path, sizeof path, "%s/tap.txt", SHM_DIR);
     log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1055,5 +2198,7 @@ __attribute__((constructor)) static void shim_start(void)
         (long long)ts.tv_sec, ts.tv_nsec / 1000000);
     tap("argv0=%s", program_invocation_short_name ? program_invocation_short_name : "?");
     tap("libusb-1.0 %s", sym("libusb_bulk_transfer") ? "reachable" : "NOT FOUND (dlopen'd later?)");
+    tap("stand-in %s (ports %d/%d/%d for channels 1/2/3)",
+        fake_on ? "on" : "off", FAKE_BASE_PORT, FAKE_BASE_PORT + 1000, FAKE_BASE_PORT + 2000);
     put_state();
 }

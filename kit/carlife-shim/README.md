@@ -1,6 +1,34 @@
 # carlife-shim
 
-An `LD_PRELOAD` library for the unit's own `carlife`. This build only watches.
+An `LD_PRELOAD` library for the unit's own `carlife`. Up to 0.5.0 it only
+watched. From 0.6.0 it takes over: with no phone on the port it presents a
+device carlife can open, answers the AOA handshake itself, and carries channel
+traffic to a machine on the other end of the ENET cable.
+
+## Two halves, and they fail separately
+
+| | what it does | seen in |
+|---|---|---|
+| the stand-in | adds a fake AOA device to the enumeration, answers 51/52/53, hands out a two-interface config (`if0 ff/ff 81-in 01-out`, `if1 ff/42`) | `open -> 0 (stand-in 18d1:2d01)`, `fake: on (switched)` |
+| the bridge | reassembles `[chan][len][body]` out of carlife's writes and forwards whole messages over TCP; does the reverse for reads | `bridge ch2 -> 169.254.x.x:8240` |
+
+The fake device is appended **behind** the real enumeration, never in front of
+it, so a phone that is actually plugged in still sorts first. Two switches turn
+it off without touching the Store: `CARLIFE_SHIM_FAKE=0` in the environment, or
+a file `/dev/shm/carlife-shim/nofake`.
+
+Ports are the channel number times a thousand plus 7240 — channel 1 control on
+7240, channel 2 video on 8240, channel 3 media on 9240. The far side listens;
+this side connects. Where to connect is `CARLIFE_SHIM_PEER`, else
+`/var/opt/carlife-shim/current/peer.txt`, else the one other complete entry in
+`169.254/16` in `/proc/net/arp` — the last one because a laptop's link-local
+address is not a constant and an address baked in at install time goes stale the
+first time the cable moves.
+
+TCP carries the **whole message**, header included, not the bare body. That is
+what keeps this side free of channel semantics: it never has to know that
+channel 1 frames with a `u16` length and channel 2 with a `u32`, only that eight
+bytes say where the next message ends.
 
 ## Why this shape
 
@@ -74,7 +102,17 @@ last in: ep=0x81 00000f00 05ee6d31 not a header
 last out: ep=0x01 00000001 00018009 not a header
 frames: 34 in / 12 out, aligned, 1x4 2001x30
 async: 1636 submits, 3259 loops
+fake: on (switched), claims 1, bulk 812/34, 169.254.110.252
+bridge: ch2 -> 169.254.110.252:8240
 ```
+
+`fake:` is the stand-in's line. `switched` is the milestone — carlife took the
+fake device through the AOA handshake and asked it to come back as an accessory,
+which is the point where a real phone would start streaming. `bulk` counts the
+transfers the bridge handled in each direction. `bridge:` names the last channel
+that connected or the reason it did not, and it is the line to read when the
+picture is black: `refused` means the far side is not listening, `no peer` means
+the address could not be worked out, `closed by peer` means it was and went away.
 
 `first in` and `first out` are the first transfer of each direction after
 `libusb_open`, printed as the two four-byte words the framer reads plus the size
@@ -111,11 +149,12 @@ Two tests keep that honest. A header is only believed when the channel is small
 (`<= 10000`), the length is at most 8 MB, **and the length is not zero**: eight
 zero bytes pass every other check, and a stream of them inside a picture is the
 commonest way to lock onto nonsense. `test/framer_test.py` lifts the functions
-out of `shim.c` and runs seven cases — split messages, two messages in one
-transfer, a mid-message chunk, an empty message, garbage then a clean message, and
-the car's own case of a picture that starts mid-frame with a header after it —
-because a wrong count in there looks like a quiet channel, which is the hardest
-kind of wrong to notice from the screen.
+out of `shim.c` and runs eight cases — split messages, two messages in one
+transfer, a mid-message chunk, an empty message, garbage then a clean message,
+the car's own case of a picture that starts mid-frame with a header after it,
+and a header that arrives as a transfer of its own — because a wrong count in
+there looks like a quiet channel, which is the hardest kind of wrong to notice
+from the screen.
 
 `tap.txt` is the call log, one line per call, capped at 256 KB so a long drive
 cannot fill shm. The first three transfers of each endpoint carry the first
@@ -175,26 +214,41 @@ failure it prevents is invisible from the outside:
    `boot.txt` says "rolled back". A tool that leaves carlife down is worse than
    no tool.
 
-## What it does not do yet
+## What 0.6.0 does, and what it still does not
 
-It does not replace anything. The next build is the one that presents a device
-carlife can open when no phone is on the port, and bridges the bulk packets to
-the phone over TCP on the same channel offsets `carlife-link` already uses
-(`0, 1000, 2000, 2001, 2002, 2100` added to `7240`). What this session buys is the
-call sequence, the interface and endpoint shape a stand-in has to present
-(`cfg1, 2if`, class `ff`, `81` in / `01` out with 512-byte packets), and — from
-`frames:` — the channel numbers with their traffic share, so the bridge has
-something to check itself against before it is driven.
+The five questions above were answered by the 0.4.0/0.5.0 sessions and are why
+this build is short: carlife calls `libusb_get_device_list`, picks one device,
+opens it, claims interface 0, and then uses the **synchronous** API with a
+204800-byte read buffer and a one-second timeout.
 
-One thing to keep in mind for that build: carlife moves data with the **async**
-API (`async: … submits`), so a stand-in has to *complete* transfers rather than
-return bytes from a blocking call.
+The async question was answered the other way round from what it looked like.
+`async: 1636 submits` does not mean carlife uses `libusb_submit_transfer`: every
+one of those submits is libusb's own, made inside `libusb_bulk_transfer`. Two
+things prove it. `submit ep=0x81 type=2 len=204800` is followed immediately by
+`bulk in ep=0x81 want=204800` — the same length, because one is the inside of
+the other. And the control transfers show `submit ep=0x00 type=0 len=263` for a
+255-byte descriptor read: 263 is 255 plus the eight-byte setup packet, which is
+how an async control transfer counts its buffer and how a synchronous caller
+never does.
+
+That distinction is the whole reason the bridge is a few hundred lines instead
+of a transfer lifecycle: intercepting a blocking call means returning bytes, and
+intercepting `submit_transfer` would have meant completing transfers from an
+event loop of our own.
+
+What is still missing is the picture. The bridge carries whatever the far side
+sends; `kit/carlife-phone/fake_phone.py` does the handshake and can repeat a raw
+H.264 stream, but nothing here encodes video, and channel 3 (media, 3840-byte
+packets at 31/s on this unit) is counted and forwarded without being understood.
 
 ## Build
 
 ```sh
 ./build.sh
-python test/framer_test.py     # the stream framer, six cases
+python test/framer_test.py                          # the stream framer, eight cases
+python test/bridge_test.py                          # both bridge directions, eight cases
+python ../carlife-phone/fake_phone.py --selftest    # the wire format
+python ../carlife-phone/fake_phone.py --loopback    # the whole handshake
 ```
 
 `zig cc -fPIC -shared -target x86_64-linux-gnu.2.27`, then
@@ -204,3 +258,56 @@ will not preload), the six symbols the shim exists for are really exported, and
 no `GLIBC_2.33+` version strings — a `.so` asking for a newer glibc fails to
 load into a 2.27 process with "version not found", and the visible symptom is
 carlife not starting.
+
+## Running it on a bench
+
+The far side first, so its listeners are up before carlife restarts and starts
+connecting:
+
+```sh
+python kit/carlife-phone/fake_phone.py
+```
+
+It prints the three listeners, then every command the unit sends. Then install
+`carlife-shim` 0.6.0 from the Store; `install.sh` restarts carlife, and the
+stand-in is on from that moment. On the unit, **CarLife 诊断 → 接管记录** should
+show, in this order:
+
+```
+stand-in on (ports 7240/8240/9240 for channels 1/2/3)
+libusb_init -> 0
+get_device_list -> 7
+  dev 6: 2d95:7000 class=00 cfgs=1 (stand-in)
+open -> 0 (stand-in 2d95:7000)
+ctrl rt=c0 req=51 val=0 idx=0 len=2 -> 2  0200
+ctrl rt=40 req=52 ... -> 5
+ctrl rt=40 req=53 val=0 idx=0 len=0 -> 0 (stand-in)
+fake: AOA START - switching to 18d1:2d01
+close (stand-in)
+open -> 0 (stand-in 18d1:2d01)
+get_active_config -> 0 (stand-in)
+cfg1, 2if: if0 ff/ff: 81/a02/512 01/a02/512 if1 ff/42: 02/a02/512 82/a02/512
+claim_interface(0) -> 0 (stand-in)
+bridge ch1 -> 192.168.x.x:7240
+```
+
+and the bench should answer:
+
+```
+cmd   protocol 2.0
+cmd   head unit wants identity
+cmd   encoder 1920x720@30
+cmd   start video
+```
+
+If the log stops at `get_device_list`, the fake device did not get picked.
+If it stops at `ctrl req=51`, carlife opened the device but did not get to the
+handshake. If it reaches `bridge ch1` and the bench sees nothing, the port or
+the address is wrong and `state.txt`'s `bridge:` line says which. If it reaches
+`start video` and the picture is black, the handshake worked and there is simply
+no H.264 to show — pass `--h264`.
+
+Every one of those lines is world-readable in
+`/dev/shm/carlife-shim/tap.txt`, so this works without ssh: the same text is on
+the diagnostic screen.
+
