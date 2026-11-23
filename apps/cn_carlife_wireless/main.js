@@ -10,10 +10,20 @@
  * draws them full-screen; taps go back through link's control socket as
  * normalised points.
  *
+ * Flow (the simplest it can be):
+ *   - no picture yet  -> one big "connect hotspot" button in the middle;
+ *                         tapping it opens the Wi-Fi page (scan / pick / join).
+ *   - hotspot joined   -> the button goes away and the CarLife picture shows.
+ *   - next launch      -> the remembered hotspot is joined automatically, so
+ *                         the picture appears without touching anything.
+ *
  * This app never starts the native helpers - a JS app cannot spawn processes.
- * The carlife-wireless service owns both and restarts them together. When no
- * picture is coming this page says so plainly: a dark screen is otherwise
- * indistinguishable from a phone that never connected.
+ * The carlife-wireless service owns both and restarts them together.
+ *
+ * NOTE on touch: the iDrive 7 HMI keeps its own back column (left) and status
+ * icons (top right). A tap there is claimed by the HMI, so every control here
+ * lives in the middle of the canvas, and while there is no picture every tap
+ * is swallowed by the app (never forwarded to the phone or leaked to the HMI).
  *
  * Split out so each half can be checked on a desk:
  *   carlife_source.js  CLMF frames off the socket (with its own tests)
@@ -36,6 +46,7 @@ const ATLAS = SRC_W * (SRC_H + (SRC_H >> 1));
 const SOCK = '/dev/shm/carlife-wireless/live.sock';
 const HOST_FILE = '/dev/shm/carlife-wireless/host';
 const CTL_PORT = 7399;              /* carlife-link's app control socket */
+const STATUS_JSON = '/run/mgu-uplink/status.json';
 
 const IMG = 1;                      /* image slot for the frame */
 
@@ -108,22 +119,61 @@ mgu.run({
             try { ctl.write(cmd + ' ' + px + ' ' + py + '\n'); } catch (e) { /* closed */ }
         }
 
-        /* The Wi-Fi button sits at the top right of every frame (its own
-         * drawing below); all other taps go to the phone when a picture is up. */
-        const WIFI_BTN = { x: W - 186, y: 14, w: 172, h: 54 };
+        /* The one big "connect" button, dead centre, well inside the HMI's
+         * claimed touch area (away from the left back column and the top-right
+         * status icons). */
+        const BTN_W = 440, BTN_H = 110;
+        const WIFI_BTN = { x: (W - BTN_W) / 2, y: (H - BTN_H) / 2, w: BTN_W, h: BTN_H };
         function inWifiButton(x, y) {
             return x >= WIFI_BTN.x && x <= WIFI_BTN.x + WIFI_BTN.w &&
                 y >= WIFI_BTN.y && y <= WIFI_BTN.y + WIFI_BTN.h;
         }
+
+        /* ---------- automatic reconnect of the remembered hotspot ---------- */
+        let autoConnecting = false;
+        let autoMsg = '';
+        function rememberedSsid() {
+            return String(settings.get('wifi_ssid') || '').trim();
+        }
+        function alreadyConnected(ssid) {
+            try {
+                const st = JSON.parse(fs.readFileSync(STATUS_JSON, 'utf8'));
+                const w = st.wifi || {};
+                return (w.link === 'connected' || w.link === 'online') && w.ssid === ssid;
+            } catch (e) { return false; }
+        }
+        function autoConnect() {
+            const ssid = rememberedSsid();
+            if (!ssid || autoConnecting) return;
+            if (alreadyConnected(ssid)) {
+                autoMsg = '已连接 ' + ssid + '，等待画面…';
+                return;
+            }
+            autoConnecting = true;
+            autoMsg = '';
+            const psk = String(settings.get('wifi_psk') || '').trim();
+            wifiPage.connect(ssid, psk).then((r) => {
+                autoConnecting = false;
+                if (r && r.ok) autoMsg = '已连接 ' + ssid + '，等待画面…';
+                else autoMsg = '自动连接 ' + ssid + ' 失败，点下方按钮手动连接';
+            });
+        }
+        /* give carlife-wifi.service a moment to be up before the first attempt */
+        setTimeout(autoConnect, 800);
+
+        /* ---------- touch routing ---------- */
         if (ctx.onTouch) {
             ctx.onTouch((phase, x, y) => {
                 if (page === 'wifi') return wifiPage.touch(phase, x, y);
-                if (phase === 1 && inWifiButton(x, y)) {
-                    wifiPage.refresh();
-                    page = 'wifi';
+                if (!haveFrame) {
+                    /* No picture: only the connect button acts, and the app
+                     * swallows every other tap so nothing leaks to the HMI. */
+                    if (phase === 1 && inWifiButton(x, y) && !autoConnecting) {
+                        wifiPage.refresh();
+                        page = 'wifi';
+                    }
                     return true;
                 }
-                if (!haveFrame) return false;
                 sendTouch(phase, x, y);
                 return true;                    /* the whole gesture belongs to the phone */
             });
@@ -144,24 +194,24 @@ mgu.run({
 
                 if (settings.get('showStats')) {
                     const age = firstFrameAt ? ((Date.now() - firstFrameAt) / 1000).toFixed(0) : '0';
-                    cv.text('CarLife ' + source.live + ' frames · ' + age + 's', 16, 24, 18, '#ffffff');
+                    cv.text('CarLife ' + source.live + ' frames · ' + age + 's', 100, 100, 18, '#ffffff');
                 }
-                drawWifiButton(cv);
                 return ui.image('MAIN_GFX', cv);
             }
-            /* No picture: say exactly why, rather than showing a black screen
-             * that looks like a broken app. */
-            const msg = status || 'waiting for the phone';
-            cv.text('CarLife 无线投屏', W / 2, H / 2 - 30, 30, '#ffffff', { align: 'center', literal: true });
-            cv.text(msg, W / 2, H / 2 + 16, 20, '#9aa0a6', { align: 'center', literal: true });
-            cv.text('手机开热点并打开百度 CarLife，点右上角「连热点」在本应用内连接', W / 2, H / 2 + 52, 17, '#6b7280', { align: 'center', literal: true });
-            drawWifiButton(cv);
+            /* No picture yet: one centred button and a plain reason why. */
+            drawConnectButton(cv);
             return ui.image('MAIN_GFX', cv);
         }
-        function drawWifiButton(cv) {
-            cv.roundRect(WIFI_BTN.x, WIFI_BTN.y, WIFI_BTN.w, WIFI_BTN.h, 10, '#3b82f6');
-            cv.text('连热点', WIFI_BTN.x + WIFI_BTN.w / 2, WIFI_BTN.y + 35, 20,
+        function drawConnectButton(cv) {
+            const b = WIFI_BTN;
+            cv.text('CarLife 无线投屏', W / 2, b.y - 64, 36, '#ffffff', { align: 'center', literal: true });
+            const sub = autoConnecting ? ('正在连接 ' + rememberedSsid() + '…') : (status || '等待连接手机');
+            cv.text(sub, W / 2, b.y - 26, 20, '#9aa0a6', { align: 'center', literal: true });
+            cv.roundRect(b.x, b.y, b.w, b.h, 16, '#3b82f6');
+            cv.text(autoConnecting ? '连接中…' : '连接热点', W / 2, b.y + b.h / 2 + 10, 32,
                 '#ffffff', { align: 'center', literal: true });
+            const hint = autoMsg || '点击后选择手机热点，连接成功即显示 CarLife 画面';
+            cv.text(hint, W / 2, b.y + b.h + 44, 18, '#6b7280', { align: 'center', literal: true });
         }
         ctx.loop('MAIN', 30, render);
 

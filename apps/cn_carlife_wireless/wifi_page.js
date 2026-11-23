@@ -13,6 +13,14 @@
  *
  * No passwords are logged or drawn. The reply from the uplink is shown as-is
  * when it fails, so a short password or a wrong band is understandable.
+ *
+ * The page remembers the last joined SSID (and the password when one was
+ * typed) so the app can reconnect automatically on the next launch.
+ *
+ * Every tappable control sits inside the app's safe touch area: the iDrive 7
+ * HMI keeps a back-arrow column on the left (x < 84) and its status icons on
+ * the top right (x > 1340, y < 76). Anything drawn there is shown but its
+ * taps go to the HMI, so keep all buttons at x >= 100, y >= 90.
  */
 const fs = require('fs');
 const net = require('net');
@@ -114,6 +122,24 @@ class WifiPage {
         setTimeout(() => { this.refresh(); }, 1200);
     }
 
+    /* The single connection path used both by a tap on a network and by the
+     * app's automatic reconnect at launch. Remembers the SSID on success. */
+    async connect(ssid, psk) {
+        if (this.busy) return { ok: false, error: '正在处理中' };
+        this.busy = true;
+        this.msg = '正在连接 ' + ssid + '…';
+        const r = await this.request({ op: 'wifi-connect', ssid, psk: psk || '' });
+        this.busy = false;
+        if (r && r.ok) {
+            try { this.settings.set('wifi_ssid', ssid); } catch (e) { /* read-only */ }
+            this.msg = '已连接 ' + ssid;
+        } else {
+            this.msg = '连接失败：' + ((r && r.error) || '未知错误');
+        }
+        this.refresh();
+        return r;
+    }
+
     async join(net) {
         if (this.busy) return;
         let psk = '';
@@ -131,20 +157,14 @@ class WifiPage {
                 return;
             }
         }
-        this.busy = true;
-        this.msg = '正在连接 ' + net.ssid + '…';
-        const r = await this.request({ op: 'wifi-connect', ssid: net.ssid, psk });
-        this.busy = false;
-        if (!r.ok) {
-            this.msg = '连接失败：' + (r.error || '未知错误');
-            this.refresh();
-            return;
+        /* Keep the password for next launch's automatic reconnect. */
+        if (psk) { try { this.settings.set('wifi_psk', psk); } catch (e) { /* read-only */ } }
+        const r = await this.connect(net.ssid, psk);
+        /* Back to the picture as soon as the connect was accepted; DHCP takes a
+         * moment and the stream service picks up the lease on its own. */
+        if (r && r.ok) {
+            setTimeout(() => { try { this.onBack(); } catch (e) { /* app closing */ } }, 2500);
         }
-        this.msg = '已提交连接，正在等待热点…';
-        this.refresh();
-        /* The stream service picks up the lease as soon as DHCP is done. Give
-         * the app back to the picture; the status line there says "waiting". */
-        setTimeout(() => { try { this.onBack(); } catch (e) { /* app closing */ } }, 3500);
     }
 
     /* Draw into the canvas main.js already cleared. Record tap zones as we go. */
@@ -154,45 +174,47 @@ class WifiPage {
         this.zones = [];
         const zone = (x, y, w, h, fn) => this.zones.push({ x, y, w, h, fn });
 
-        cv.text('连接手机热点', 56, 58, 34, fg, { literal: true });
+        /* All content starts below the HMI header and right of the back column
+         * (safe area: x >= 100, y >= 90 on the 1600x720 canvas). */
+        cv.text('连接手机热点', 100, 104, 34, fg, { literal: true });
 
         const w = this.wifi;
         const line = !w ? 'mgu-uplink 未运行'
             : w.link === 'connected' || w.link === 'online' ? ('已连接 ' + (w.ssid || '') + ' · ' + w.link)
                 : w.enabled ? ('Wi-Fi 已开启 · ' + (w.link || 'idle')) : 'Wi-Fi 已关闭';
-        cv.text(line, 56, 104, 22, dim, { literal: true });
+        cv.text(line, 100, 142, 22, dim, { literal: true });
 
-        const by = 138;
-        this.button(cv, 56, by, 300, 64, w && w.enabled ? '关闭 Wi-Fi' : '开启 Wi-Fi', () => this.toggle());
-        zone(56, by, 300, 64, () => this.toggle());
-        this.button(cv, 372, by, 220, 64, '扫描', () => this.scan());
-        zone(372, by, 220, 64, () => this.scan());
-        this.button(cv, W - 296, by, 240, 64, '返回画面', () => this.onBack());
-        zone(W - 296, by, 240, 64, () => this.onBack());
+        const by = 176;
+        this.button(cv, 100, by, 280, 64, w && w.enabled ? '关闭 Wi-Fi' : '开启 Wi-Fi', () => this.toggle());
+        zone(100, by, 280, 64, () => this.toggle());
+        this.button(cv, 400, by, 200, 64, '扫描', () => this.scan());
+        zone(400, by, 200, 64, () => this.scan());
+        this.button(cv, W - 340, by, 240, 64, '返回画面', () => this.onBack());
+        zone(W - 340, by, 240, 64, () => this.onBack());
 
         cv.text(this.busy ? (this.msg || '处理中…') : (this.msg || '选择手机的热点名称'),
-            56, 238, 20, this.msg && /失败|未|请/.test(this.msg) ? '#f59e0b' : dim, { literal: true });
+            100, 274, 20, this.msg && /失败|未|请/.test(this.msg) ? '#f59e0b' : dim, { literal: true });
 
-        const top = 268, rh = 52;
+        const top = 300, rh = 52;
         if (!this.networks.length) {
-            cv.text('没有看到热点。打开手机热点与百度 CarLife，然后点击“扫描”。', 70, top + 30, 20, dim, { literal: true });
+            cv.text('没有看到热点。打开手机热点与百度 CarLife，然后点击“扫描”。', 112, top + 30, 20, dim, { literal: true });
         }
         this.networks.forEach((n, i) => {
             const y = top + i * rh;
-            cv.roundRect(56, y, W - 112, rh - 6, 10, i % 2 ? '#1f2937' : '#273244');
-            cv.text(n.ssid || '(未命名)', 80, y + 32, 21, fg, { literal: true });
+            cv.roundRect(100, y, W - 200, rh - 6, 10, i % 2 ? '#1f2937' : '#273244');
+            cv.text(n.ssid || '(未命名)', 124, y + 32, 21, fg, { literal: true });
             const tags = [];
             if (n.secure) tags.push('加密');
             if (n.saved) tags.push('已保存');
             if (n.current) tags.push('当前');
             const sig = signalText(n.signal);
             if (sig) tags.push('信号' + sig);
-            cv.text(tags.join(' · '), W - 80, y + 32, 18, dim, { align: 'right', literal: true });
-            zone(56, y, W - 112, rh - 6, () => this.join(n));
+            cv.text(tags.join(' · '), W - 124, y + 32, 18, dim, { align: 'right', literal: true });
+            zone(100, y, W - 200, rh - 6, () => this.join(n));
         });
 
         cv.text('加密热点首次连接可用车机键盘输入密码；也可在 设置 → 热点密码 中预设。',
-            56, H - 28, 17, dim, { literal: true });
+            100, H - 28, 17, dim, { literal: true });
     }
 
     button(cv, x, y, w, h, label, fn) {
