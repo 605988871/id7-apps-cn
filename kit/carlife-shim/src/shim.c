@@ -2174,6 +2174,37 @@ EXPORT int libusb_get_string_descriptor(libusb_device_handle *h, uint8_t index, 
     return real ? real(h, index, langid, data, len) : -12;
 }
 
+/* Deprecated in libusb but still exported and still takes a handle. The
+ * capture has no call to it; it is here for the same reason as the block
+ * above - one interposition missing is one dereference of a static struct. */
+EXPORT int libusb_get_descriptor(libusb_device_handle *h, uint8_t type, uint8_t index,
+                                 unsigned char *data, int len)
+{
+    static int (*real)(libusb_device_handle *, uint8_t, uint8_t, unsigned char *, int);
+    if (is_fake_hnd(h)) return -6;
+    if (!real) real = (int (*)(libusb_device_handle *, uint8_t, uint8_t, unsigned char *, int))
+        sym("libusb_get_descriptor");
+    return real ? real(h, type, index, data, len) : -12;
+}
+
+/* Takes a device, not a handle, and is the other way to get the config the
+ * stand-in has to present. Answering by value number is enough: there is one
+ * configuration and its value is 1. */
+EXPORT int libusb_get_config_descriptor_by_value(libusb_device *dev, uint8_t value,
+                                                 struct libusb_config_descriptor **cfg)
+{
+    static int (*real)(libusb_device *, uint8_t, struct libusb_config_descriptor **);
+    if (is_fake_dev(dev)) {
+        if (value != 1) return -2;
+        fake_desc_init();
+        if (cfg) *cfg = &fcfg;
+        return 0;
+    }
+    if (!real) real = (int (*)(libusb_device *, uint8_t, struct libusb_config_descriptor **))
+        sym("libusb_get_config_descriptor_by_value");
+    return real ? real(dev, value, cfg) : -12;
+}
+
 /* Loaded before carlife's main(): make the directory, open the log, say who we
  * are. The first line of tap.txt is deliberately a sentence - a session that
  * comes back with an empty log means the library was never loaded, which is a
