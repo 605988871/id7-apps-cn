@@ -250,12 +250,42 @@ reassembled across reads, and if it does not, the symptom is a channel of
 garbage rather than an error. Each message now leaves as two transfers, header
 then body, exactly as the phone does it.
 
+## Why 0.6.2 has to inject a hotplug event
+
+`dev_aoa.so` does not poll. Its strings name the whole mechanism —
+`libusb_hotplug_register_callback`, `hotplug_callback_attach`,
+`hotplug_callback_detach`, `usb_monitor_thread`, `libusb_handle_events` — and the
+captured session agrees: `get_device_list` appears **once**, 31 minutes after
+carlife started, at the instant a phone went into the port.
+
+So a stand-in that only appears in the enumeration is never seen. With no phone
+on the port no bus event ever happens, nothing asks for a device list, and
+nothing opens us. That failure is indistinguishable from the shim not being
+loaded at all: `state: tap`, no bulk traffic, no bridge line.
+
+0.6.2 therefore passes the registration through to the real libusb — a real
+phone still wins — remembers the callback, and hands it our device pointer a few
+times after start-up. Running it on a thread of ours is not a liberty: libusb's
+hotplug callbacks already run on whatever thread called `libusb_handle_events`,
+so carlife's own locking around them is unchanged.
+
+Two things guard the real phone. The stand-in is appended **behind** the real
+enumeration, so a phone that is there sorts first; and if a phone is visible in
+that enumeration, the injector stands down and says so in the log rather than
+handing carlife a device it did not ask for.
+
+The serial string is answered too (`11ADC20H28000LA`, the phone this unit was
+captured with). carlife's attach reads it immediately after `open`, before it
+ever asks for the AOA protocol; answering BUSY there is what makes it log
+`exiting attach` and walk away from a device it had already accepted.
+
 ## Build
 
 ```sh
 ./build.sh
 python test/framer_test.py                          # the stream framer, eight cases
 python test/bridge_test.py                          # both bridge directions, eight cases
+python test/hotplug_test.py                         # the injection, three cases
 python ../carlife-phone/fake_phone.py --selftest    # the wire format
 python ../carlife-phone/fake_phone.py --loopback    # the whole handshake
 ```
@@ -281,13 +311,15 @@ python fake_phone.py --h264 out/test.h264
 
 It prints the three listeners, then every command the unit sends, then
 `video 1920x720, 300 pictures, 10 keyframes` once the unit asks for video. Then install
-`carlife-shim` 0.6.0 from the Store; `install.sh` restarts carlife, and the
+`carlife-shim` 0.6.2 from the Store; `install.sh` restarts carlife, and the
 stand-in is on from that moment. On the unit, **CarLife 诊断 → 接管记录** should
 show, in this order:
 
 ```
 stand-in on (ports 7240/8240/9240 for channels 1/2/3)
 libusb_init -> 0
+hotplug_register vid=-1 pid=-1 events=1 -> 0
+hotplug: ARRIVED to callback 0 (vid=-1 pid=-1, try 1)
 get_device_list -> 7
   dev 6: 2d95:7000 class=00 cfgs=1 (stand-in)
 open -> 0 (stand-in 2d95:7000)
@@ -312,7 +344,11 @@ cmd   encoder 1920x720@30
 cmd   start video
 ```
 
-If the log stops at `get_device_list`, the fake device did not get picked.
+If there is no `hotplug_register` line at all, `dev_aoa.so` did not get far
+enough to register — carlife failed earlier, and the lines above it say where.
+If `hotplug_register` fails with `-12`, this libusb was built without hotplug
+support and the stand-in has to be reached some other way. If the log stops at
+`get_device_list`, the fake device did not get picked.
 If it stops at `ctrl req=51`, carlife opened the device but did not get to the
 handshake. If it reaches `bridge ch1` and the bench sees nothing, the port or
 the address is wrong and `state.txt`'s `bridge:` line says which. If it reaches

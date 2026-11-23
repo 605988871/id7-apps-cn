@@ -188,7 +188,7 @@ static char last_in[140] = "(nothing yet)";
 static char last_out[140] = "(nothing yet)";
 static int64_t state_ms;
 
-/* ---- stand-in device and channel bridge (0.6.1) --------------------------
+/* ---- stand-in device and channel bridge (0.6.2) --------------------------
  *
  * The whole point of this file up to 0.5.0 was to find out how carlife talks
  * to a phone. It found out: one AOA accessory device, two bulk endpoints, and
@@ -1336,6 +1336,182 @@ static int fake_control(uint8_t rt, uint8_t req, uint16_t val, uint16_t idx,
     return -6;                          /* LIBUSB_ERROR_BUSY */
 }
 
+/* ---- hotplug injection ---------------------------------------------------
+ *
+ * dev_aoa.so does not poll for a phone. Its own strings say the shape:
+ * libusb_hotplug_register_callback, hotplug_callback_attach/detach,
+ * usb_monitor_thread, libusb_handle_events. The session this file was built
+ * from agrees: get_device_list appears exactly once, 31 minutes after carlife
+ * started, at the instant a phone went into the port.
+ *
+ * A stand-in that only appears in the enumeration is therefore never seen.
+ * With no phone on the port no bus event ever happens, so nothing asks for a
+ * device list and nothing opens us - and that failure looks exactly like the
+ * shim not being loaded at all: state: tap, no bulk traffic, no bridge line.
+ *
+ * So the callbacks are passed through to the real libusb (a real phone must
+ * still win) and remembered here. A thread then hands the attach callback our
+ * device pointer, spaced out, which is what libusb's own event thread does
+ * after a uevent. Running it on our thread is not taken lightly, but libusb's
+ * hotplug callbacks already run on whatever thread called
+ * libusb_handle_events, so carlife's locking around them is unchanged.
+ */
+#define HP_ARRIVED 1                    /* LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED */
+#define HP_DEPARTED 2                   /* LIBUSB_HOTPLUG_EVENT_DEVICE_DEPARTED */
+#define HP_ANY (-1)                     /* LIBUSB_HOTPLUG_MATCH_ANY */
+
+typedef int (*hotplug_fn)(libusb_context *ctx, libusb_device *dev, int event, void *user_data);
+
+struct hp_slot {
+    hotplug_fn fn;
+    void *user_data;
+    int events, vid, pid;
+};
+
+static struct hp_slot hp[4];
+static int hp_n;
+static int hp_started;
+static libusb_context *hp_ctx;
+static volatile int hp_landed;
+static volatile int real_phone_seen;    /* a phone is in the enumeration */
+
+/* Retries rather than one shot: the callback is registered from inside
+ * carlife's own start-up and nothing guarantees its monitor thread is already
+ * blocked in libusb_handle_events by then. Four attempts over five seconds
+ * costs no visible time and takes that ordering out of the equation. */
+static void *hp_inject(void *arg)
+{
+    int attempt, i;
+
+    (void)arg;
+    for (attempt = 0; attempt < 4 && !hp_landed; attempt++) {
+        struct timespec ts;
+        int n, matched = 0;
+
+        ts.tv_sec = attempt ? 1 : 0;
+        ts.tv_nsec = attempt ? 500000000L : 300000000L;
+        nanosleep(&ts, NULL);
+
+        pthread_mutex_lock(&lock);
+        n = hp_n;
+        pthread_mutex_unlock(&lock);
+        if (n > 4) n = 4;
+
+        /* A phone that is already in the enumeration keeps the port. carlife
+         * reached it through the real hotplug path, and handing it our device
+         * afterwards would mean opening the stand-in while a real phone sits
+         * there - the one outcome this component must never cause. */
+        if (real_phone_seen) {
+            pthread_mutex_lock(&lock);
+            tap("hotplug: a real phone is enumerated, not injecting");
+            pthread_mutex_unlock(&lock);
+            break;
+        }
+
+        for (i = 0; i < n; i++) {
+            hotplug_fn fn;
+            void *ud;
+            int ev, vid, pid;
+
+            pthread_mutex_lock(&lock);
+            fn = hp[i].fn;
+            ud = hp[i].user_data;
+            ev = hp[i].events;
+            vid = hp[i].vid;
+            pid = hp[i].pid;
+            pthread_mutex_unlock(&lock);
+
+            if (!fn || !(ev & HP_ARRIVED)) continue;
+            if (vid != HP_ANY && vid != 0x2d95) continue;
+            if (pid != HP_ANY && pid != 0x7000) continue;
+
+            matched = 1;
+            pthread_mutex_lock(&lock);
+            tap("hotplug: ARRIVED to callback %d (vid=%d pid=%d, try %d)",
+                i, vid, pid, attempt + 1);
+            pthread_mutex_unlock(&lock);
+
+            fn(hp_ctx, FAKE_DEV, HP_ARRIVED, ud);
+
+            if (fake_opened || fake_bulk_in) { hp_landed = 1; break; }
+        }
+
+        /* Nothing matched the stand-in's ids. dev_aoa may register only the
+         * accessory id, or a list of phone ids from a build this one does not
+         * know; either way there is one device handler behind it, so hand the
+         * stand-in to it once instead of failing silently. */
+        if (!matched && attempt == 0 && n > 0 && (hp[0].events & HP_ARRIVED) && hp[0].fn) {
+            pthread_mutex_lock(&lock);
+            tap("hotplug: no vid matched, trying callback 0 anyway");
+            pthread_mutex_unlock(&lock);
+            hp[0].fn(hp_ctx, FAKE_DEV, HP_ARRIVED, hp[0].user_data);
+            if (fake_opened || fake_bulk_in) hp_landed = 1;
+        }
+    }
+
+    pthread_mutex_lock(&lock);
+    tap("hotplug: injection %s", hp_landed ? "landed - carlife opened the stand-in"
+                                          : "did not land, see bridge:");
+    pthread_mutex_unlock(&lock);
+    return NULL;
+}
+
+EXPORT int libusb_hotplug_register_callback(libusb_context *ctx, int events, int flags,
+        int vendor_id, int product_id, int dev_class, hotplug_fn cb_fn, void *user_data,
+        int *handle)
+{
+    static int (*real)(libusb_context *, int, int, int, int, int, hotplug_fn, void *, int *);
+    int r;
+
+    if (!real)
+        real = (int (*)(libusb_context *, int, int, int, int, int, hotplug_fn, void *, int *))
+            sym("libusb_hotplug_register_callback");
+    r = real ? real(ctx, events, flags, vendor_id, product_id, dev_class, cb_fn, user_data, handle)
+             : NOT_SUPPORTED;
+
+    pthread_mutex_lock(&lock);
+    tap("hotplug_register vid=%d pid=%d events=%d -> %d", vendor_id, product_id, events, r);
+    if (r == 0 && cb_fn && hp_n < 4) {
+        hp[hp_n].fn = cb_fn;
+        hp[hp_n].user_data = user_data;
+        hp[hp_n].events = events;
+        hp[hp_n].vid = vendor_id;
+        hp[hp_n].pid = product_id;
+        hp_n++;
+        hp_ctx = ctx;
+        if (!hp_started && fake_wanted()) {
+            pthread_t t;
+            if (pthread_create(&t, NULL, hp_inject, NULL) == 0) {
+                pthread_detach(t);
+                hp_started = 1;
+            }
+        }
+    }
+    pthread_mutex_unlock(&lock);
+    tick();
+    return r;
+}
+
+EXPORT int libusb_hotplug_deregister_callback(libusb_context *ctx, int handle)
+{
+    static int (*real)(libusb_context *, int);
+    int r;
+
+    if (!real) real = (int (*)(libusb_context *, int))sym("libusb_hotplug_deregister_callback");
+    r = real ? real(ctx, handle) : NOT_SUPPORTED;
+    pthread_mutex_lock(&lock);
+    tap("hotplug_deregister -> %d", r);
+    pthread_mutex_unlock(&lock);
+    return r;
+}
+
+EXPORT int libusb_hotplug_get_user_data(libusb_context *ctx, int handle, void **user_data)
+{
+    static int (*real)(libusb_context *, int, void **);
+    if (!real) real = (int (*)(libusb_context *, int, void **))sym("libusb_hotplug_get_user_data");
+    return real ? real(ctx, handle, user_data) : NOT_SUPPORTED;
+}
+
 EXPORT int libusb_init(libusb_context **ctx)
 {
     static int (*real)(libusb_context **);
@@ -1409,6 +1585,10 @@ EXPORT ssize_t libusb_get_device_list(libusb_context *ctx, libusb_device ***list
             } else if (!desc_of || desc_of((*list)[i], &d) != 0) {
                 continue;
             }
+            /* A real phone on the port: the stand-in steps back, see hp_inject. */
+            if (!fake && ((d.idVendor == 0x2d95 && d.idProduct == 0x7000) ||
+                          (d.idVendor == 0x18d1 && d.idProduct == 0x2d01)))
+                real_phone_seen = 1;
             o += snprintf(dev_text + o, sizeof dev_text - (size_t)o, "%s%04x:%04x",
                           o ? " " : "", d.idVendor, d.idProduct);
             tap("  dev %d: %04x:%04x class=%02x cfgs=%d%s",
@@ -2084,10 +2264,28 @@ EXPORT int libusb_get_string_descriptor_ascii(libusb_device_handle *h, uint8_t i
     int r;
 
     if (is_fake_hnd(h)) {
+        /* carlife's attach reads the serial number immediately after opening,
+         * before it even asks for the AOA protocol - the captured session goes
+         * open -> descriptor -> langid -> string_ascii(3) -> req=51. Answering
+         * BUSY there is what makes it log "exiting attach" and walk away from a
+         * device it had already accepted, so the one string it asks for is
+         * answered, with the shape of the phone that was on this unit. */
+        static const char serial[] = "11ADC20H28000LA";
+        int n;
+
+        if (index != 3) {
+            pthread_mutex_lock(&lock);
+            tap("string_ascii(%u) -> -6 (stand-in)", index);
+            pthread_mutex_unlock(&lock);
+            return -6;
+        }
+        n = (int)sizeof serial - 1;
+        if (n > len) n = len;
+        if (n > 0 && data) memcpy(data, serial, (size_t)n);
         pthread_mutex_lock(&lock);
-        tap("string_ascii(%u) -> -6 (stand-in)", index);
+        tap("string_ascii(%u) -> %d \"%.*s\" (stand-in)", index, n, n, serial);
         pthread_mutex_unlock(&lock);
-        return -6;
+        return n;
     }
 
     if (!real) real = (int (*)(libusb_device_handle *, uint8_t, unsigned char *, int))
