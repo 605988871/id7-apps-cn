@@ -101,11 +101,15 @@ app 的「连热点」页读公开的 `/run/mgu-uplink/status.json` 拿扫描结
 
 **第一步：mgu-uplink 是否存在、Wi-Fi 是否连上（决定整个方案是否成立）**
 ```sh
-cat /run/mgu-uplink/status.json     # wifi.link 应为 online/connected，wifi.ssid 是手机热点
-cat /run/mgu-uplink/lease.json      # router = 手机 IP；run.sh 就是读这里
+cat /run/mgu-uplink/status.json     # wifi.link: connected=仅关联, online=已拿到 DHCP 租约
+cat /run/mgu-uplink/lease.json      # router = 手机 IP（只有 online 时才生成）
+cat /proc/net/route                 # wlan0 的默认网关，lease 缺失时的备用手机地址
 cat /var/opt/mgu-uplink/uids.d/carlife-wireless   # 应为 65534（Store 安装的白名单）
 ```
-- 在车机 UI 上：本应用右上角「连热点」能看到手机热点、点它输密码、状态变「已连接」
+- 0.6.0 起 `find-phone.sh` 依次尝试：设置里手填地址 → `lease.json` 的 router →
+  `/proc/net/route` 默认网关 → `status.json` 的 `wifi.ip` 推算网关 → `auto` 局域网发现。
+  所以**「已关联但没有租约」时取流服务也会启动**，不再卡在"尚未启动"。
+- 在车机 UI 上：本应用中间的「连接热点」能看到手机热点、点它输密码、状态变「已连接」
 - `status.json` 的 `wifi.link` 若为 `unavailable`，看 `error`——通常是车的 Wi-Fi 被关掉或车自身占用 `wlan0`
 - 本项目不需要车机"能否做 STA"的额外前提：`mgu-uplink` 已经通过车的 `wlan0` 解决
 
@@ -121,12 +125,19 @@ ls -l /dev/shm/carlife-wireless/wifi.sock # 应为 root:tm_oap_app，0660
 
 **第三步：链路是否连上**
 ```sh
+cat /dev/shm/carlife-wireless/run.txt            # 启动/重启原因、手机地址来源、哪一半退出
 cat /dev/shm/carlife-wireless/link.txt          # 看 state / match / frames
 cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 ```
 
 - `link.txt`: `state: streaming`、`match: yes`、`frames` 增长 → 取流成功
 - `decode.txt`: `frames` 增长、`errors: 0` → 解码成功
+- 应用主页面会把以上状态直接画出来，不用 SSH 也能定位卡在哪一步：
+  「热点：已关联…（尚未获取 IP 租约）」= mgu-uplink 只关联成功；
+  「取流服务：反复重启 · carlife-decode exited (rc N)」= 解码器起不来；
+  「取流服务：未检测到，请重装…」= 组件没装或服务没起来。
+- `run.sh` **不再删除** `link.txt`：0.5.0 每当 pipeline 有一半退出就删一次报告，
+  车上只会看到"取流：尚未启动"，真实原因被抹掉。
 
 **第四步：画面**
 打开应用，应显示完整 CarLife 画面。若黑屏，先看上面两个报告，不要猜。
@@ -137,7 +148,6 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 - **触摸**：已实现归一化坐标回传，但映射精度需上车实测校准。
 - **车型**：解码依赖车机自带的 Intel MSDK 2017（`libmfxhw64.so` API 1.24）+ libva；若车型不同可能缺失（install.sh 的 selftest 会报告）。
 - **网络白名单依赖 mgu-uplink**：`carlife-link` 降到 uid 65534 才能从车机 WiFi 发包；这依赖 Store 在装本组件时写好 `uids.d/carlife-wireless`。若白名单没写进去，link 会连不上手机——按上面"第一步"检查该文件。
-- **未推送**：代码在本地，尚未提交/推送 git，等上车验证通过后再定。
 
 ##  desk 回归测试（PC，不需要车）
 
@@ -148,6 +158,12 @@ python3 kit/carlife-wireless/link/test/test_link.py
 python3 kit/carlife-wireless/decode_math_test.py
 # 应用内连热点：桥接白名单、请求协议、版本一致
 python3 kit/carlife-wireless/wifi_test.py
+# 手机地址发现：手填 / lease / 默认路由 / status 推算 / auto
+python3 kit/carlife-wireless/test/find_phone_test.py
+# 启动器：不删 link.txt、崩溃时写 run.txt、无地址也启动链路
+python3 kit/carlife-wireless/test/run_sh_test.py
+# 车机模拟：占位帧、按钮、触摸、诊断显示（纯 Node，无需车机）
+node apps/cn_carlife_wireless/test/simulate_car.js
 # 显示链路（需先用 ffmpeg 从真实 h264 导出一帧）
 node apps/cn_carlife_wireless/test/test_display.js <frame720_nv12.yuv>
 ```

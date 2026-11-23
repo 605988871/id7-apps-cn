@@ -180,8 +180,9 @@ class WifiPage {
 
         const w = this.wifi;
         const line = !w ? 'mgu-uplink 未运行'
-            : w.link === 'connected' || w.link === 'online' ? ('已连接 ' + (w.ssid || '') + ' · ' + w.link)
-                : w.enabled ? ('Wi-Fi 已开启 · ' + (w.link || 'idle')) : 'Wi-Fi 已关闭';
+            : w.link === 'online' ? ('已连接 ' + (w.ssid || '') + (w.ip ? ' · ' + w.ip : ''))
+                : w.link === 'connected' ? ('已关联 ' + (w.ssid || '') + '（等待分配 IP）')
+                    : w.enabled ? ('Wi-Fi 已开启 · ' + (w.link || 'idle')) : 'Wi-Fi 已关闭';
         cv.text(line, 100, 142, 22, dim, { literal: true });
 
         const by = 176;

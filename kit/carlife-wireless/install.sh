@@ -10,13 +10,14 @@ LINK="$HERE/carlife-link"
 DECODE="$HERE/carlife-decode"
 BRIDGE="$HERE/wifi-bridge"
 RUN="$HERE/run.sh"
+FINDER="$HERE/find-phone.sh"
 DIR=/dev/shm/carlife-wireless
 BOOT=/dev/shm/carlife-wireless-boot.txt
 
 say() { echo "carlife-wireless: $*"; }
 boot() { printf '%s\n' "$*" >> "$BOOT" 2>/dev/null || true; }
 
-for f in "$LINK" "$DECODE" "$BRIDGE" "$RUN"; do
+for f in "$LINK" "$DECODE" "$BRIDGE" "$RUN" "$FINDER"; do
     [ -f "$f" ] || { echo "carlife-wireless: $f is missing from the package"; exit 1; }
 done
 
@@ -34,8 +35,23 @@ else
     boot "shm: $DIR cannot be created"
 fi
 
-chmod 0755 "$LINK" "$DECODE" "$BRIDGE" "$RUN" 2>/dev/null || true
+chmod 0755 "$LINK" "$DECODE" "$BRIDGE" "$RUN" "$FINDER" 2>/dev/null || true
 cp "$HERE/crop.json" "$DIR/crop.json" 2>/dev/null || true
+
+# Record what the stream service will see the moment it starts. A Wi-Fi that
+# is "connected" but not "online" has no lease yet: that used to look exactly
+# like a dead service from the app, with no way to tell them apart on a car.
+if [ -f /run/mgu-uplink/lease.json ]; then
+    boot "lease: present"
+else
+    boot "lease: absent (Wi-Fi may be associated but not an uplink yet)"
+fi
+if [ -f /run/mgu-uplink/status.json ]; then
+    boot "wifi link: $(sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /run/mgu-uplink/status.json | head -1)"
+else
+    boot "wifi link: no uplink status.json"
+fi
+boot "finder: $(sh "$HERE/find-phone.sh" 2>/dev/null | head -1)"
 
 # A binary can be present and executable and still fail because the ELF
 # interpreter named inside it is not on the unit. selftest proves it runs

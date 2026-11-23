@@ -2,12 +2,11 @@
 # carlife-wireless: take the phone's CarLife H.264 stream over WiFi and hand
 # full-frame pictures to the JS app on a unix socket.
 #
-# Joining the hotspot is NOT done here. MGU Store's own Wi-Fi page (Settings
-# -> Wi-Fi, backed by mgu-uplink) does that: it joins on the car's wlan0
-# through the car's supplicant without disturbing the car's hotspot or
-# wireless CarPlay. Once it is online, /run/mgu-uplink/lease.json carries the
-# hotspot gateway - which is the phone - so no IP has to be typed anywhere.
-# A hand-entered address in $HOST_FILE still overrides that as a fallback.
+# Joining the hotspot is done from the app (wifi-bridge -> mgu-uplink), not
+# here. find-phone.sh works out the phone's address from whatever the unit
+# knows about the network; see that script for the six sources and their
+# order. The address may not exist yet: in that case carlife-link runs in
+# discovery mode and picks the phone up by itself once wlan0 has an address.
 #
 # Two programs, one pipeline:
 #   carlife-link   --host <phone> --seconds 0 --video - --report link.txt
@@ -25,43 +24,68 @@ set -e
 HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 LINK="$HERE/carlife-link"
 DECODE="$HERE/carlife-decode"
-DIR=/dev/shm/carlife-wireless
-HOST_FILE="$DIR/host"
-LEASE=/run/mgu-uplink/lease.json
-PHONE=${CARLIFE_HOST:-}
+FINDER="$HERE/find-phone.sh"
+DIR=${CARLIFE_DIR:-/dev/shm/carlife-wireless}
+RUN_TXT="$DIR/run.txt"
 PORT=${CARLIFE_PORT:-7240}
 
 mkdir -p "$DIR"
 chmod 0777 "$DIR"
-# The linker runs as an unprivileged uid below: it cannot overwrite a report
-# left behind by an earlier root run. Start with a clean one.
-rm -f "$DIR/link.txt" 2>/dev/null || true
 
-# The uplink lease names the gateway of the network it joined - the phone's
-# hotspot. Read it first so joining in MGU Store is all the owner has to do.
-# sed, not node: this runs before any app is up and is retried every 5 s.
-if [ -z "$PHONE" ] && [ -f "$LEASE" ]; then
-    PHONE=$(sed -n 's/.*"router"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$LEASE" | head -1 | tr -d ' \r\n')
-fi
+# 0.5.0 used to delete link.txt on every start. When either half of the
+# pipeline died (a decoder with no MSDK, for instance) systemd restarted us
+# five seconds later and deleted the report again, so the app could only ever
+# say "not started" - even though carlife-link had reported a real reason.
+# Keep the report: write_report() uses tmp+rename in a 0777 directory, so an
+# unprivileged link can replace a file an earlier root run left behind.
+rm -f "$DIR/link.txt.tmp" 2>/dev/null || true
 
-# Older setups, or a unit without mgu-uplink: the app may have written the
-# address into the shm file. It wins over the lease when present.
-if [ -z "$PHONE" ] && [ -f "$HOST_FILE" ]; then
-    PHONE=$(head -1 "$HOST_FILE" | tr -d ' \r\n')
-fi
+# A short, stable report of what THIS launcher did. The app reads it when
+# link.txt is missing, which is the only way to tell "the service never ran"
+# from "the service ran but could not find the phone" on a car with no SSH.
+write_run() {
+    _state=$1
+    _detail=$2
+    _tmp="$RUN_TXT.tmp"
+    {
+        printf 'state: %s\n' "$_state"
+        printf 'phone: %s\n' "${PHONE:-none}"
+        printf 'source: %s\n' "${PHONE_SRC:-none}"
+        printf 'port: %s\n' "$PORT"
+        printf 'uptime: %s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo '?')"
+        printf 'detail: %s\n' "$_detail"
+    } > "$_tmp" 2>/dev/null || true
+    mv -f "$_tmp" "$RUN_TXT" 2>/dev/null || true
+}
 
-# No address yet: the phone is not connected. Exit so systemd retries; the
-# app's status page says "waiting" the whole time, with no black-screen mystery.
-if [ -z "$PHONE" ]; then
-    echo "carlife-wireless: no phone address (join the hotspot in MGU Store -> Settings -> Wi-Fi)" >&2
-    exit 3
+if [ -f "$FINDER" ]; then
+    # `sh`, not a direct exec: the version directory must be executable for
+    # the ELF helpers anyway, but a read-only/noexec mount would otherwise
+    # cost us the address discovery for no reason.
+    FOUND=$(sh "$FINDER" 2>/dev/null) || FOUND=""
+else
+    # A component update that somehow missed find-phone.sh: still read the
+    # uplink lease, then fall through to discovery rather than exiting.
+    FOUND=''
+    if [ -f /run/mgu-uplink/lease.json ]; then
+        r=$(sed -n 's/.*"router"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /run/mgu-uplink/lease.json | head -1 | tr -d ' \r\n')
+        [ -n "$r" ] && FOUND="$r|uplink lease (finder missing)" || true
+    fi
 fi
+case "$FOUND" in
+    *'|'*) PHONE=${FOUND%%|*}; PHONE_SRC=${FOUND#*|} ;;
+    *)     PHONE=$FOUND; PHONE_SRC='finder' ;;
+esac
+[ -n "$PHONE" ] || PHONE=auto
+[ -n "$PHONE_SRC" ] || PHONE_SRC='none'
+
+write_run 'starting' "launching link and decoder for $PHONE ($PHONE_SRC)"
 
 # crop.json lives beside the binaries in the installed version directory; the
 # decoder reads it from the shm dir, so keep a copy there where it is writable.
 cp "$HERE/crop.json" "$DIR/crop.json" 2>/dev/null || true
 
-echo "carlife-wireless: connecting to $PHONE:$PORT" >&2
+echo "carlife-wireless: phone=$PHONE source=$PHONE_SRC port=$PORT" >&2
 
 # mgu-uplink's firewall only lets whitelisted uids send out of the WiFi
 # interface, and it never whitelists root. component.json declares uid 65534
@@ -71,21 +95,65 @@ echo "carlife-wireless: connecting to $PHONE:$PORT" >&2
 # car's MSDK/GPU but opens no network socket.
 LINK_UID=65534
 
+# With no address, --find keeps link's own host at 127.0.0.1 (a local connect
+# that fails instantly) instead of handing getaddrinfo() the literal "auto",
+# which can block on a unit whose resolver is behind the uplink. Discovery
+# then rewrites the host as soon as the phone answers on the local /24.
+if [ "$PHONE" = auto ]; then
+    set -- --find
+else
+    set -- --host "$PHONE"
+fi
+
 # Run the pipeline with both children visible so that the death of either one
 # ends the group and systemd restarts both together. A bare `a | b` would leave
 # the shell alive when one side dies, leaving a half-broken session up.
-"$LINK" run --host "$PHONE" --port "$PORT" --seconds 0 \
+# Each half records its own exit status in a file. Watching those files is
+# more reliable than `kill -0` here: a zombie still answers kill(pid, 0) on
+# some shells, which used to leave this launcher spinning forever.
+rm -f "$DIR/link.rc" "$DIR/decode.rc" "$DIR/link.pid" "$DIR/decode.pid" 2>/dev/null || true
+
+( set +e
+  "$LINK" run "$@" --port "$PORT" --seconds 0 \
     --video - --report "$DIR/link.txt" --ctl 7399 --drop-uid "$LINK_UID" &
+  child=$!
+  printf '%s\n' "$child" > "$DIR/link.pid"
+  trap 'kill "$child" 2>/dev/null || true' TERM INT
+  wait "$child"
+  printf '%s\n' "$?" > "$DIR/link.rc" ) &
 link_pid=$!
-"$DECODE" --stdin --dir "$DIR" &
+( set +e
+  "$DECODE" --stdin --dir "$DIR" &
+  child=$!
+  printf '%s\n' "$child" > "$DIR/decode.pid"
+  trap 'kill "$child" 2>/dev/null || true' TERM INT
+  wait "$child"
+  printf '%s\n' "$?" > "$DIR/decode.rc" ) &
 decode_pid=$!
 
-trap 'kill "$link_pid" "$decode_pid" 2>/dev/null || true' EXIT INT TERM
+# Kill both the wrappers AND the real helpers. Killing only a wrapper would
+# leave its child as an orphan holding the control port and a second session
+# to the phone until systemd's cgroup cleanup catches up.
+trap 'for p in "$link_pid" "$decode_pid"; do kill "$p" 2>/dev/null || true; done
+      for f in "$DIR/link.pid" "$DIR/decode.pid"; do
+          [ -f "$f" ] && kill "$(head -1 "$f")" 2>/dev/null || true
+      done' EXIT INT TERM
 
 # Wait for either to finish. `wait -n` is not in the unit's old bash, so poll.
-while kill -0 "$link_pid" 2>/dev/null && kill -0 "$decode_pid" 2>/dev/null; do
+while [ ! -f "$DIR/link.rc" ] && [ ! -f "$DIR/decode.rc" ]; do
     sleep 1
 done
 
-echo "carlife-wireless: a pipeline stage ended, restarting" >&2
+# Name the half that died and its exit status: "decoder exited rc=1" on the
+# car's screen tells us the MSDK is unavailable, which no amount of waiting
+# for a phone address would have fixed.
+detail='a pipeline stage ended'
+if [ -f "$DIR/link.rc" ]; then
+    detail="carlife-link exited (rc $(head -1 "$DIR/link.rc" 2>/dev/null))"
+elif [ -f "$DIR/decode.rc" ]; then
+    detail="carlife-decode exited (rc $(head -1 "$DIR/decode.rc" 2>/dev/null))"
+fi
+
+write_run 'restarting' "$detail"
+echo "carlife-wireless: $detail, restarting" >&2
 exit 4

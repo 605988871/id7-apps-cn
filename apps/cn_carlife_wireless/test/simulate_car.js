@@ -163,25 +163,82 @@ function check(name, cond) {
     check('B2 placeholder frame ignored, button stays',
         c.image === 0 && c.roundRect >= 1);
 
-    /* C: diagnose() reads the native reports and shows the real reason.
-     * On Windows the car's /run and /dev/shm resolve under the drive root;
-     * write them, render, and read the drawn text. Cleaned up right after. */
+    /* C: diagnose() must name the stage that is actually stuck. 0.6.0 added
+     * the launcher (run.txt) and install (boot.txt) reports, and distinguishes
+     * an associated Wi-Fi from one that really has a DHCP lease. */
     const path = require('path');
     const fs = require('fs');
     const statusFile = path.resolve('/run/mgu-uplink/status.json');
+    const leaseFile = path.resolve('/run/mgu-uplink/lease.json');
     const linkFile = path.resolve('/dev/shm/carlife-wireless/link.txt');
+    const runFile = path.resolve('/dev/shm/carlife-wireless/run.txt');
+    const bootFile = path.resolve('/dev/shm/carlife-wireless-boot.txt');
+    const decodeFile = path.resolve('/dev/shm/carlife-wireless-decode.txt');
+    const allFiles = [statusFile, leaseFile, linkFile, runFile, bootFile, decodeFile];
+    const clearReports = () => {
+        for (const f of allFiles) { try { fs.rmSync(f); } catch (e) { /* absent */ } }
+    };
+    const put = (f, s) => {
+        fs.mkdirSync(path.dirname(f), { recursive: true });
+        fs.writeFileSync(f, s);
+    };
     try {
-        fs.mkdirSync(path.dirname(statusFile), { recursive: true });
-        fs.mkdirSync(path.dirname(linkFile), { recursive: true });
-        fs.writeFileSync(statusFile, JSON.stringify({ wifi: { link: 'connected', ssid: 'MyHotspot', enabled: true } }));
-        fs.writeFileSync(linkFile, 'state: no phone on the network\nerror: none\n');
+        /* Associated, but no lease: the exact state from the car photo. */
+        clearReports();
+        put(statusFile, JSON.stringify({ wifi: { link: 'connected', ssid: 'iQOO 12 Pro', enabled: true } }));
         c = render();
-        check('C1 diagnose shows hotspot connected', c.texts.some((t) => t.includes('已连接 MyHotspot')));
-        check('C2 diagnose shows the link reason', c.texts.some((t) => t.includes('找不到手机')));
+        check('C1 association without a lease is called out',
+            c.texts.some((t) => t.includes('已关联 iQOO 12 Pro')) &&
+            c.texts.some((t) => t.includes('尚未获取 IP 租约')));
+
+        put(leaseFile, JSON.stringify({ router: '192.168.43.1' }));
+        put(statusFile, JSON.stringify({ wifi: { link: 'online', ssid: 'iQOO 12 Pro', ip: '192.168.43.55' } }));
+        c = render();
+        check('C2 online shows the car address',
+            c.texts.some((t) => t.includes('已连接 iQOO 12 Pro · 192.168.43.55')));
+
+        put(linkFile, 'state: no phone on the network\nerror: none\n');
+        c = render();
+        check('C3 link report names the real reason', c.texts.some((t) => t.includes('找不到手机')));
+
+        fs.rmSync(linkFile);
+        put(runFile, 'state: starting\nphone: 192.168.43.1\nsource: default route on wlan0\n');
+        c = render();
+        check('C4 missing link report shows the launcher state',
+            c.texts.some((t) => t.includes('取流服务：已启动 → 192.168.43.1')) &&
+            c.texts.some((t) => t.includes('default route on wlan0')));
+
+        put(runFile, 'state: restarting\nphone: auto\nsource: auto discovery\n' +
+            'detail: carlife-decode exited (rc 1)\n');
+        c = render();
+        check('C5 restarting names the half that died',
+            c.texts.some((t) => t.includes('反复重启')) &&
+            c.texts.some((t) => t.includes('carlife-decode exited (rc 1)')));
+
+        /* A stale "streaming" from the previous session must not hide a fresh
+         * restart: compare the reports' mtimes, not just their existence. */
+        clearReports();
+        put(linkFile, 'state: streaming\n');
+        const past = new Date(Date.now() - 60000);
+        fs.utimesSync(linkFile, past, past);
+        put(runFile, 'state: restarting\ndetail: carlife-decode exited (rc 1)\n');
+        c = render();
+        check('C8 a stale streaming report does not hide a crash',
+            c.texts.some((t) => t.includes('反复重启')) &&
+            !c.texts.some((t) => t.includes('正在接收画面')));
+
+        clearReports();
+        put(bootFile, 'state carlife-wireless.service: inactive\n');
+        c = render();
+        check('C6 a dead service is named', c.texts.some((t) => t.includes('未运行（inactive）')));
+
+        clearReports();
+        c = render();
+        check('C7 no reports asks for a reinstall, never the old vague line',
+            c.texts.some((t) => t.includes('请重装 CarLife 无线组件')) &&
+            !c.texts.some((t) => t.includes('热点连上后自动开始')));
     } finally {
-        for (const f of [statusFile, linkFile, path.resolve('/dev/shm/carlife-wireless-decode.txt')]) {
-            try { fs.rmSync(f); } catch (e) { /* absent */ }
-        }
+        clearReports();
         for (const d of [path.resolve('/run'), path.resolve('/dev/shm')]) {
             try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* absent */ }
         }

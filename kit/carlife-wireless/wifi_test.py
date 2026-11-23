@@ -34,6 +34,8 @@ def main():
     c = text(os.path.join(KIT, 'wifi-bridge.c'))
     page = text(os.path.join(APP, 'wifi_page.js'))
     mainjs = text(os.path.join(APP, 'main.js'))
+    runsh = text(os.path.join(KIT, 'run.sh'))
+    finder = text(os.path.join(KIT, 'find-phone.sh'))
     component = json.loads(text(os.path.join(KIT, 'component.json')))
     app = json.loads(text(os.path.join(APP, 'app.json')))
 
@@ -66,6 +68,19 @@ def main():
     check(app['requires']['carlife-wireless'] == component['version'], 'app requires this component version')
     check(any(s['key'] == 'wifi_psk' and s['type'] == 'text' for s in app['settings']),
           'wifi_psk is a text setting (the HMI keyboard can fill it)')
+
+    print('stream launcher (regression for "connected hotspot, no stream"):')
+    paths = [f['path'] for f in component['files']]
+    check('find-phone.sh' in paths, 'component ships the address finder')
+    check('run.txt' in runsh, 'launcher writes its own report for the app')
+    check('rm -f "$DIR/link.txt"' not in runsh, 'launcher never deletes the link report')
+    check('find-phone.sh' in runsh and 'PHONE=auto' in runsh,
+          'no address still starts the link in discovery mode')
+    for key in ('/proc/net/route', 'lease.json', 'status.json', 'app setting'):
+        check(key in finder, 'finder covers %s' % key)
+    check('RUN_TXT' in mainjs and 'BOOT_TXT' in mainjs,
+          'app reads the launcher and install reports')
+    check('已关联' in mainjs, 'app distinguishes association from an online lease')
 
     print()
     if failed:

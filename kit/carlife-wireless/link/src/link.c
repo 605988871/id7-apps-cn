@@ -1335,6 +1335,9 @@ int main(int argc, char **argv)
     if (argc < 2) { usage(); return 2; }
     mode = argv[1];
     if (!strcmp(mode, "-h") || !strcmp(mode, "--help")) { usage(); return 0; }
+    /* install.sh proves every shipped binary can be executed on the unit.
+     * This must not open a socket, parse a report or need privileges. */
+    if (!strcmp(mode, "--selftest")) { printf("carlife-link ok\n"); return 0; }
 
     if (net_init() != 0) { fprintf(stderr, "winsock init failed\n"); return 2; }
     memset(&L, 0, sizeof L);

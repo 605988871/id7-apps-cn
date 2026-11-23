@@ -51,6 +51,12 @@ const STATUS_JSON = '/run/mgu-uplink/status.json';
  * carlife-link (state/error/host/stream), and the decode report goes to the
  * /dev/shm/<name>-decode.txt beside the shm dir (see decode.c set_dir). */
 const LINK_TXT = '/dev/shm/carlife-wireless/link.txt';
+/* run.txt is the launcher's own report (written by run.sh on every start and
+ * every restart); boot.txt is install.sh's selftest of the two services.
+ * Without them a missing link.txt can only be rendered as "not started",
+ * which is exactly what hid a dead carlife-wireless.service on the car. */
+const RUN_TXT = '/dev/shm/carlife-wireless/run.txt';
+const BOOT_TXT = '/dev/shm/carlife-wireless-boot.txt';
 const DECODE_TXT = '/dev/shm/carlife-wireless-decode.txt';
 const LEASE_JSON = '/run/mgu-uplink/lease.json';
 
@@ -236,22 +242,62 @@ mgu.run({
 
         /* A few short lines saying exactly where the pipeline is, read from
          * the native side's own reports, so a failed link names its reason
-         * instead of a bare "waiting". */
+         * instead of a bare "waiting".
+         *
+         * mgu-uplink uses link "connected" for a wpa_supplicant association
+         * and "online" only once it has a DHCP lease. They are NOT the same:
+         * a unit that associated but has no lease has no phone address for
+         * carlife-link to dial. Say which one it is on the screen. */
         function diagnose() {
             const lines = [];
+            let lease = null;
+            try { lease = JSON.parse(fs.readFileSync(LEASE_JSON, 'utf8')); } catch (e) { /* no lease yet */ }
+            let wifiErr = '';
             try {
                 const st = JSON.parse(fs.readFileSync(STATUS_JSON, 'utf8'));
                 const w = st.wifi || {};
-                if (w.link === 'connected' || w.link === 'online') lines.push('热点：已连接 ' + (w.ssid || ''));
-                else if (w.enabled) lines.push('热点：Wi-Fi 已开启，尚未连接');
-                else lines.push('热点：未连接，点「连接热点」选手机热点');
+                wifiErr = w.error || '';
+                if (w.link === 'online') {
+                    lines.push('热点：已连接 ' + (w.ssid || '') + (w.ip ? ' · ' + w.ip : ''));
+                } else if (w.link === 'connected') {
+                    lines.push('热点：已关联 ' + (w.ssid || '') +
+                        (lease && lease.router ? '' : '（尚未获取 IP 租约）'));
+                } else if (w.enabled) {
+                    lines.push('热点：Wi-Fi 已开启，尚未连接');
+                } else {
+                    lines.push('热点：未连接，点「连接热点」选手机热点');
+                }
             } catch (e) { lines.push('热点：未检测到 mgu-uplink'); }
+            if (wifiErr && lines.length < 5) lines.push('热点提示：' + wifiErr);
+
             const lr = readKV(LINK_TXT);
-            if (lr) {
+            const rr = readKV(RUN_TXT);
+            /* run.sh no longer deletes link.txt, so a session that just died
+             * can leave a stale "streaming" behind. A launcher that wrote
+             * "restarting" after that report is the newer, truer story. */
+            const mtime = (p) => { try { return fs.statSync(p).mtimeMs; } catch (e) { return 0; } };
+            const crashed = rr && (rr.state || '').trim() === 'restarting' &&
+                (!lr || mtime(RUN_TXT) >= mtime(LINK_TXT) - 2000);
+            if (crashed) {
+                lines.push('取流服务：反复重启 · ' + (rr.detail || '原因未知'));
+            } else if (lr) {
                 lines.push(LINK_STATE_ZH[(lr.state || '').trim()] || ('取流：' + lr.state));
                 if (lr.error && lr.error !== 'none') lines.push('取流错误：' + lr.error);
+            } else if (rr) {
+                /* No link report: the service ran but carlife-link never got
+                 * as far as writing one. run.txt says what it was dialing. */
+                lines.push('取流服务：已启动 → ' + (rr.phone || '?') +
+                    '（' + (rr.source || '?') + '）');
             } else {
-                lines.push('取流：尚未启动（热点连上后自动开始）');
+                let boot = '';
+                try { boot = fs.readFileSync(BOOT_TXT, 'utf8'); } catch (e) { /* absent */ }
+                const m = /state carlife-wireless\.service:\s*(\S+)/.exec(boot);
+                if (m) {
+                    lines.push('取流服务：' + (m[1] === 'active'
+                        ? '运行中，但未生成取流报告' : '未运行（' + m[1] + '）'));
+                } else {
+                    lines.push('取流服务：未检测到，请重装 CarLife 无线组件');
+                }
             }
             const dr = readKV(DECODE_TXT);
             if (dr) {
@@ -266,15 +312,15 @@ mgu.run({
             cv.text('CarLife 无线投屏', W / 2, b.y - 92, 36, '#ffffff', { align: 'center', literal: true });
             const sub = autoConnecting ? ('正在连接 ' + rememberedSsid() + '…') : '';
             cv.text(sub, W / 2, b.y - 54, 20, '#9aa0a6', { align: 'center', literal: true });
-            cv.roundRect(b.x, b.y, b.w, b.h, 16, '#3b82f6');
+            cv.roundRect(b.x, b.y, b.w, b.h, 16, '#1d4ed8');
             cv.text(autoConnecting ? '连接中…' : '连接热点', W / 2, b.y + b.h / 2 + 10, 32,
                 '#ffffff', { align: 'center', literal: true });
 
             /* The real reason nothing shows yet, straight from the pipeline. */
             const lines = autoConnecting
                 ? ['正在连接热点，请稍候…']
-                : diagnose().slice(0, 3);
-            if (!autoConnecting && autoMsg && lines.length < 3) lines.push(autoMsg);
+                : diagnose().slice(0, 5);
+            if (!autoConnecting && autoMsg && lines.length < 5) lines.push(autoMsg);
             if (!lines.length) lines.push('点击后选择手机热点，连接成功即显示 CarLife 画面');
             let dy = b.y + b.h + 44;
             lines.forEach((line) => {
