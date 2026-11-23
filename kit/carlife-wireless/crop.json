@@ -1,0 +1,11 @@
+{
+  "mapTop": 0,
+  "mapBottom": 0,
+  "mapLeft": 0,
+  "mapRight": 0,
+  "mapW": 1280,
+  "mapH": 720,
+  "mapFit": "stretch",
+  "cardMode": "off",
+  "_comment": "Wireless edition: the whole phone frame, uncut, for the central display."
+}

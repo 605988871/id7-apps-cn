@@ -1,0 +1,14 @@
+[Unit]
+Description=CarLife Wireless - Wi-Fi control bridge (app to mgu-uplink)
+# Independent of the stream service: Wi-Fi must be joinable from the app even
+# before a phone address exists (run.sh exits and retries until it does).
+After=mgu-uplink.service
+
+[Service]
+Type=simple
+ExecStart=/var/opt/carlife-wireless/current/wifi-bridge
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

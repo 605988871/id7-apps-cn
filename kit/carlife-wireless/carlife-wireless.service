@@ -1,0 +1,20 @@
+[Unit]
+Description=CarLife Wireless (WiFi hotspot to central display)
+# The phone may not be connected yet: run.sh exits with no address and systemd
+# retries. No dependency on the car's own carlife service - this is a separate
+# path that never touches USB or the projection process.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /var/opt/carlife-wireless/current/run.sh
+Restart=always
+RestartSec=5
+# Encoding and decoding are real time; a late schedule makes the picture
+# stutter. It still yields to everything the unit considers more important.
+Nice=-5
+# Nothing to write but its files under /dev/shm and /var/opt.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

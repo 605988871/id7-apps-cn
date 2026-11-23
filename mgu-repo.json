@@ -55,6 +55,17 @@
         "ID7",
         "ID8"
       ]
+    },
+    {
+      "id": "carlife-wireless",
+      "path": "kit/carlife-wireless",
+      "title": "CarLife 无线投屏取流与解码",
+      "description": "车机连上手机热点后经 WiFi 接收百度 CarLife 画面（H.264）并在车机侧解码，供中控屏显示、触摸回传；独立无线链路，不触碰原车 USB CarLife（iDrive 7 / 8）",
+      "uninstallable": true,
+      "mguHmi": [
+        "ID7",
+        "ID8"
+      ]
     }
   ]
 }

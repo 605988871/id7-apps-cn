@@ -1,0 +1,78 @@
+{
+  "id": "cn_carlife_wireless",
+  "title": "CarLife Wireless",
+  "description": "把手机百度 CarLife 的完整画面通过 WiFi 热点投到中控屏，并支持触摸操作。可在本应用内直接扫描并连接手机热点，无需先打开 MGU 商店。手机开热点、打开百度 CarLife 等待连接，然后点本应用右上角「连热点」。取流与解码组件随应用一同安装。第一阶段为画面与触摸，音频与通话后续版本支持。",
+  "version": "0.3.0",
+  "vendor": "custom",
+  "loggingId": "OAA7",
+  "iconGlyph": "phone",
+  "mguHmi": [
+    "ID7",
+    "ID8"
+  ],
+  "requires": {
+    "idrive7-renderd": "2.1.15",
+    "mgu-inputgate": "1.1.0",
+    "carlife-wireless": "0.3.0"
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "chrome": false,
+      "title": "CarLife 无线投屏",
+      "buttons": [
+        [
+          "BTN_BACK",
+          "返回"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "host",
+      "label": "手机热点地址",
+      "type": "text",
+      "default": "",
+      "hint": "车机连上手机热点后通常自动发现；留空即可"
+    },
+    {
+      "key": "wifi_psk",
+      "label": "热点密码",
+      "type": "text",
+      "default": "",
+      "hint": "加密热点首次连接可用车机键盘输入，也可在此预设；留空表示使用已保存的网络"
+    },
+    {
+      "key": "orientation",
+      "label": "画面方向",
+      "type": "choice",
+      "default": "fit",
+      "options": [
+        [
+          "fit",
+          "完整显示"
+        ],
+        [
+          "fill",
+          "铺满屏幕"
+        ]
+      ]
+    },
+    {
+      "key": "showStats",
+      "label": "显示状态",
+      "type": "boolean",
+      "default": false
+    }
+  ],
+  "texts": {
+    "zh-CN": {
+      "title": "CarLife 无线投屏"
+    },
+    "zh-TW": {
+      "title": "CarLife 無線投屏"
+    }
+  }
+}
