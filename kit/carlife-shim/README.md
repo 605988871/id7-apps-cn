@@ -237,9 +237,18 @@ intercepting `submit_transfer` would have meant completing transfers from an
 event loop of our own.
 
 What is still missing is the picture. The bridge carries whatever the far side
-sends; `kit/carlife-phone/fake_phone.py` does the handshake and can repeat a raw
-H.264 stream, but nothing here encodes video, and channel 3 (media, 3840-byte
-packets at 31/s on this unit) is counted and forwarded without being understood.
+sends; `kit/carlife-phone/fake_phone.py` does the handshake and replays a real
+H.264 file picture by picture, but nothing here encodes video, and channel 3
+(media, 3840-byte packets at 31/s on this unit) is counted and forwarded without
+being understood.
+
+One limit changed because of the capture: a body is handed back **whole**, up to
+the caller's 204800-byte buffer, not sliced at 16 KB. The device carlife
+normally talks to filled single transfers of 94113 bytes, so a message and a
+transfer are the same thing on this link; slicing would only work if carlife
+reassembled across reads, and if it does not, the symptom is a channel of
+garbage rather than an error. Each message now leaves as two transfers, header
+then body, exactly as the phone does it.
 
 ## Build
 
@@ -265,10 +274,13 @@ The far side first, so its listeners are up before carlife restarts and starts
 connecting:
 
 ```sh
-python kit/carlife-phone/fake_phone.py
+cd kit/carlife-phone
+python h264stream.py make out/test.h264 --seconds 10
+python fake_phone.py --h264 out/test.h264
 ```
 
-It prints the three listeners, then every command the unit sends. Then install
+It prints the three listeners, then every command the unit sends, then
+`video 1920x720, 300 pictures, 10 keyframes` once the unit asks for video. Then install
 `carlife-shim` 0.6.0 from the Store; `install.sh` restarts carlife, and the
 stand-in is on from that moment. On the unit, **CarLife 诊断 → 接管记录** should
 show, in this order:
@@ -304,8 +316,11 @@ If the log stops at `get_device_list`, the fake device did not get picked.
 If it stops at `ctrl req=51`, carlife opened the device but did not get to the
 handshake. If it reaches `bridge ch1` and the bench sees nothing, the port or
 the address is wrong and `state.txt`'s `bridge:` line says which. If it reaches
-`start video` and the picture is black, the handshake worked and there is simply
-no H.264 to show — pass `--h264`.
+`start video` and the picture is black, the handshake worked; check that the
+bench printed `video ... pictures` too. If it printed
+`WARNING stream is 1280x720 but the unit asked for 1920x720`, the stream and the
+encoder settings disagree and the decoder has nothing sensible to do — pass a
+`--h264` made at the size the unit asked for.
 
 Every one of those lines is world-readable in
 `/dev/shm/carlife-shim/tap.txt`, so this works without ssh: the same text is on

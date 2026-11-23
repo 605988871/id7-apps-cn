@@ -5,12 +5,21 @@ Run this on the machine at the other end of the ENET cable. The shim on the
 unit is what makes carlife believe a phone is plugged in; this is what answers
 on the wire afterwards. Three TCP listeners, one per CarLife channel:
 
-    port 7240  channel 1   control   [u16 len][u16 0][u32 type] + protobuf
-    port 8240  channel 2   video     [u32 len][u32 ts][u32 0x00020001] + h264
+    port 7240  channel 1   control   [chan][len] + [u16 len][u16 0][u32 type] + protobuf
+    port 8240  channel 2   video     [chan][len] + [u32 len][u32 ts][u32 0x00020001] + h264
     port 9240  channel 3   media     counted, not parsed yet
 
-The shim carries the USB framing (the eight-byte [channel][length] header);
-nothing here has to know that a bulk transfer is not a message.
+Every write on these ports carries the same eight-byte [chan][len] header the
+unit's USB link uses, because the shim forwards messages to TCP unchanged and
+parses that header straight back out on the way in. Keeping the header here is
+what lets the shim stay a byte pipe with no knowledge of any channel's inner
+format - and the shim is the one part that cannot be tested off the car.
+
+One consequence worth knowing: this makes the ports shim-shaped, not
+CarLink-Lab-shaped. CarLink-Lab's client writes bare payload on 7240/8240
+because the real wireless path has no USB framing; a real phone pointed at
+these ports would need the eight bytes stripped, which is a job for the unit
+side, not for this test double.
 
     python fake_phone.py                  handshake, log every command
     python fake_phone.py --h264 out.h264  ... and repeat that stream on video
@@ -21,6 +30,11 @@ this answers MATCH_STATUS, then HU_INFO -> MD_INFO, then VIDEO_ENCODER_INIT ->
 INIT_DONE, then VIDEO_ENCODER_START. The last one is the point where a real
 phone would start encoding; without --h264 there is nothing to send and the
 screen stays black by design, not by failure.
+
+Making a stream to give it, if there is no phone recording at hand:
+
+    python h264stream.py make out/test.h264 --seconds 10
+    python fake_phone.py --h264 out/test.h264
 """
 
 import argparse
@@ -28,8 +42,11 @@ import os
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
+
+import h264stream
 
 CMD_PORT = 7240
 VIDEO_PORT = 8240
@@ -49,6 +66,8 @@ MSG_VIDEO_ENCODER_START = 0x00018009
 MSG_VIDEO_DATA = 0x00020001
 
 CHAN_NAME = {CMD_PORT: "cmd", VIDEO_PORT: "video", MEDIA_PORT: "media"}
+CHAN_OF = {CMD_PORT: 1, VIDEO_PORT: 2, MEDIA_PORT: 3}
+CHAN_PORT = {1: CMD_PORT, 2: VIDEO_PORT, 3: MEDIA_PORT}
 
 
 def log(tag, text):
@@ -56,6 +75,21 @@ def log(tag, text):
 
 
 # ---- wire format -----------------------------------------------------------
+
+def pack_chan(chan, body):
+    """[u32 chan][u32 len] + body, network order.
+
+    The shim's idea of a message. It never looks inside, which is why it can
+    carry the control channel's u16 length and the video channel's u32 one in
+    the same code path.
+    """
+    return struct.pack(">II", chan, len(body)) + body
+
+
+def recv_frame(sock):
+    """Read one [chan][len][body] from a socket the shim is writing to."""
+    chan, length = struct.unpack(">II", Phone.recv_exact(sock, 8))
+    return chan, (Phone.recv_exact(sock, length) if length else b"")
 
 def pack_cmd(service_type, payload=b""):
     """[u16 payload len][u16 unused][u32 type] + payload, network order."""
@@ -69,8 +103,33 @@ def unpack_cmd_header(header):
     return payload_len, service_type
 
 
-def pack_video(data, timestamp_ms):
-    return struct.pack(">III", len(data), timestamp_ms & 0xFFFFFFFF, MSG_VIDEO_DATA) + data
+def pack_video(data, ts_seconds):
+    """[u32 len][u32 ts][u32 0x00020001] + one Annex-B NAL.
+
+    ts is Unix seconds, not milliseconds. The unit's own traffic carried
+    1795395829 while frames arrived 1-2 ms apart, which is 2026-11-23: a
+    millisecond clock cannot hold that number, and a monotonic one would not
+    land on today's date.
+    """
+    return struct.pack(">III", len(data), int(ts_seconds) & 0xFFFFFFFF,
+                       MSG_VIDEO_DATA) + data
+
+
+def video_messages(pictures, ts_seconds):
+    """One message per NAL, every NAL of a picture sharing one timestamp.
+
+    This is what the unit's traffic showed: a picture is not one message. A
+    four-NAL keyframe arrived as four transfers, all with the same ts, and the
+    decoder was fed NAL by NAL. Sending the picture whole instead is the
+    tempting shortcut and looks identical on the wire until the screen stays
+    black, because the unit's parser takes the first start code and drops the
+    rest of the buffer.
+    """
+    out = []
+    for picture in pictures:
+        for nal in picture:
+            out.append(pack_video(nal, ts_seconds))
+    return out
 
 
 def unpack_video_header(header):
@@ -158,6 +217,8 @@ class Phone:
         self.video_stop = threading.Event()
         self.video_thread = None
         self.frames_sent = 0
+        self.media_messages = 0
+        self.media_bytes = 0
         self.width = 1920
         self.height = 720
         self.frame_rate = 30
@@ -169,7 +230,7 @@ class Phone:
         if sock is None:
             return False
         try:
-            sock.sendall(data)
+            sock.sendall(pack_chan(CHAN_OF[port], data))
             return True
         except OSError as error:
             log("send", "port %d failed: %s" % (port, error))
@@ -200,27 +261,34 @@ class Phone:
                     old.close()
                 except OSError:
                     pass
+            # A reconnect after the stream has started means carlife restarted
+            # or the cable blinked; it will not send START again, so pick the
+            # stream back up here or the screen freezes on the last picture.
+            if port == VIDEO_PORT and self.h264 and self.frames_sent:
+                self.video_stop.clear()
+                if not (self.video_thread and self.video_thread.is_alive()):
+                    self.video_thread = threading.Thread(target=self.video_loop, daemon=True)
+                    self.video_thread.start()
             threading.Thread(target=self.read_loop, args=(port, conn), daemon=True).start()
 
     def read_loop(self, port, conn):
         try:
-            if port == CMD_PORT:
-                self.read_commands(conn)
-            elif port == VIDEO_PORT:
-                self.read_video_ack(conn)
-            else:
-                self.read_media(conn)
+            self.read_framed(port, conn)
         except (OSError, ValueError) as error:
             log(CHAN_NAME[port], "closed: %s" % error)
         finally:
             with self.lock:
-                if self.socks.get(port) is conn:
+                # Only the socket that is still current may stop the stream. A
+                # superseded one closes late, after its replacement has already
+                # been accepted, and would otherwise kill the new stream.
+                current = self.socks.get(port) is conn
+                if current:
                     self.socks.pop(port, None)
             try:
                 conn.close()
             except OSError:
                 pass
-            if port == VIDEO_PORT:
+            if port == VIDEO_PORT and current:
                 self.video_stop.set()
 
     @staticmethod
@@ -233,32 +301,46 @@ class Phone:
             buf += chunk
         return buf
 
-    def read_commands(self, conn):
-        while True:
-            header = self.recv_exact(conn, 8)
-            payload_len, service_type = unpack_cmd_header(header)
-            if payload_len > 512 * 1024:
-                raise ValueError("implausible payload length %d" % payload_len)
-            payload = self.recv_exact(conn, payload_len) if payload_len else b""
-            self.handle_command(service_type, payload)
+    def read_framed(self, port, conn):
+        """Strip the shim's header, then dispatch on the channel number.
 
-    def read_video_ack(self, conn):
-        # The head unit has nothing to say on the video channel; reading it is
-        # only here so a close is noticed instead of blocking a dead socket.
+        Reading the channel from the header rather than assuming it from the
+        port is deliberate: if the shim ever hands a message to the wrong
+        socket, this says so in the log instead of parsing it as the wrong kind
+        and producing a puzzle to debug at the car.
+        """
         while True:
-            chunk = conn.recv(4096)
-            if not chunk:
-                raise OSError("peer closed")
-            log("video", "unexpected %d bytes from unit" % len(chunk))
+            chan, length = struct.unpack(">II", self.recv_exact(conn, 8))
+            if length > 512 * 1024:
+                raise ValueError("implausible message length %d" % length)
+            body = self.recv_exact(conn, length) if length else b""
+            if chan == 1:
+                self.handle_command_message(body)
+            elif chan == 2:
+                log("video", "unexpected %d bytes from unit" % len(body))
+            elif chan == 3:
+                self.media_bytes += len(body)
+                if self.media_messages % 50 == 0 or self.media_messages < 3:
+                    log("media", "%d bytes (%d total, %d messages)"
+                        % (len(body), self.media_bytes, self.media_messages + 1))
+                self.media_messages += 1
+            else:
+                log("shim", "message for unknown channel %d, ignored" % chan)
+                continue
+            if chan != CHAN_OF[port]:
+                log(CHAN_NAME[port], "channel %d arrived on the %s port"
+                    % (chan, CHAN_NAME[port]))
 
-    def read_media(self, conn):
-        total = 0
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                raise OSError("peer closed")
-            total += len(chunk)
-            log("media", "%d bytes from unit (%d total)" % (len(chunk), total))
+    def handle_command_message(self, body):
+        if len(body) < 8:
+            log("cmd", "short message (%d bytes), ignored" % len(body))
+            return
+        payload_len, service_type = unpack_cmd_header(body[:8])
+        if payload_len > len(body) - 8:
+            log("cmd", "length field %d exceeds message (%d), ignored"
+                % (payload_len, len(body)))
+            return
+        self.handle_command(service_type, body[8:8 + payload_len])
 
     # -- control channel logic --
     def handle_command(self, service_type, payload):
@@ -321,17 +403,45 @@ class Phone:
             log("video", "%s is empty" % self.h264)
             return
 
+        info = h264stream.describe(stream)
+        pictures = info["units"]
+        if not pictures:
+            log("video", "%s has no Annex-B start code; not a raw H.264 stream" % self.h264)
+            return
+        geometry = info["geometry"]
+        if geometry:
+            width, height = geometry[0], geometry[1]
+            if (width, height) != (self.width, self.height):
+                log("video", "WARNING stream is %dx%d but the unit asked for %dx%d"
+                    % (width, height, self.width, self.height))
+            else:
+                log("video", "%dx%d, %d pictures, %d keyframes, %.1f KiB"
+                    % (width, height, len(pictures), info["keyframes"],
+                       info["bytes"] / 1024.0))
+        else:
+            log("video", "%d pictures, %d bytes (no SPS found, cannot check geometry)"
+                % (len(pictures), info["bytes"]))
+
         interval = 1.0 / float(self.fps)
-        log("video", "sending %d bytes as one frame, %d fps" % (len(stream), self.fps))
+        index = 0
         next_at = time.monotonic()
         while not self.video_stop.is_set():
-            stamp = int(time.monotonic() * 1000)
-            if not self.send_on(VIDEO_PORT, pack_video(stream, stamp)):
-                log("video", "video channel gone, stopping")
-                return
+            picture = pictures[index]
+            index += 1
+            if index >= len(pictures):
+                index = 0
+                if self.frames_sent:
+                    log("video", "stream wrapped, %d pictures so far" % self.frames_sent)
+            # One timestamp per picture, and it is wall-clock seconds because
+            # that is what the unit's own phone sent.
+            stamp = int(time.time())
+            for message in video_messages([picture], stamp):
+                if not self.send_on(VIDEO_PORT, message):
+                    log("video", "video channel gone, stopping")
+                    return
             self.frames_sent += 1
             if self.frames_sent % 30 == 0:
-                log("video", "%d frames sent" % self.frames_sent)
+                log("video", "%d pictures sent" % self.frames_sent)
             next_at += interval
             delay = next_at - time.monotonic()
             if delay > 0:
@@ -380,6 +490,25 @@ def selftest():
     check("encoder init decodes 1920x720@30",
           (fields.get(1), fields.get(2), fields.get(3)) == (1920, 720, 30))
 
+    # A picture is several messages, not one: the unit's keyframe arrived as
+    # four, all carrying the same ts. Sending it whole is the shortcut that
+    # leaves the screen black.
+    def nal(kind, payload=b"\xaa" * 4):
+        return b"\x00\x00\x00\x01" + bytes([0x60 | (kind & 0x1F)]) + payload
+
+    picture = [nal(9), nal(7), nal(8), nal(5)]
+    sent = video_messages([picture], 1795395829)
+    check("4 NAL picture becomes 4 messages", len(sent) == 4)
+    check("every message carries one NAL",
+          [unpack_video_header(m[:12])[0] for m in sent]
+          == [len(n) for n in picture])
+    check("messages of a picture share one timestamp",
+          len(set(unpack_video_header(m[:12])[1] for m in sent)) == 1)
+    check("timestamp is Unix seconds",
+          unpack_video_header(sent[0][:12])[1] == 1795395829)
+    check("payload is Annex-B, byte for byte",
+          b"".join(m[12:] for m in sent) == b"".join(picture))
+
     # MD_INFO must be readable the way CarLink-Lab reads it.
     md = Phone.md_info()
     fields = pb_parse(md)
@@ -389,14 +518,19 @@ def selftest():
     return 0 if ok else 1
 
 
-def loopback():
+def loopback(stream_path=None):
     """Drive the whole handshake against ourselves, over real sockets.
 
     The packers passing their own round-trip proves very little; this proves the
     listeners, the reply order and the video start actually work, which is what
-    the first run against a unit would otherwise be testing.
+    the first run against a unit would otherwise be testing. Given a real .h264,
+    it does more: sends the whole file through the video channel and compares
+    what came out against what went in, byte for byte, then decodes the result.
+    A splitter that drops a start code or reorders a parameter set looks fine in
+    the log and shows a black screen in the car; this catches it at the desk.
     """
-    import tempfile
+    if stream_path:
+        return _replay_check(stream_path)
 
     ok = True
 
@@ -405,9 +539,17 @@ def loopback():
         print("%-46s %s" % (name, "ok" if condition else "FAIL"))
         ok = ok and condition
 
+    def nal(kind, payload=b"\xaa" * 4):
+        return b"\x00\x00\x00\x01" + bytes([0x60 | (kind & 0x1F)]) + payload
+
+    # Two pictures, the first with parameter sets, so the loop is exercised the
+    # way a real keyframe plus delta frame would be.
+    stream = b"".join([nal(9), nal(7), nal(8), nal(5, b"\xbb" * 32),
+                       nal(9), nal(1, b"\xcc" * 16)])
+
     handle, path = tempfile.mkstemp(suffix=".h264")
     with os.fdopen(handle, "wb") as tmp:
-        tmp.write(b"\x00\x00\x00\x01\x67\x42\x00\x1e" + b"\xaa" * 64)
+        tmp.write(stream)
 
     phone = Phone(h264=path, fps=30, quiet=True)
     for port in PORTS:
@@ -419,31 +561,54 @@ def loopback():
     time.sleep(0.2)
 
     def recv_cmd(sock):
-        payload_len, service_type = unpack_cmd_header(Phone.recv_exact(sock, 8))
-        return service_type, (Phone.recv_exact(sock, payload_len) if payload_len else b"")
+        chan, body = recv_frame(sock)
+        payload_len, service_type = unpack_cmd_header(body[:8])
+        if chan != 1:
+            raise ValueError("expected channel 1, got %d" % chan)
+        return service_type, body[8:8 + payload_len]
 
     try:
         init = bytes.fromhex("08800f10d005181e")
 
-        cmd.sendall(pack_cmd(MSG_HU_PROTOCOL_VERSION, bytes.fromhex("08021000")))
+        cmd.sendall(pack_chan(1, pack_cmd(MSG_HU_PROTOCOL_VERSION, bytes.fromhex("08021000"))))
         kind, body = recv_cmd(cmd)
         check("MATCH_STATUS answered", kind == MSG_MATCH_STATUS and body == b"\x08\x01")
 
-        cmd.sendall(pack_cmd(MSG_HU_INFO, b"\x0a\x05Linux"))
+        cmd.sendall(pack_chan(1, pack_cmd(MSG_HU_INFO, b"\x0a\x05Linux")))
         kind, body = recv_cmd(cmd)
         check("MD_INFO answered", kind == MSG_MD_INFO)
         check("MD_INFO names a platform", pb_parse(body).get(1) == b"Android")
 
-        cmd.sendall(pack_cmd(MSG_VIDEO_ENCODER_INIT, init))
+        cmd.sendall(pack_chan(1, pack_cmd(MSG_VIDEO_ENCODER_INIT, init)))
         kind, body = recv_cmd(cmd)
         check("INIT_DONE echoes the init payload",
               kind == MSG_VIDEO_ENCODER_INIT_DONE and body == init)
 
-        cmd.sendall(pack_cmd(MSG_VIDEO_ENCODER_START))
-        data_len, _, video_kind = unpack_video_header(Phone.recv_exact(vid, 12))
-        data = Phone.recv_exact(vid, data_len)
-        check("a video frame arrives after START", video_kind == MSG_VIDEO_DATA and data_len > 0)
-        check("frame payload is the file we gave it", data[:4] == b"\x00\x00\x00\x01")
+        cmd.sendall(pack_chan(1, pack_cmd(MSG_VIDEO_ENCODER_START)))
+
+        def recv_video(sock):
+            chan, body = recv_frame(sock)
+            if chan != 2:
+                raise ValueError("expected channel 2, got %d" % chan)
+            data_len, stamp, video_kind = unpack_video_header(body[:12])
+            return body[12:12 + data_len], stamp, video_kind
+
+        got = []
+        for _ in range(6):                       # four NALs, then the wrap starts
+            payload, stamp, kind = recv_video(vid)
+            if kind != MSG_VIDEO_DATA:
+                break
+            got.append((payload, stamp))
+
+        check("video arrives after START", len(got) >= 5)
+        check("messages are NAL units, not pictures",
+              [len(p) for p, _ in got[:4]] == [9, 9, 9, 37])
+        check("a picture's NALs share one timestamp",
+              len(set(s for _, s in got[:4])) == 1)
+        check("second picture gets its own timestamp",
+              got[4][1] >= got[0][1])
+        check("first four messages are the first picture exactly",
+              b"".join(p for p, _ in got[:4]) == stream[:64])
     finally:
         cmd.close()
         vid.close()
@@ -456,20 +621,92 @@ def loopback():
     return 0 if ok else 1
 
 
+def _replay_check(path):
+    """Send a real file through the video channel and prove nothing was lost."""
+    original = open(path, "rb").read()
+    info = h264stream.describe(original)
+    if not info["units"]:
+        print("%s is not an Annex-B stream" % path)
+        return 1
+
+    # Pacing is not what is under test here, so run it far faster than 30 fps
+    # and keep the check to a couple of seconds.
+    phone = Phone(h264=path, fps=400, quiet=True)
+    for port in PORTS:
+        threading.Thread(target=phone.serve_port, args=(port,), daemon=True).start()
+    time.sleep(0.3)
+
+    cmd = socket.create_connection(("127.0.0.1", CMD_PORT), timeout=5)
+    vid = socket.create_connection(("127.0.0.1", VIDEO_PORT), timeout=5)
+    vid.settimeout(10)
+    time.sleep(0.2)
+
+    got = bytearray()
+    messages = 0
+    try:
+        cmd.sendall(pack_chan(1, pack_cmd(MSG_VIDEO_ENCODER_START)))
+        while len(got) < len(original):
+            chan, body = recv_frame(vid)
+            if chan != 2:
+                print("message for channel %d arrived on the video port" % chan)
+                return 1
+            data_len, _, kind = unpack_video_header(body[:12])
+            if kind != MSG_VIDEO_DATA:
+                print("unexpected message type 0x%08x on the video channel" % kind)
+                return 1
+            got += body[12:12 + data_len]
+            messages += 1
+    finally:
+        try:
+            cmd.close()
+            vid.close()
+        except OSError:
+            pass
+
+    same = bytes(got[:len(original)]) == original
+    print("%-46s %s" % ("all %d bytes came back unchanged" % len(original),
+                        "ok" if same else "FAIL"))
+    print("%-46s %s" % ("%d messages for %d pictures" % (messages, len(info["units"])),
+                        "ok" if messages >= len(info["units"]) else "FAIL"))
+
+    if same:
+        handle, tmp = tempfile.mkstemp(suffix=".h264")
+        with os.fdopen(handle, "wb") as out:
+            out.write(bytes(got[:len(original)]))
+        try:
+            result = h264stream.decode_check(tmp)
+            if result:
+                good, frames = result
+                expected = len(info["units"])
+                print("%-46s %s" % ("reassembled stream decodes to %s frames" % frames,
+                                    "ok" if good and frames == expected else "FAIL"))
+                if not (good and frames == expected):
+                    same = False
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    print("\n%s" % ("replay ok" if same else "REPLAY FAILED"))
+    return 0 if same else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--h264", help="a raw H.264 stream to repeat on the video channel")
     parser.add_argument("--fps", type=int, default=30, help="video frames per second (default 30)")
     parser.add_argument("--quiet", action="store_true", help="only log events, not every command")
     parser.add_argument("--selftest", action="store_true", help="check the packers and exit")
-    parser.add_argument("--loopback", action="store_true",
-                        help="run the handshake against our own listeners and exit")
+    parser.add_argument("--loopback", nargs="?", const="", default=None, metavar="FILE",
+                        help="run the handshake against our own listeners and exit; "
+                             "give a .h264 to replay it and check nothing is lost")
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
-    if args.loopback:
-        return loopback()
+    if args.loopback is not None:
+        return loopback(args.loopback or None)
 
     if args.h264 and not os.path.exists(args.h264):
         print("no such file: %s" % args.h264, file=sys.stderr)

@@ -188,7 +188,7 @@ static char last_in[140] = "(nothing yet)";
 static char last_out[140] = "(nothing yet)";
 static int64_t state_ms;
 
-/* ---- stand-in device and channel bridge (0.6.0) --------------------------
+/* ---- stand-in device and channel bridge (0.6.1) --------------------------
  *
  * The whole point of this file up to 0.5.0 was to find out how carlife talks
  * to a phone. It found out: one AOA accessory device, two bulk endpoints, and
@@ -211,7 +211,13 @@ static int64_t state_ms;
  * until carlife picks the stand-in.
  */
 #define FAKE_CH_MAX 4                   /* channels 1..3; slot 0 is not a channel */
-#define FAKE_BODY_MAX (16 * 1024)       /* bytes handed back in one bulk read */
+/* Bytes handed back in one bulk read. The ceiling is the caller's buffer, not
+ * ours: carlife asks for 204800 at a time, and the device it normally talks to
+ * filled single transfers of 94113 bytes - so a body is delivered whole, the
+ * way a real phone does it. Splitting at some smaller size would be the first
+ * thing to break if carlife treats a transfer as one message, and the symptom
+ * would be a channel of nonsense rather than an obvious error. */
+#define FAKE_BODY_MAX (256 * 1024)
 #define FAKE_MSG_MAX (8u * 1024u * 1024u)   /* same ceiling the framer uses */
 #define FAKE_BASE_PORT 7240             /* 1 -> 7240, 2 -> 8240, 3 -> 9240 */
 

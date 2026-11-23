@@ -1,5 +1,5 @@
 #!/bin/sh
-# carlife-shim (root) 0.6.0 - runs after every install from the Store.
+# carlife-shim (root) 0.6.1 - runs after every install from the Store.
 #
 # This is the only tool in this repository that touches a unit it does not own:
 # it puts LD_PRELOAD into whatever service runs /usr/bin/carlife. The car cannot

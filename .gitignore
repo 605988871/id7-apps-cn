@@ -51,3 +51,6 @@ egs-snapshot*.json
 kit/carlife-link/link.exe
 kit/carlife-link/link.pdb
 kit/carlife-link/link
+
+# generated test video for the carlife bench (h264stream.py make writes here)
+kit/carlife-phone/out/
