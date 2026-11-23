@@ -46,11 +46,3 @@ kit/tools/.font-cache/
 /kit/renderd/core
 /apps/cn_zf8hp/data/
 egs-snapshot*.json
-
-# dev builds of the tools - the unit's binary is what gets committed
-kit/carlife-link/link.exe
-kit/carlife-link/link.pdb
-kit/carlife-link/link
-
-# generated test video for the carlife bench (h264stream.py make writes here)
-kit/carlife-phone/out/

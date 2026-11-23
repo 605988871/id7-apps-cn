@@ -55,36 +55,6 @@
         "ID7",
         "ID8"
       ]
-    },
-    {
-      "id": "carlife-link",
-      "path": "kit/carlife-link",
-      "title": "CarLife 无线链路",
-      "description": "车机自己做无线 CarLife 的主机：在局域网里找到手机，连上它的六个 CarLife 通道，完成握手，收下画面与声音数据并把触摸送回去；状态由「无线 CarLife」应用显示（iDrive 7）",
-      "uninstallable": true,
-      "mguHmi": [
-        "ID7"
-      ]
-    },
-    {
-      "id": "carlife-probe",
-      "path": "kit/carlife-probe",
-      "title": "CarLife 诊断",
-      "description": "只读地看原车 carlife 进程怎么取手机的：它直接操作 USB 设备（AOA），还是拿到一块 USB 网卡在里面跑 IP；结果由「CarLife 诊断」应用分屏显示（iDrive 7）",
-      "uninstallable": true,
-      "mguHmi": [
-        "ID7"
-      ]
-    },
-    {
-      "id": "carlife-shim",
-      "path": "kit/carlife-shim",
-      "title": "CarLife 接管（观察）",
-      "description": "在原车 carlife 进程里挂一层 LD_PRELOAD 库，观察它怎样跟 USB 上的手机说话：设备、接口、bulk 缓冲、AOA 头里的通道号。画面与仪表仍由原车负责；这一版只记录，不改传输。日志由「CarLife 诊断」显示（iDrive 7）",
-      "uninstallable": true,
-      "mguHmi": [
-        "ID7"
-      ]
     }
   ]
 }

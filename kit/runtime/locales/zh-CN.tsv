@@ -2636,69 +2636,16 @@ Decor lights (dash, under the door trim) with	氛围灯（仪表台与车门下�
 Lower lights (like BMW)	下方灯（同原车）
 M-Track (or similar) module: S while S / M flickers	M 运动模块：S 挡闪烁时保持 S
 Electric flap (MG1 / V8)	电动阀门（MG1 / V8）
-# 无线 CarLife（carlife-link 的状态页）
-Wireless CarLife	无线 CarLife
 Link	连接
-Help	用法
-Reconnect	重新连接
-No report yet	还没有报告
-Tool not running	链路没在运行
 Phone	手机
 port	端口
-Command	命令通道
-Video	画面
-Stream	数据流
-Audio	声音
 Touch	反控
 updated	更新于
-Asking for a fresh connection	正在请求重新连接
-Car or phone?	连接方向
-The car connects to the phone: the phone runs the CarLife server, the car is the client.	车机连手机：CarLife 服务端在手机上。
-On the phone	手机上
-Open CarLife and start its wireless connection, then leave it in the foreground.	打开 CarLife，开启无线连接，不要退出。
-Same network	同一个网络
-Both devices must be on one network - the car's hotspot, or a hotspot the phone shares.	两台设备要在同一个网络：车机热点，或手机开的热点。
-What works now	已经打通的部分
-Handshake, picture bytes, audio bytes and touch. The picture is not decoded yet: that is the next step.	连接、画面数据、声音数据与反控。画面还没解码，这是下一步。
-No phone found	没找到手机
-Waiting for the phone	等手机回应
-Connected, waiting for picture	已连接，等画面
-Picture is arriving	画面在传
 yes	有
 no	无
 open	开
 closed	关
-# CarLife 诊断（carlife-probe 的报告页）
-Key facts	判据
 The rest	其他
-How to read	读法
-Verdict	判据
-Process	进程
 Network	网络
-USB devices	USB 设备
-Virtual USB	虚拟 USB
 Memory	内存
-Kernel	内核
-Binary	二进制
-No phone on USB	没接手机
-Direct USB (AOA)	直接走 USB
-Network over USB	USB 当网卡
-carlife is not running	原车 CarLife 没运行
-Not enough to tell	还看不出来
-carlife-probe.service is not running, or its report is not readable.	诊断服务没在跑，或报告读不到
-Install the probe with this app, then read /dev/shm/carlife-probe/boot.txt if it stays empty.	这个应用会一并安装诊断服务；报告一直是空的就看 boot.txt
-How to take it	用法
-Nothing here writes	只读
-Already confirmed: carlife reads a USB device directly and nothing goes over the network. The only way in is to replace that level inside the process; Binary says whether that means libusb.	已经确认：原车 CarLife 直接读写 USB 设备，不经过网络。要接管这条路，得在这个进程里把 USB 这一级换下来；是 libusb 还是直接读写，看二进制这一页。
-A USB network interface appeared and carlife runs sockets on top: an application can answer those instead of a device.	多出一块 USB 网卡，carlife 在上面跑 socket：数据可由应用来应答
-Get a picture from the car's own wired CarLife first, then come back here: the report is rewritten every three seconds.	先把原车有线 CarLife 打开、看到画面，再回到这个应用；报告每三秒重写
-Read-only on purpose: a probe that changes what it measures is worth nothing.	这个应用只读不写：会改被测物的话，测量没有意义
-Shim	接管
 Installed	装入状态
-Shim log	接管记录
-No shim log yet	还没有接管记录
-Install CarLife Shim, plug the phone in and run a wired session, then read this page.	先装 CarLife 接管，插上手机跑一次有线 CarLife，再回到这一页
-Not inside carlife: install CarLife Shim, then restart carlife	没进 carlife：先装 CarLife 接管，再重启 carlife
-The drop-in is in place: restart carlife once	文件已就位，重启一次 carlife
-Install check	安装核对
-First bytes	首包
