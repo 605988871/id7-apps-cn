@@ -2687,5 +2687,6 @@
   "Install CarLife Shim, plug the phone in and run a wired session, then read this page.": "先装 CarLife 接管，插上手机跑一次有线 CarLife，再回到这一页",
   "Not inside carlife: install CarLife Shim, then restart carlife": "没进 carlife：先装 CarLife 接管，再重启 carlife",
   "The drop-in is in place: restart carlife once": "文件已就位，重启一次 carlife",
-  "Install check": "安装核对"
+  "Install check": "安装核对",
+  "First bytes": "首包"
 }

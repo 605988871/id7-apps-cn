@@ -574,7 +574,6 @@ Assist sensors: Unexpected Ethernet communication/link	辅助传感器：以太�
 Service requirements	保养需求
 Next service	下次保养
 Service due	保养到期
-Engine oil	发动机机油
 Front brakes	前制动器
 Rear brakes	后制动器
 Brake fluid	制动液
@@ -640,7 +639,6 @@ in	剩余
 by	到期
 or	或
 of	共
-Fault Scanner	故障检测
 Scan	扫描
 Reading	读取中
 Fault	故障
@@ -1172,8 +1170,6 @@ ago	前
 Max Cooling ON	最大冷却 开启
 Max Cooling OFF	最大冷却 关闭
 up	升挡
-down	降挡
-skip	跳挡降挡
 m ago	分钟前
 Boost gauge max	增压表最大值
 # eDrive: the 48 V mild hybrid page and the 12 V details
@@ -2649,7 +2645,6 @@ No report yet	还没有报告
 Tool not running	链路没在运行
 Phone	手机
 port	端口
-Scan	扫描网段
 Command	命令通道
 Video	画面
 Stream	数据流
@@ -2683,7 +2678,6 @@ Network	网络
 USB devices	USB 设备
 Virtual USB	虚拟 USB
 Memory	内存
-Units	服务
 Kernel	内核
 Binary	二进制
 No phone on USB	没接手机
@@ -2691,7 +2685,6 @@ Direct USB (AOA)	直接走 USB
 Network over USB	USB 当网卡
 carlife is not running	原车 CarLife 没运行
 Not enough to tell	还看不出来
-Read again	重新读取
 carlife-probe.service is not running, or its report is not readable.	诊断服务没在跑，或报告读不到
 Install the probe with this app, then read /dev/shm/carlife-probe/boot.txt if it stays empty.	这个应用会一并安装诊断服务；报告一直是空的就看 boot.txt
 How to take it	用法
@@ -2708,4 +2701,4 @@ Install CarLife Shim, plug the phone in and run a wired session, then read this 
 Not inside carlife: install CarLife Shim, then restart carlife	没进 carlife：先装 CarLife 接管，再重启 carlife
 The drop-in is in place: restart carlife once	文件已就位，重启一次 carlife
 Install check	安装核对
-Install check	安装核对
+First bytes	首包

@@ -31,11 +31,19 @@ Six screens, `Next page` / `Previous page` to move, `Read again` to re-read:
    carlife, and the install record. `loaded: no` with a drop-in present is one
    restart away; with no drop-in it is a failed install, and the line at the
    bottom of the page says which
-5. **接管记录** — `head.txt` first, then the shim's own `tap.txt`, one screenful
-   at a time. The head comes first on purpose: eight transfers of each direction,
-   twenty-four bytes each, which is the only thing that settles whether a message
-   starts with an eight-byte `[chan][len]` header or a four-byte length. The log
-   after it is the call sequence a stand-in device has to follow — the AOA
+5. **接管记录** — the first bytes of each direction, then `head.txt` if the shim
+   wrote one, then the shim's own `tap.txt`, one screenful at a time.
+
+   The first block is built here, from the log's own hex: the first three
+   transfers of each direction, with `chan` and `len` decoded big-endian. It is
+   built from the log rather than from `head.txt` because a page that needs a
+   second file shows nothing when that file is missing — which is what happened
+   on 2026-11-23, when page one was the one place those bytes could have been and
+   it was empty. 8 bytes and `chan 1 len 10` is a control message with the body
+   still to come; 652 bytes and a length of 167772160 is picture data sitting
+   where a header is expected.
+
+   The log after it is the call sequence a stand-in device has to follow — the AOA
    handshake, the strings sent to the phone, the bulk headers. Pages are cut by
    drawn rows, so a long bulk line keeps its hex. On this page `Next page` /
    `Previous page` scroll instead of changing screens, and only leave the page at
@@ -50,10 +58,14 @@ writes, nothing started or stopped — a probe that changes what it measures is
 worthless.
 
 Both versions are on the screen, because the usual confusion is which build the
-unit is running: the top right says `v<version>` (this app, from `app.json`), and
-`probe:` in the facts line says which probe wrote the report. `probe: --` means
-the tool is older than the app, so the `接管` page will be empty until the tool is
-updated.
+unit is running: every page's title ends with `v<version>` (this app, from
+`app.json`) and the age of the reading, and `probe:` in the facts line says which
+probe wrote the report. `probe: --` means the tool is older than the app, so the
+`接管` page will be empty until the tool is updated.
+
+The title, not a floating stamp: the stamp used to sit at the top right, where the
+unit's own chrome clipped it to `v0.2.` — the one line that says which build is
+running was the one line the screen cut off.
 
 Take the reading with a **wired CarLife session on screen**: the process facts
 only exist while the native CarLife is running and talking to a phone.

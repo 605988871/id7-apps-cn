@@ -179,7 +179,7 @@ mgu.run({
         }
 
         function drawKey(cv, t) {
-            const sh = G.panel(cv, t, 24, 44, 1552, 468, translate('Key facts'));
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, heading('Key facts'));
             const key = (doc.meta.verdict || 'unknown').trim().toUpperCase();
             const [text, colour] = VERDICT[key] || VERDICT.unknown;
             cv.text(translate(text), sh.x + 26, 132, 40, t[colour] || t.text, { font: 'bold' });
@@ -188,7 +188,7 @@ mgu.run({
         }
 
         function drawDump(cv, t, secs) {
-            const sh = G.panel(cv, t, 24, 44, 1552, 468, translate(SCREENS[page].name));
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, heading(SCREENS[page].name));
             flow(cv, t, secs, sh.y + 84, 14);
             /* `state: absent` is the probe saying it read no shim inside carlife.
              * The install section now says *why*: a drop-in that is on disk but
@@ -205,7 +205,7 @@ mgu.run({
         }
 
         function drawHelp(cv, t) {
-            const sh = G.panel(cv, t, 24, 44, 1552, 468, translate('How to read'));
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, heading('How to read'));
             const lines = [
                 ['AOA', 'Already confirmed: carlife reads a USB device directly and nothing goes over the network. The only way in is to replace that level inside the process; Binary says whether that means libusb.'],
                 ['Network over USB', 'A USB network interface appeared and carlife runs sockets on top: an application can answer those instead of a device.'],
@@ -234,6 +234,47 @@ mgu.run({
          * wrap is done once per change - measuring 300 lines a frame at 2 fps is
          * what would make this page slow, and the file changes every few seconds
          * while a phone is talking. */
+        /* The first bytes of each direction, taken from the log itself instead of
+         * from head.txt: the log has carried the first sixteen bytes of the first
+         * three transfers per endpoint since the first build. A page that needs a
+         * second file is a page that shows nothing when that file is missing -
+         * which is what happened on 2026-11-23, and page one of this screen was
+         * the only place those bytes could have been. `chan` and `len` are decoded
+         * big-endian, the way the unit's own header reads. */
+        function firstBytes(text) {
+            const out = [translate('First bytes')];
+            const n = { in: 0, out: 0 };
+            text.split('\n').some((line) => {
+                const m = / bulk (in|out) ep=0x([0-9a-f]+) want=(\d+) got=(\d+) ret=(-?\d+).* ([0-9a-f]{16,32})$/.exec(line);
+                if (!m) return false;
+                const dir = m[1];
+                if (n[dir] >= 3) return n.in >= 3 && n.out >= 3;
+                n[dir]++;
+                const hx = m[6];
+                const b = [];
+                for (let i = 0; i + 1 < hx.length; i += 2) b.push(parseInt(hx.slice(i, i + 2), 16));
+                const groups = [];
+                for (let i = 0; i < b.length && i < 16; i += 4) {
+                    groups.push(b.slice(i, i + 4).map((v) => ('0' + v.toString(16)).slice(-2)).join(''));
+                }
+                /* The same test the shim applies to a candidate header, so the
+                 * two never disagree about whether these eight bytes are one. */
+                let tail = '';
+                if (b.length >= 8) {
+                    const be = (o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+                    const chan = be(0), len = be(4);
+                    tail = (len > 0 && len <= 8 * 1024 * 1024 && chan <= 10000)
+                        ? 'chan ' + chan + ' len ' + len
+                        : 'not a header';
+                }
+                const size = m[4] + 'B';
+                const pad = size + '          '.slice(0, Math.max(1, 8 - size.length));
+                out.push(dir + ' t' + n[dir] + '  ' + pad + tail + '   ' + groups.join(' '));
+                return false;
+            });
+            return out.length > 1 ? out : [];
+        }
+
         function loadTap(cv) {
             let at = 0, head = '', text = '', opened = false;
             try {
@@ -261,6 +302,8 @@ mgu.run({
                 if (parts.length && !parts[parts.length - 1]) parts.pop();
                 parts.forEach((l) => lines.push(l));
             };
+            const brief = text ? firstBytes(text) : [];
+            if (brief.length) { brief.forEach((l) => lines.push(l)); lines.push(''); }
             if (head) { add(head); lines.push(''); }
             if (text) add(text);
 
@@ -277,10 +320,8 @@ mgu.run({
             if (tapPage > pages - 1) tapPage = pages - 1;
             const from = tapPage * TAP_ROWS;
             const to = Math.min(from + TAP_ROWS, rows.length);
-            const title = rows.length
-                ? translate('Shim log') + '  ' + (from + 1) + '-' + to + ' / ' + rows.length
-                : translate('Shim log');
-            const sh = G.panel(cv, t, 24, 44, 1552, 468, title);
+            const range = rows.length ? (from + 1) + '-' + to + ' / ' + rows.length : '';
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, heading('Shim log', range));
 
             if (!rows.length) {
                 cv.text(translate('No shim log yet'), sh.x + 26, 140, 36, t.crit, { font: 'bold' });
@@ -294,8 +335,26 @@ mgu.run({
             }
         }
 
+        /* The build and the age of the reading go in the panel's own title. A
+         * stamp floating at the top right was drawn past the edge of the unit's
+         * chrome and came out as "v0.2." - the one line that says which build is
+         * running was the one line the screen cut off, which cost two rounds of
+         * guessing. The title is drawn by the panel and is always visible. */
+        function heading(name, extra) {
+            let s = translate(name) + (extra ? '  ' + extra : '');
+            if (APP_VER) s += '   v' + APP_VER;
+            if (doc.ok) {
+                const age = Date.now() - doc.at;
+                s += '   ' + translate('updated') + ' ' + Math.round(age / 1000) + ' s';
+                // the probe rewrites its report every three seconds: anything older
+                // than fifteen is not "a little late", it is a stalled probe
+                if (age > STALE_MS) s += '  (stale)';
+            }
+            return s;
+        }
+
         function drawMissing(cv, t) {
-            const sh = G.panel(cv, t, 24, 44, 1552, 468, translate('Key facts'));
+            const sh = G.panel(cv, t, 24, 44, 1552, 468, heading('Key facts'));
             cv.text(translate('No report yet'), sh.x + 26, 140, 40, t.crit, { font: 'bold' });
             wrap(cv, translate('carlife-probe.service is not running, or its report is not readable.'), 1440)
                 .forEach((s, i) => cv.text(s, sh.x + 26, 190 + i * 26, 22, t.text, { literal: true }));
@@ -312,12 +371,6 @@ mgu.run({
             else if (scr.name === 'Key facts') drawKey(cv, t);
             else drawDump(cv, t, scr.secs);
 
-            if (doc.ok) {
-                const age = Math.round((Date.now() - doc.at) / 1000);
-                const stale = Date.now() - doc.at > STALE_MS;
-                const stamp = (APP_VER ? 'v' + APP_VER + '   ' : '') + translate('updated') + ' ' + age + ' s';
-                cv.text(stamp, 1576 - 24, 126, SIZE, stale ? t.crit : t.dim, { align: 'right' });
-            }
             G.frame(cv, t, SCREENS.map((s) => translate(s.name)), page);
             await ui.image('MAIN_GFX', cv);
         }

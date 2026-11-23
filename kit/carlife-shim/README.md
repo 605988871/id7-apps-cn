@@ -62,27 +62,33 @@ them is not root. A fourth, the install record, also lives under
 
 ```
 state: tap
-pid: 9694  comm: carlife
+pid: 2783  comm: carlife
 devices: 1d6b:0003 0424:2530 2d95:7000 0424:4502 090c:1000 1d6b:0002
 config: cfg1, 2if: if0 ff/ff: 81/a02/512 01/a02/512 if1 ff/42: 02/a02/512 82/a02/512
 open: open 18d1:2d01 ok
 ctrl: 11 calls, reqs 51 52 53
-io: 2777 in 2382 KB, 26 out 0 KB
-first in: 00000280 43060bd9 652B
-first out: 00000006 00068008 10B
-last in: ep=0x81 00000280 43060bd9 not a header
-last out: ep=0x01 00000280 43060bd9 not a header
-frames: 1203 in / 44 out, aligned, 1000x42 2000x23 2001x1130
-async: 2814 submits, 5626 loops
+io: 1607 in 3601 KB, 18 out 0 KB
+first in: 00000001 0000000a 8B
+first out: 00000001 0000000c 8B
+last in: ep=0x81 00000f00 05ee6d31 not a header
+last out: ep=0x01 00000001 00018009 not a header
+frames: 34 in / 12 out, aligned, 1x4 2001x30
+async: 1636 submits, 3259 loops
 ```
 
 `first in` and `first out` are the first transfer of each direction after
 `libusb_open`, printed as the two four-byte words the framer reads plus the size
-that arrived, in wire order. They exist because the aggregate counts cannot tell
-four bytes of length from eight bytes of channel-and-length: on a 652-byte read,
-`00000280 43060bd9` is a 640-byte length followed by picture, while
-`d0070000 10000000` would be channel 2000 carrying 16 bytes. Everything else on
-that page is a total; these two lines are the evidence.
+that arrived, in wire order. **Both words are big-endian**, like every length in
+the CarLife protocol — `00000001 0000000a` is channel 1 carrying ten bytes, and
+reading the same eight bytes little-endian gives channel 16777216 with a length
+of 167772160. The first build read them the wrong way round and the framer
+counted picture data as messages: seventeen messages on a channel 512 that does
+not exist. The lesson is on the screen now — `first in` carries the raw bytes, so
+a wrong reading is visible rather than plausible.
+
+An eight-byte transfer is the normal shape of a header on this unit: the phone
+writes the header, then the body, and the driver keeps them apart. That is what
+makes `[chan][len]` checkable at all.
 
 **A transfer is not a message.** This is what the first reading on the car got
 wrong, so it is worth being blunt about it: a 200 KB picture does not arrive in

@@ -12,6 +12,14 @@
  * capture - over TCP there is no such header, because each channel is a
  * connection of its own.
  *
+ * What that header actually holds on this unit, read off the screen on
+ * 2026-11-23: the first inbound transfer is eight bytes, 00 00 00 01 00 00 00 0a
+ * - channel 1 carrying ten bytes - and the header arrives in a transfer of its
+ * own, with the body following it. Both words are big-endian, like every other
+ * length in the CarLife protocol. The previous build read them little-endian,
+ * which turned that same header into channel 16777216 with a length of
+ * 167772160, and the framer then counted picture data as messages.
+ *
  * That is the whole opening. If the transport is just a pipe of labelled
  * packets, a library between carlife and libusb can hand carlife the same
  * packets - except they arrive from a socket to the phone instead of a cable.
@@ -204,10 +212,11 @@ struct head {
 static struct head hin, hout;
 static int head_dirty;
 
-/* The first transfer in each direction, as the framer reads it: two
- * little-endian words. If the screen shows 00000280 43060bd9 for a 652-byte
- * read, there is no eight-byte header on this stream and the next build has to
- * look for four - which is a different device to write. */
+/* The first transfer in each direction, verbatim: two big-endian words and the
+ * size that arrived. 00000001 0000000a on an eight-byte read is channel 1
+ * carrying ten bytes - a control message whose body comes next. 00000280
+ * 43060bd9 would be picture data sitting where a header is expected, which is
+ * the one outcome that sends this design back to the drawing board. */
 static char first_in[48] = "(nothing yet)";
 static char first_out[48] = "(nothing yet)";
 
@@ -218,9 +227,17 @@ static int64_t now_ms(void)
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static uint32_t rd32(const unsigned char *p)
+/* Big-endian, and that is not a detail. The first reading on the car decoded
+ * these words little-endian and got chan=16777216 len=167772160 out of the
+ * bytes 00 00 00 01 00 00 00 0a; read the other way it is channel 1 carrying
+ * ten bytes, which is what a control message looks like. CarLife speaks network
+ * order everywhere - the wireless link in kit/carlife-link writes its own
+ * header with be16_put/be32_put - so the packet on USB is read the same way.
+ * Getting this wrong does not fail loudly: the framer simply locks onto
+ * picture data and reports seventeen messages on channel 512. */
+static uint32_t be32(const unsigned char *p)
 {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
 }
 
 static void hex16(char *out, size_t cap, const unsigned char *p, int n)
@@ -234,8 +251,9 @@ static void hex16(char *out, size_t cap, const unsigned char *p, int n)
 }
 
 /* Bytes as four-byte groups, which is how the header has to be read: a u32 at a
- * time, little-endian. Running the pairs together makes that reading an
- * exercise in counting characters on a 1920-wide screen. */
+ * time, big-endian. Running the pairs together makes that reading an exercise
+ * in counting characters on a 1920-wide screen, and grouping them makes "which
+ * four bytes are the channel" a question of looking rather than counting. */
 static void hex_group(char *out, size_t cap, const unsigned char *p, int n)
 {
     size_t o = 0;
@@ -309,9 +327,8 @@ static int plausible(uint32_t chan, uint32_t len)
 {
     /* A length of zero is refused, and that single test does most of the work:
      * eight zero bytes - the commonest eight bytes in a video stream - pass
-     * every other check, and so does 0b d9 00 00 00 00 00 00, which is "channel
-     * 217, nothing". A message that carries nothing is worth missing; a stream
-     * that locks onto one every few hundred bytes is not. */
+     * every other check. A message that carries nothing is worth missing; a
+     * stream that locks onto one every few hundred bytes is not. */
     return len > 0 && len <= FRAME_MAX && chan <= CHAN_MAX;
 }
 
@@ -342,7 +359,7 @@ static void frame_bytes(struct framer *f, const unsigned char *p, int n)
         while (f->have < 8 && i < n) f->hdr[f->have++] = p[i++];
         if (f->have < 8) return;
         {
-            uint32_t chan = rd32(f->hdr), len = rd32(f->hdr + 4);
+            uint32_t chan = be32(f->hdr), len = be32(f->hdr + 4);
             if (plausible(chan, len)) {
                 f->have = 0;
                 f->chan = chan;
@@ -543,9 +560,12 @@ static void describe_aoa(char *out, size_t cap, const unsigned char *d, int avai
         snprintf(out, cap, "%d bytes, too few for a header", avail);
         return;
     }
-    chan = rd32(d);
-    len = rd32(d + 4);
-    type = avail >= 16 ? rd32(d + 12) : 0;
+    /* An eight-byte transfer is the normal shape of a header: the phone writes
+     * the header, then the body, and the driver keeps them apart. */
+
+    chan = be32(d);
+    len = be32(d + 4);
+    type = avail >= 16 ? be32(d + 12) : 0;
     if (!plausible(chan, len)) {
         /* The transfer began in the middle of a message: those eight bytes are
          * picture, not a channel. Shown in wire order, because the useful

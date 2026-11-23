@@ -15,6 +15,8 @@
 #   4. two messages and the head of a third in one transfer
 #   5. zero-length messages (they must not hang or double-count)
 #   6. garbage, then a good message in the next transfer
+#   7. a mid-message first read, then a header further in
+#   8. the car's real shape: an eight-byte header on its own, body next
 #
 # usage: python kit/carlife-shim/test/framer_test.py [--keep]
 import os
@@ -44,8 +46,8 @@ static void put(unsigned off, uint32_t chan, uint32_t len)
 {
     int i;
     for (i = 0; i < 4; i++) {
-        buf[off + i] = (unsigned char)(chan >> (8 * i));
-        buf[off + 4 + i] = (unsigned char)(len >> (8 * i));
+        buf[off + i] = (unsigned char)(chan >> (8 * (3 - i)));
+        buf[off + 4 + i] = (unsigned char)(len >> (8 * (3 - i)));
     }
 }
 
@@ -124,6 +126,20 @@ int main(void)
     printf("7 frames=%lu resync=%lu chans=%s\n", f.frames, f.resync, t);
     if (f.frames != 1 || strcmp(t, "2001x1")) return 1;
 
+    /* 8. The shape the unit actually showed on 2026-11-23: the header arrives in
+     * a transfer of its own - eight bytes, channel 1, ten bytes - and the body
+     * follows in the next one. Read big-endian that is a control message; read
+     * little-endian it is channel 16777216 and the framer never recovers. */
+    memset(&f, 0, sizeof f);
+    memset(buf, 0x42, sizeof buf);
+    put(0, 1, 10);
+    frame_bytes(&f, buf, 8);
+    put(18, 2001, 262136);          /* body of the first message is 8..17 */
+    frame_bytes(&f, buf + 8, 652);
+    chan_text(&f, t, sizeof t);
+    printf("8 frames=%lu resync=%lu chans=%s\n", f.frames, f.resync, t);
+    if (f.frames != 2 || f.resync || strcmp(t, "1x1 2001x1")) return 1;
+
     printf("all framer cases pass\n");
     return 0;
 }
@@ -151,7 +167,7 @@ def main():
             .replace('__FRAME_MAX__', '#define FRAME_MAX (8u * 1024u * 1024u)\n#define CHAN_MAX 10000u\n')
             .replace('__STRUCT__', between(src, 'struct framer {', 'static struct framer fin, fout;')
                      + 'static struct framer fin, fout;\n')
-            .replace('__RD32__', between(src, 'static uint32_t rd32(', 'static void hex16('))
+            .replace('__RD32__', between(src, 'static uint32_t be32(', 'static void hex16('))
             .replace('__FRAMER__', between(src, '/* One message counted on its channel.', '/* One line of the long log')))
     if 'frame_bytes' not in body or 'describe_aoa' in body:
         print('the framer moved: update the markers in this test', file=sys.stderr)
