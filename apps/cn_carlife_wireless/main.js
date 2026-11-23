@@ -124,14 +124,56 @@ mgu.run({
             const w = SRC_W * s, h = SRC_H * s;
             return { x: (W - w) / 2, y: (H - h) / 2, w, h };
         }
+        /* The phone's CarLife drops a bare down/up pair that arrives in the
+         * same millisecond: it needs at least one ACTION_MOVE and a press
+         * that lasts long enough to be a tap. A quick tap on the HMI can
+         * deliver phase 1 and phase 3 in the same frame with no phase 2 at
+         * all, so normalise the gesture before it reaches carlife-link.
+         * A real drag already has that body of moves, so its release is sent
+         * immediately - holding it back makes dragging feel rubbery. */
+        let gesture = null;
+        function ctlWrite(line) {
+            try { ctl.write(line + '\n'); } catch (e) { /* closed */ }
+        }
         function sendTouch(phase, x, y) {
             if (!ctl) return;
             const r = frameRect();
             const fx = (x - r.x) / r.w, fy = (y - r.y) / r.h;
             if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;   /* in a bar */
             const px = Math.round(fx * 10000), py = Math.round(fy * 10000);
-            const cmd = phase === 1 ? 'down' : phase === 3 ? 'up' : 'move';
-            try { ctl.write(cmd + ' ' + px + ' ' + py + '\n'); } catch (e) { /* closed */ }
+            const now = Date.now();
+            if (phase === 1) {
+                if (gesture) clearTimeout(gesture.moveTimer);
+                gesture = { x: px, y: py, at: now, moveSent: false, moved: false, moveTimer: null };
+                ctlWrite('down ' + px + ' ' + py);
+                gesture.moveTimer = setTimeout(() => {
+                    if (gesture && !gesture.moveSent) {
+                        gesture.moveSent = true;
+                        ctlWrite('move ' + gesture.x + ' ' + gesture.y);
+                    }
+                }, 70);
+                return;
+            }
+            if (phase === 2) {
+                if (gesture) {
+                    clearTimeout(gesture.moveTimer);
+                    gesture.moveSent = true;
+                    gesture.moved = true;
+                }
+                ctlWrite('move ' + px + ' ' + py);
+                return;
+            }
+            const g = gesture;
+            if (!g) { ctlWrite('up ' + px + ' ' + py); return; }
+            const sendUp = () => {
+                clearTimeout(g.moveTimer);
+                if (!g.moveSent) ctlWrite('move ' + px + ' ' + py);
+                ctlWrite('up ' + px + ' ' + py);
+                if (gesture === g) gesture = null;
+            };
+            if (g.moved) { sendUp(); return; }   /* drag: release at once */
+            const wait = 170 - (now - g.at);
+            if (wait > 0) setTimeout(sendUp, wait); else sendUp();
         }
 
         /* The one big "connect" button, dead centre, well inside the HMI's
@@ -335,6 +377,7 @@ mgu.run({
          * mgu.run (MainApp asks us to exit), so stop our timers then. */
         process.on('exit', () => {
             clearInterval(ctlTimer);
+            if (gesture) clearTimeout(gesture.moveTimer);
             try { source.stop(); } catch (e) { /* shutting down */ }
             if (ctl) { try { ctl.destroy(); } catch (e) { /* closed */ } }
         });

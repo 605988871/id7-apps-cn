@@ -340,8 +340,59 @@ def test_drop_uid_order():
           'setuid runs before the first socket in main', (drop, sockets[:1]))
 
 
+def test_reconnect_latency():
+    """A closed touch channel used to stay down for 3 s, and reopening all six
+    channels blocked the single-threaded select loop for 600 ms each. Both
+    show up on the car as dropped taps and a stuttering picture - worth a
+    source-level guard because a fake phone cannot reproduce the timing."""
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+    start = src.find('static void reopen_missing')
+    body = src[start:start + 1400] if start >= 0 else ''
+    check('critical[3]' in body and 'CH_MEDIA' not in body,
+          'reopen only retries the channels we use, never the audio ones')
+    check('open_channel(l, i, 200)' in body, 'reopen uses a short connect timeout')
+    check('at most one blocking connect per pass' in body,
+          'reopen does one connect per pass')
+    check('now - L.t_retry >= 400' in src,
+          'a dropped touch channel is retried within 400 ms')
+    check('tv.tv_usec = 50000;' in src,
+          'select wakes often enough to pump the control socket')
+
+
+def test_frame_rate_and_session_stability():
+    """Three fixes that the car feels but a fake phone cannot reproduce.
+
+    The phone honours the frame rate the head unit asks for, so asking for
+    30 when the phone can do 60 halves the whole session. The phone also
+    restarts its encoder whenever a session starts over, so dropping a
+    healthy video channel to rebuild the cmd one costs a black frame. And a
+    silent cmd channel makes the phone hang up on us, so the head unit has
+    to keep talking.
+    """
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+
+    check('L.req_fps = 60;' in src,
+          'the link asks the phone for 60 fps, not 30')
+    check('default 1280x720@60' in src,
+          'the help text agrees with the default')
+
+    start = src.find('static int connect_all')
+    body = src[start:start + 2600] if start >= 0 else ''
+    check('if (l->ch[i].open)' in body,
+          'connect_all leaves the channels that are already open alone')
+    check('keeping the running video session' in body,
+          'a cmd reconnect keeps the running video session')
+    check('link_close(l)' not in body,
+          'connect_all no longer tears the whole session down')
+
+    check('send_keepalive' in src and 'now - L.t_keepalive >= 2000' in src,
+          'the head unit keeps the cmd channel alive every two seconds')
+
+
 def main():
     test_drop_uid_order()
+    test_reconnect_latency()
+    test_frame_rate_and_session_stability()
     zig = find_zig()
     if not zig:
         print('zig not found: set ZIG= or put it on PATH')

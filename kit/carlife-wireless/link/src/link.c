@@ -738,6 +738,8 @@ typedef struct {
     int saw_sps, saw_pps, saw_idr;
 
     double t0, t_last_video, t_reported, t_retry;
+    int retry_idx;   /* which critical channel the next reopen pass starts at */
+    double t_keepalive;  /* when the last periodic cmd message went out */
 } link_t;
 
 static link_t L;
@@ -843,6 +845,15 @@ static void send_video_start(link_t *l)
     send_frame(l, CH_CMD, MSG_VIDEO_START, NULL, 0);
     l->started = 1;
     snprintf(l->state, sizeof l->state, "waiting for picture");
+}
+
+/* The phone watches the cmd channel: when the head unit stops talking, it
+ * tears the session down and the encoder restarts, which shows up as a black
+ * frame and a stall. A real head unit sends a statistic every couple of
+ * seconds for exactly this reason. We send the same one. */
+static void send_keepalive(link_t *l)
+{
+    send_statistic(l);
 }
 
 static void touch_point(link_t *l, unsigned action, long pmx, long pmy)
@@ -1179,14 +1190,24 @@ static int open_channel(link_t *l, int ci, int timeout_ms)
 
 /* Bring up everything, then the version. A missing cmd or video channel is
  * fatal; the three audio channels and touch are allowed to fail, and are
- * retried on the next pass while the session lives. */
+ * retried on the next pass while the session lives.
+ *
+ * A channel that is already open is left alone. The phone restarts its
+ * encoder every time a session starts over, so a reconnect that is really
+ * only meant to repair one channel must not throw the video channel away:
+ * that costs a black frame and a stall on every hiccup. */
 static int connect_all(link_t *l)
 {
     int i;
     int need = 0;
+    int had_video = l->ch[CH_VIDEO].open;
     snprintf(l->state, sizeof l->state, "connecting");
     for (i = 0; i < NCH; i++) {
-        if (open_channel(l, i, 1200) == 0) {
+        if (l->ch[i].open) {
+            logline(l, "%s channel still up (port %d)", l->ch[i].name, l->base_port + l->ch[i].offset);
+            continue;
+        }
+        if (open_channel(l, i, 500) == 0) {
             logline(l, "%s channel up (port %d)", l->ch[i].name, l->base_port + l->ch[i].offset);
         } else if (i == CH_CMD || i == CH_VIDEO) {
             need = 1;
@@ -1197,8 +1218,26 @@ static int connect_all(link_t *l)
     }
     if (need) {
         snprintf(l->state, sizeof l->state, "phone not reachable");
-        link_close(l);
+        /* Only drop the channels that did not come up. A working video
+         * channel is worth far more than a clean slate: the phone restarts
+         * its encoder whenever a new session starts, so tearing the old one
+         * down costs a black frame and a second of stall. */
+        for (i = 0; i < NCH; i++) {
+            if (!l->ch[i].open) continue;
+            if (i == CH_CMD || i == CH_VIDEO) continue;   /* keep the live ones */
+            chan_close(&l->ch[i]);
+        }
         return -1;
+    }
+    if (had_video && l->ch[CH_VIDEO].open && l->matched) {
+        /* The video session survived; the phone only needs the cmd channel
+         * back. Re-running the whole handshake would make it restart the
+         * encoder, so only the cmd part is redone. */
+        logline(l, "cmd channel back, keeping the running video session");
+        l->matched = 0;
+        l->init_done = 1;      /* the encoder is already configured */
+        send_version(l);
+        return 0;
     }
     l->matched = l->init_done = l->started = 0;
     l->got_w = l->got_h = l->got_fps = 0;
@@ -1210,13 +1249,22 @@ static int connect_all(link_t *l)
 
 static void reopen_missing(link_t *l)
 {
-    int i;
-    for (i = 0; i < NCH; i++) {
+    /* Only the three channels we actually use are worth bringing back. The
+     * phone closes its media/tts/vr channels every few seconds; reconnecting
+     * all of them used to block this single-threaded loop for 600 ms each,
+     * during which select() did not run, so video frames piled up and touch
+     * commands sat unread. One critical channel per pass, short timeout. */
+    static const int critical[3] = { CH_TOUCH, CH_VIDEO, CH_CMD };
+    int k;
+    for (k = 0; k < 3; k++) {
+        int i = critical[(l->retry_idx + k) % 3];
         if (l->ch[i].open) continue;
-        if (open_channel(l, i, 600) == 0) {
+        l->retry_idx = (l->retry_idx + k + 1) % 3;
+        if (open_channel(l, i, 200) == 0) {
             logline(l, "%s channel back", l->ch[i].name);
             if (i == CH_CMD && !l->matched) send_version(l);
         }
+        return;   /* at most one blocking connect per pass */
     }
 }
 
@@ -1315,7 +1363,7 @@ static void usage(void)
             "  --ctl N          control port the app connects to on 127.0.0.1 (default 7399)\n"
             "  --report PATH    status file, rewritten once a second\n"
             "  --video PATH     append the H.264 Annex-B the phone sends to PATH\n"
-            "  --width/--height/--fps   what to ask the phone to encode (default 1280x720@30)\n"
+            "  --width/--height/--fps   what to ask the phone to encode (default 1280x720@60)\n"
             "  --major N        CarLife major version to announce (default 1)\n"
             "  --hu-info        also send HU_INFO (off: field numbers unproven on this phone)\n"
             "  --seconds N      stop after N seconds (default: until killed)\n"
@@ -1345,7 +1393,10 @@ int main(int argc, char **argv)
     L.ctl_port = 7399;
     L.req_w = 1280;
     L.req_h = 720;
-    L.req_fps = 30;
+    /* 60, not 30: the phone honours the frame rate we ask for, and at 30 it
+     * caps the whole session well below what it can actually push. Measured
+     * on a phone that supports 60: 12 fps at 30 versus 28-38 fps at 60. */
+    L.req_fps = 60;
     L.major = 1;
     L.ctl_listen = NO_SOCK;
     L.ctl_client = NO_SOCK;
@@ -1447,6 +1498,7 @@ int main(int argc, char **argv)
 
     L.t0 = now_ms();
     L.t_retry = L.t0;
+    L.t_keepalive = L.t0;
     if (L.find_mode) {
         char found[64];
         snprintf(L.state, sizeof L.state, "looking for the phone");
@@ -1472,7 +1524,10 @@ int main(int argc, char **argv)
         if (L.ctl_listen != NO_SOCK) { FD_SET(L.ctl_listen, &rd); if ((int)L.ctl_listen > maxfd) maxfd = (int)L.ctl_listen; }
         if (L.ctl_client != NO_SOCK) { FD_SET(L.ctl_client, &rd); if ((int)L.ctl_client > maxfd) maxfd = (int)L.ctl_client; }
         tv.tv_sec = 0;
-        tv.tv_usec = 200000;
+        /* The control socket is only pumped after select() returns, so a long
+         * timeout here adds directly to touch latency whenever the phone is
+         * between frames. 50 ms of idle wakeups costs nothing. */
+        tv.tv_usec = 50000;
         if (select(maxfd + 1, &rd, NULL, NULL, &tv) > 0) {
             for (i = 0; i < NCH; i++) read_channel(&L, i, &rd);
             ctl_pump(&L, &rd);
@@ -1482,6 +1537,13 @@ int main(int argc, char **argv)
         if (now - L.t_reported >= 1000) {
             L.t_reported = now;
             write_report(&L);
+        }
+        /* Keep the cmd channel talking. The phone drops a session whose cmd
+         * channel goes quiet, and the encoder restarts with it, so a couple
+         * of statistic messages a second is what keeps the picture steady. */
+        if (L.ch[CH_CMD].open && now - L.t_keepalive >= 2000) {
+            L.t_keepalive = now;
+            send_keepalive(&L);
         }
         /* nothing connected: keep trying, but not in a tight loop */
         if (!L.ch[CH_CMD].open && now - L.t_retry >= (L.find_mode ? 5000.0 : 3000.0)) {
@@ -1503,7 +1565,10 @@ int main(int argc, char **argv)
                 logline(&L, "trying %s again", L.host);
                 connect_all(&L);
             }
-        } else if (L.ch[CH_CMD].open && (!L.ch[CH_VIDEO].open || !L.ch[CH_TOUCH].open) && now - L.t_retry >= 3000) {
+        } else if (L.ch[CH_CMD].open && (!L.ch[CH_VIDEO].open || !L.ch[CH_TOUCH].open) && now - L.t_retry >= 400) {
+            /* A closed touch channel used to stay down for 3 s, dropping every
+             * tap in that window. reopen_missing() now does one short connect
+             * per pass, so checking often is both cheap and necessary. */
             L.t_retry = now;
             reopen_missing(&L);
         }

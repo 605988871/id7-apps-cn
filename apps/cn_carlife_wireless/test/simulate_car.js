@@ -31,6 +31,20 @@ let impl = null;
 const mockMgu = { run(i) { impl = i; } };
 const mockRecord = { setImage() {} };
 
+/* Record every line main.js sends to carlife-link's ctl port. The connect
+ * event fires synchronously so the app's ctl socket is ready before the first
+ * simulated tap. */
+const ctlLines = [];
+const mockNet = {
+    connect() {
+        return {
+            on(ev, cb) { if (ev === 'connect') cb(); return this; },
+            write(line) { ctlLines.push({ line: String(line), at: Date.now() }); return true; },
+            destroy() {},
+        };
+    },
+};
+
 let wifiRendered = 0;
 let lastWifiPage = null;
 class MockWifiPage {
@@ -54,6 +68,7 @@ class ControllableCarlifeSource extends RealCarlifeSource {
 const realLoad = Module._load;
 Module._load = function (request, parent, isMain) {
     if (parent && /cn_carlife_wireless[\\/]main\.js$/.test(parent.filename)) {
+        if (request === 'net') return mockNet;
         if (request === './kit/mgu') return mockMgu;
         if (request === './kit/record') return mockRecord;
         if (request === './wifi_page') return { WifiPage: MockWifiPage };
@@ -263,10 +278,36 @@ function check(name, cond) {
     c = render();
     check('B5 real frame shows the picture', c.image >= 1 && c.roundRect === 0);
 
-    /* B6: with a picture, a tap routes to the phone path (ctl is absent here,
-     * so it just must not crash and must keep the gesture). */
+    /* B6: with a picture, a tap routes to the phone path. */
     const withPicture = touchHandler(1, 800, 360) === true;
     check('B6 tap with picture routes without crashing', withPicture);
+
+    /* B7: the phone drops a bare down/up pair with no move and no press
+     * duration. A quick tap on the HMI can deliver phase 1 and phase 3 in
+     * the same frame - prove the app turns it into a full gesture. */
+    ctlLines.length = 0;
+    touchHandler(1, 800, 360);
+    touchHandler(3, 800, 360);
+    await new Promise((r) => setTimeout(r, 260));
+    const seq = ctlLines.map((e) => e.line.trim().split(' ')[0]);
+    check('B7 a fast tap becomes down/move/up', seq.join(',') === 'down,move,up', seq.join(','));
+    check('B7 the press lasts at least 150 ms',
+        ctlLines.length === 3 && ctlLines[2].at - ctlLines[0].at >= 150,
+        ctlLines.length === 3 ? (ctlLines[2].at - ctlLines[0].at) + ' ms' : 'missing lines');
+
+    /* B8: a drag already has a body of real ACTION_MOVEs, so its release
+     * must not be held back by the minimum press that only a bare tap needs.
+     * This is what makes dragging feel rubbery if it regresses. */
+    ctlLines.length = 0;
+    touchHandler(1, 800, 360);
+    touchHandler(2, 830, 380);
+    touchHandler(2, 845, 395);
+    touchHandler(3, 850, 400);
+    const drag = ctlLines.map((e) => e.line.trim().split(' ')[0]);
+    check('B8 a drag is down/move/move/up', drag.join(',') === 'down,move,move,up', drag.join(','));
+    check('B8 drag release is immediate, not held for 170 ms',
+        ctlLines.length === 4 && ctlLines[3].at - ctlLines[0].at < 100,
+        ctlLines.length === 4 ? (ctlLines[3].at - ctlLines[0].at) + ' ms' : 'missing lines');
 
     console.log(failed === 0 ? '\nALL PASS' : '\n' + failed + ' FAILED');
     process.exit(failed === 0 ? 0 : 1);
