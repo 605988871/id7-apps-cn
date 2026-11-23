@@ -47,6 +47,12 @@ const SOCK = '/dev/shm/carlife-wireless/live.sock';
 const HOST_FILE = '/dev/shm/carlife-wireless/host';
 const CTL_PORT = 7399;              /* carlife-link's app control socket */
 const STATUS_JSON = '/run/mgu-uplink/status.json';
+/* Where the native pipeline drops its reports. link.txt is written by
+ * carlife-link (state/error/host/stream), and the decode report goes to the
+ * /dev/shm/<name>-decode.txt beside the shm dir (see decode.c set_dir). */
+const LINK_TXT = '/dev/shm/carlife-wireless/link.txt';
+const DECODE_TXT = '/dev/shm/carlife-wireless-decode.txt';
+const LEASE_JSON = '/run/mgu-uplink/lease.json';
 
 const IMG = 1;                      /* image slot for the frame */
 
@@ -75,11 +81,14 @@ mgu.run({
         const source = new CarlifeSource({ w: SRC_W, h: SRC_H, fps: 30, sockPath: SOCK });
         const frame = Buffer.alloc(SRC_W * SRC_H * 4);
         let haveFrame = false;
-        let status = 'waiting for the decoder';
         let firstFrameAt = 0;
 
-        source.on('status', (s) => { status = s; });
-        source.on('frame', (buf) => {
+        source.on('frame', (buf, seq, real) => {
+            /* The source's "CARLIFE LIVE" page is a diagnostic placeholder it
+             * draws while nothing is connected. It must never count as a real
+             * picture, or the connect button vanishes and every tap goes to
+             * the phone with nothing to show for it. */
+            if (real === false) return;
             if (!toRgba(buf, SRC_W, SRC_H, frame)) return;
             haveFrame = true;
             if (!firstFrameAt) firstFrameAt = Date.now();
@@ -146,7 +155,7 @@ mgu.run({
             const ssid = rememberedSsid();
             if (!ssid || autoConnecting) return;
             if (alreadyConnected(ssid)) {
-                autoMsg = '已连接 ' + ssid + '，等待画面…';
+                /* diagnose() already shows "热点：已连接"; nothing to add. */
                 return;
             }
             autoConnecting = true;
@@ -154,8 +163,7 @@ mgu.run({
             const psk = String(settings.get('wifi_psk') || '').trim();
             wifiPage.connect(ssid, psk).then((r) => {
                 autoConnecting = false;
-                if (r && r.ok) autoMsg = '已连接 ' + ssid + '，等待画面…';
-                else autoMsg = '自动连接 ' + ssid + ' 失败，点下方按钮手动连接';
+                autoMsg = (r && r.ok) ? '' : ('自动连接 ' + ssid + ' 失败，点下方按钮手动连接');
             });
         }
         /* give carlife-wifi.service a moment to be up before the first attempt */
@@ -202,16 +210,78 @@ mgu.run({
             drawConnectButton(cv);
             return ui.image('MAIN_GFX', cv);
         }
+        /* Parse a "key: value" report (link.txt / decode.txt) into an object,
+         * or null when the file is absent (that stage never ran). */
+        function readKV(path) {
+            try {
+                const s = fs.readFileSync(path, 'utf8');
+                const o = {};
+                s.split('\n').forEach((ln) => {
+                    const i = ln.indexOf(':');
+                    if (i > 0) o[ln.slice(0, i).trim()] = ln.slice(i + 1).trim();
+                });
+                return o;
+            } catch (e) { return null; }
+        }
+
+        const LINK_STATE_ZH = {
+            'idle': '取流链路待机',
+            'connecting': '正在连接手机',
+            'handshake': '正在与手机握手',
+            'looking for the phone': '正在查找手机',
+            'no phone on the network': '找不到手机（确认热点已连、百度 CarLife 已打开）',
+            'waiting for picture': '已连接，等待画面',
+            'streaming': '正在接收画面'
+        };
+
+        /* A few short lines saying exactly where the pipeline is, read from
+         * the native side's own reports, so a failed link names its reason
+         * instead of a bare "waiting". */
+        function diagnose() {
+            const lines = [];
+            try {
+                const st = JSON.parse(fs.readFileSync(STATUS_JSON, 'utf8'));
+                const w = st.wifi || {};
+                if (w.link === 'connected' || w.link === 'online') lines.push('热点：已连接 ' + (w.ssid || ''));
+                else if (w.enabled) lines.push('热点：Wi-Fi 已开启，尚未连接');
+                else lines.push('热点：未连接，点「连接热点」选手机热点');
+            } catch (e) { lines.push('热点：未检测到 mgu-uplink'); }
+            const lr = readKV(LINK_TXT);
+            if (lr) {
+                lines.push(LINK_STATE_ZH[(lr.state || '').trim()] || ('取流：' + lr.state));
+                if (lr.error && lr.error !== 'none') lines.push('取流错误：' + lr.error);
+            } else {
+                lines.push('取流：尚未启动（热点连上后自动开始）');
+            }
+            const dr = readKV(DECODE_TXT);
+            if (dr) {
+                if (dr.state && dr.state !== 'starting') lines.push('解码：' + dr.state);
+                if (dr.error && dr.error !== 'none') lines.push('解码错误：' + dr.error);
+            }
+            return lines;
+        }
+
         function drawConnectButton(cv) {
             const b = WIFI_BTN;
-            cv.text('CarLife 无线投屏', W / 2, b.y - 64, 36, '#ffffff', { align: 'center', literal: true });
-            const sub = autoConnecting ? ('正在连接 ' + rememberedSsid() + '…') : (status || '等待连接手机');
-            cv.text(sub, W / 2, b.y - 26, 20, '#9aa0a6', { align: 'center', literal: true });
+            cv.text('CarLife 无线投屏', W / 2, b.y - 92, 36, '#ffffff', { align: 'center', literal: true });
+            const sub = autoConnecting ? ('正在连接 ' + rememberedSsid() + '…') : '';
+            cv.text(sub, W / 2, b.y - 54, 20, '#9aa0a6', { align: 'center', literal: true });
             cv.roundRect(b.x, b.y, b.w, b.h, 16, '#3b82f6');
             cv.text(autoConnecting ? '连接中…' : '连接热点', W / 2, b.y + b.h / 2 + 10, 32,
                 '#ffffff', { align: 'center', literal: true });
-            const hint = autoMsg || '点击后选择手机热点，连接成功即显示 CarLife 画面';
-            cv.text(hint, W / 2, b.y + b.h + 44, 18, '#6b7280', { align: 'center', literal: true });
+
+            /* The real reason nothing shows yet, straight from the pipeline. */
+            const lines = autoConnecting
+                ? ['正在连接热点，请稍候…']
+                : diagnose().slice(0, 3);
+            if (!autoConnecting && autoMsg && lines.length < 3) lines.push(autoMsg);
+            if (!lines.length) lines.push('点击后选择手机热点，连接成功即显示 CarLife 画面');
+            let dy = b.y + b.h + 44;
+            lines.forEach((line) => {
+                const warn = /失败|错误|找不到|未检测|尚未/.test(line);
+                cv.text(line, W / 2, dy, 18, warn ? '#f59e0b' : '#9aa0a6', { align: 'center', literal: true });
+                dy += 26;
+            });
         }
         ctx.loop('MAIN', 30, render);
 

@@ -89,7 +89,7 @@ class FrameSource extends EventEmitter {
     _frame(buf) {
         if (!this.running || !buf || buf.length !== this.expected) return;
         this.frames++;
-        this.emit('frame', buf, this.seq++);
+        this.emit('frame', buf, this.seq++, true);
     }
 }
 
@@ -624,7 +624,7 @@ class CarlifeSource extends FrameSource {
             this.actBuf = this._statusAtlas(this.actBuf, this.actTick++, 0, this.note);
         }
         this.frames++;
-        this.emit('frame', this.actBuf, this.seq++);
+        this.emit('frame', this.actBuf, this.seq++, false);
     }
 
     /** One line for the status page. */
