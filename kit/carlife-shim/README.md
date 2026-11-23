@@ -102,8 +102,8 @@ last in: ep=0x81 00000f00 05ee6d31 not a header
 last out: ep=0x01 00000001 00018009 not a header
 frames: 34 in / 12 out, aligned, 1x4 2001x30
 async: 1636 submits, 3259 loops
-fake: on (switched), claims 1, bulk 812/34, 169.254.110.252
-bridge: ch2 -> 169.254.110.252:8240
+fake: on (switched), claims 1, bulk 812/34, 169.254.x.x
+bridge: ch2 -> 169.254.x.x:8240
 ```
 
 `fake:` is the stand-in's line. `switched` is the milestone — carlife took the
