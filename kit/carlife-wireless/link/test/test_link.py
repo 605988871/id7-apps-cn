@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -389,10 +390,72 @@ def test_frame_rate_and_session_stability():
           'the head unit keeps the cmd channel alive every two seconds')
 
 
+def read_interp(blob):
+    """PT_INTERP, the loader the kernel must find before this program runs.
+
+    Parsed rather than searched: a byte string that merely *contains* the
+    right tail is exactly what got a broken binary past elf_check.py.
+    """
+    e_phoff = struct.unpack_from('<Q', blob, 32)[0]
+    e_phentsize = struct.unpack_from('<H', blob, 54)[0]
+    e_phnum = struct.unpack_from('<H', blob, 56)[0]
+    for i in range(e_phnum):
+        base = e_phoff + i * e_phentsize
+        if base + 56 > len(blob):
+            return None
+        if struct.unpack_from('<I', blob, base)[0] != 3:      # PT_INTERP
+            continue
+        off = struct.unpack_from('<Q', blob, base + 8)[0]
+        size = struct.unpack_from('<Q', blob, base + 32)[0]
+        if off + size > len(blob):
+            return None
+        return blob[off:off + size].rstrip(b'\0').decode('utf-8', 'replace')
+    return None
+
+
+def test_shipped_binaries():
+    """The three files in this folder are what the store actually installs.
+
+    They are built on Windows under Git Bash, and the shell rewrites an
+    argument that looks like a unix path before a native program sees it. It
+    turned -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 into this machine's
+    own loader and every shipped binary ended up with
+
+        D:/.../PortableGit/lib/ld-linux-x86-64.so.2
+
+    in PT_INTERP. The unit has no such file, so exec failed with ENOENT and
+    the screen said "carlife-link exited (rc 127)" - the binary was present,
+    executable, and unable to start. elf_check.py let it through because it
+    searched the whole file for the right bytes, and those bytes are there,
+    at the end of the wrong absolute path.
+
+    So this reads PT_INTERP and compares it whole. It runs without zig: the
+    point is to catch a bad file that is already in the tree, which is the
+    state the app was actually shipped in.
+    """
+    for name in ('carlife-link', 'carlife-decode', 'wifi-bridge'):
+        path = ROOT.parent / name
+        check(path.exists(), name + ' is present')
+        if not path.exists():
+            continue
+        interp = read_interp(path.read_bytes())
+        check(interp == '/lib/ld-linux-x86-64.so.2',
+              '%s names the unit loader, got %r' % (name, interp))
+
+    build = (ROOT.parent / 'build.sh').read_text(encoding='utf-8', errors='replace')
+    check('MSYS_NO_PATHCONV=1' in build,
+          'build.sh turns the shell path rewrite off, or the loader gets mangled again')
+
+    elf = (HERE / 'elf_check.py').read_text(encoding='utf-8', errors='replace')
+    check('PT_INTERP' in elf and 'read_interp' in elf,
+          'elf_check.py parses PT_INTERP instead of searching the whole file')
+
+
 def main():
     test_drop_uid_order()
     test_reconnect_latency()
     test_frame_rate_and_session_stability()
+    test_shipped_binaries()
     zig = find_zig()
     if not zig:
         print('zig not found: set ZIG= or put it on PATH')

@@ -209,9 +209,23 @@ mgu.run({
             autoConnecting = true;
             autoMsg = '';
             const psk = String(settings.get('wifi_psk') || '').trim();
-            wifiPage.connect(ssid, psk).then((r) => {
+            /* The uplink can take the socket and then say nothing. Without a
+             * way out, autoConnecting stays true for the rest of the session
+             * and every tap on the button is ignored - which on the car looks
+             * exactly like "the button does nothing". */
+            let bail = null;
+            const settle = (msg) => {
+                if (bail) clearTimeout(bail);
                 autoConnecting = false;
-                autoMsg = (r && r.ok) ? '' : ('自动连接 ' + ssid + ' 失败，点下方按钮手动连接');
+                autoMsg = msg;
+            };
+            bail = setTimeout(() => {
+                if (autoConnecting) settle('自动连接超时，点下方按钮手动连接');
+            }, 15000);
+            wifiPage.connect(ssid, psk).then((r) => {
+                settle((r && r.ok) ? '' : ('自动连接 ' + ssid + ' 失败，点下方按钮手动连接'));
+            }).catch(() => {
+                settle('自动连接 ' + ssid + ' 失败，点下方按钮手动连接');
             });
         }
         /* give carlife-wifi.service a moment to be up before the first attempt */
@@ -225,8 +239,11 @@ mgu.run({
                     /* No picture: only the connect button acts, and the app
                      * swallows every other tap so nothing leaks to the HMI. */
                     if (phase === 1 && inWifiButton(x, y) && !autoConnecting) {
-                        wifiPage.refresh();
+                        /* Switch first, refresh second. The other order made one
+                         * throwing read swallow the tap: the page never changed
+                         * and the button looked dead. */
                         page = 'wifi';
+                        try { wifiPage.refresh(); } catch (e) { /* the page says why */ }
                     }
                     return true;
                 }

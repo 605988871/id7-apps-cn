@@ -162,6 +162,21 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
   现在 cmd 通道掉线时**保留正在工作的 video 通道**，只补 cmd 并重发版本号，
   不再把整个会话拆掉；同时车机每 2 秒发一条统计消息，避免手机因 cmd 静默
   而主动断开会话。
+- **二进制必须用 build.sh 构建**：在 Windows 的 Git Bash 里直接调 zig 时，外壳会把
+  `-Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2` 当成路径改写成构建机自己的加载器，
+  写进 ELF 的 `PT_INTERP`：
+
+  ```
+  D:/.../PortableGit/lib/ld-linux-x86-64.so.2
+  ```
+
+  车机上没有这个文件，exec 返回 ENOENT，屏幕显示「反复重启 · carlife-link exited
+  (rc 127)」——文件在、权限对、就是永远起不来，热点已连也连不上手机。0.6.0 和 0.7.0
+  装的都是这种二进制。`elf_check.py` 当时放行它，是因为它做的是**全文件子串匹配**，
+  而 `…/PortableGit/lib/ld-linux-x86-64.so.2` 的尾部正好含有待查的
+  `/lib/ld-linux-x86-64.so.2`。现在三重防护：`build.sh` 关掉路径改写（改用相对路径
+  以免连带破坏其它参数）、`elf_check.py` 解析 `PT_INTERP` 精确比对、`test_link.py`
+  直接校验仓库里这三个二进制，坏文件进不了提交。
 - **车型**：解码依赖车机自带的 Intel MSDK 2017（`libmfxhw64.so` API 1.24）+ libva；若车型不同可能缺失（install.sh 的 selftest 会报告）。
 - **网络白名单依赖 mgu-uplink**：`carlife-link` 降到 uid 65534 才能从车机 WiFi 发包；这依赖 Store 在装本组件时写好 `uids.d/carlife-wireless`。若白名单没写进去，link 会连不上手机——按上面"第一步"检查该文件。
 
