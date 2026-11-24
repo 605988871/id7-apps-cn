@@ -174,9 +174,8 @@ class Display {
     }
 
     _startGpu(file) {
-        // mgu-render/1 for every app that draws no pixel images (Doom: "chrome": false), and for
-        // every app that draws a video ("video": true): videos only exist in that dialect
-        const native = !!this.screen.video || (this.screen.chrome !== false && process.env.MGU_RENDERD_PROTO !== 'upstream');
+        // mgu-render/1 for every app that draws no pixel images (Doom: "chrome": false)
+        const native = this.screen.chrome !== false && process.env.MGU_RENDERD_PROTO !== 'upstream';
         const gpu = this.gpu = new RenderClient(this.spec.id, this.log, Object.assign({ native }, file ? { file } : {}));
         gpu.on('ready', () => { if (this.gpu !== gpu) return; this._place(); this._syncVisible(); this._grab(); });
         gpu.on('tick', () => { if (this.gpu === gpu) { this.tickT = Date.now(); this.tickHandlers.forEach((fn) => fn()); } });
@@ -241,15 +240,6 @@ class Display {
 
     /** The kit runs the screen: mgu-render/1 with touch, full-screen layout. */
     own() { return !!(this.gpu && this.gpu.ready && !this.blocked && this.gpu.native && this.gpu.touch && this.place && this.place.full); }
-    /**
-     * A video can be drawn now: the renderer speaks mgu-render/1 with video, the app's area covers
-     * the screen it is on, and the renderer shows the app. Apps that draw a feed check this
-     * (ctx.video) before they name a video file: without it nothing would be drawn at all.
-     */
-    videoReady() {
-        const g = this.gpu;
-        return !!(g && g.ready && g.native && g.info && g.info.video && !this.blocked && this.active() && this.screen && this.screen.video);
-    }
     /** own() but for the placement, which depends on it (the bar's height): the renderer and layout allow it. */
     ownable() {
         const g = this.gpu;
@@ -531,15 +521,6 @@ class Display {
         const pl = this.place;
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
-        /* A video screen is one picture of the phone's: the whole area it covers is the app's, so
-         * a finger anywhere on the picture goes to the phone instead of to the HMI's own button
-         * bar, which the surface covers but does not remove (tapping the bottom of the picture
-         * opened the HMI's settings). The back-arrow column stays the HMI's. */
-        if (this.screen && this.screen.video) {
-            const hx = HMI.left - pl.x;
-            this.gpu.claim([logical({ x: HMI.left, y: pl.y, w: pl.w - hx, h: pl.h })]);
-            return;
-        }
         const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
         // the header as far as the HMI's status corner shows through it (iDrive 7); iDrive 8 has none in the
         // app's area: the whole row is the app's, as a tap there must not count as the HMI's (mgu-render closes)
@@ -611,9 +592,8 @@ class Display {
             const w = a.w - HMI.left, h = a.h;
             /* Which part of the app's canvas is the page. The default is the 1600 x 520 page
              * the kit's own chrome leaves room for; an app that draws a picture of another
-             * size (a video feed, a game) says so in its screen and then the whole canvas is
-             * shown. Without that, everything below the 520th row - a third of a 1280 x 720
-             * picture - was simply not drawn. */
+             * size says so in its screen and then the whole canvas is shown. Without that,
+             * everything below the 520th row was simply not drawn. */
             const src = (this.screen && this.screen.src) || FULL.src;
             const ah = h - this.headH() - this.barH();
             const s = Math.floor(Math.min(w / src.w, ah / src.h) * 1000) / 1000;
@@ -629,11 +609,11 @@ class Display {
             const spare = ah - 2 * PAGE_GAP - src.h * s;
             if (!this.barH() && spare > 0) {
                 const top = Math.round(this.headH() + PAGE_GAP - src.y * s);
-                if (this.screen && this.screen.chrome === false && !this.screen.video) {
+                if (this.screen && this.screen.chrome === false) {
                     // a screen the app draws whole (a game, in screen pixels): its page right at the top
                     pl.oy = top;
                     pl.extra = Math.floor(spare / s);
-                } else if (!this.screen || !this.screen.video) {
+                } else {
                     pl.oyMid = pl.oy;
                     pl.oyTop = Math.max(top, Math.round(this.headH() + (ah - FULL.barH - src.h * s) / 2 - src.y * s));
                     pl.extra = Math.floor((h - PAGE_GAP - pl.oyTop) / s - PAGE.h);
@@ -784,18 +764,17 @@ class Display {
         // second, the renderer hides an app that goes quiet for 3 s (hung app over the HMI)
         const now = Date.now();
         /* A pixel image (setImage) is one draw command no matter what its pixels do: id, place
-         * and size are the same in every frame, so the words of a video frame never change and
-         * the check below would treat it as a still picture and post it once a second - the
-         * picture freezes on its first frame while the app keeps decoding into it. The version
+         * and size are the same in every frame, so the words never change and the check below
+         * would treat an updating image as a still picture and post it once a second - the
+         * picture freezes on its first frame while the app keeps drawing into it. The version
          * each image is at is part of what changed, so it belongs in the comparison. */
         const ik = this._imageKey(out);
         /* The renderer answers every frame with a TICK. Sending the next one
-         * before that reply only queues pixels in the socket - and a video
-         * frame is megabytes. The app then spends its event loop copying them
-         * and the socket that carries the phone's own frames goes unread: on
-         * the car that was 1598 dropped frames out of 1599 behind a picture
-         * that never moved. One frame in flight, no more. (A lost TICK must
-         * not freeze the app for good, hence the timeout.) */
+         * before that reply only queues pixels in the socket - and a frame of
+         * pixels is megabytes. The app then spends its event loop copying them
+         * and the socket that carries the phone's own frames goes unread. One
+         * frame in flight, no more. (A lost TICK must not freeze the app for
+         * good, hence the timeout.) */
         if (!force && this.gpu.waiting && now - this.lastSent < 500) return;
         if (!force && ik === this.lastImageKey && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
         this.lastSent = now;
@@ -965,7 +944,7 @@ class Display {
      * bar buttons still exist in the HMI under the surface, for focus and taps, but aren't drawn).
      */
     barH() {
-        if (this.screen && (this.screen.bar === false || this.screen.chrome === false || this.screen.video)) return 0;
+        if (this.screen && (this.screen.bar === false || this.screen.chrome === false)) return 0;
         // the kit's bar with nothing left on it (its buttons on the page, Settings a tab): no bar
         return this.ownable() && !this.buttons().length ? 0 : FULL.barH;
     }
@@ -974,8 +953,8 @@ class Display {
         this.ownHidden.add(id); this._btns = null;
         if (this.place) this._place();
     }
-    /** Header height: 0 for "chrome": false (the app draws the whole screen itself, e.g. a game) and for a video. */
-    headH() { return this.screen && (this.screen.chrome === false || this.screen.video) ? 0 : FULL.headH; }
+    /** Header height: 0 for "chrome": false (the app draws the whole screen itself, e.g. a game). */
+    headH() { return this.screen && this.screen.chrome === false ? 0 : FULL.headH; }
 
     /**
      * The HMI's bar buttons in screen pixels, unscrolled: [{ id, label, x, w }]. Where the kit runs

@@ -693,13 +693,6 @@ async function runInner(impl) {
         /** The surface to draw one frame on (record.js Recorder, reused): pass it to ui.image. */
         canvas(w, h) { return display.canvas(w, h); },
         /**
-         * video(): true while the renderer can draw a video file (record.js setVideo + cv.video) on
-         * the screen the app has: mgu-render/1 with the video capability, app area on screen. A feed
-         * drawn that way costs one message, not a frame of pixels per picture. Check it on every
-         * frame - it is false before the screen shows and again when the renderer goes away.
-         */
-        video() { return display.videoReady(); },
-        /**
          * Run fn while screen `stateName` is visible: once per screen refresh (up to 60 fps)
          * when the GPU renderer shows it, else about `fps` times a second.
          */

@@ -15,8 +15,7 @@
  * claims and the controller grab work on one connection, and X_STATE says when the renderer has
  * the app on screen. A renderer that does not speak it answers READY alone and the connection
  * stays in the upstream dialect. Pixel images (op 18) are upstream only: an app that draws them
- * (Doom) connects without opts.native. Videos (record.js setVideo, op 19) are the other way round:
- * native or IterioDev's protocol 4, never upstream.
+ * (Doom) connects without opts.native.
  */
 const net = require('net');
 const fs = require('fs');
@@ -32,8 +31,6 @@ const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, 
 const E = { READY: 101, TICK: 102, ERROR: 103, STATS: 104, CCU: 105 };
 // touch (mgu-render, IterioDev's mgu-renderd): message 9 is CLAIM there; 105 and 106 come back as TOUCH and CLOSED
 const CLAIM = 9, TOUCH = 105, CLOSED = 106;
-// videos (IterioDev's protocol 4, mgu-render/1): the file another program writes, drawn with op 19
-const VIDEO = 13, DROP_VIDEO = 14;
 // mgu-render/1 (mgu-store native/mgu-render/PROTOCOL.md)
 const X = { MODE: 0x4d520001, GRAB: 0x4d520002, READY: 0x4d520101, STATE: 0x4d520102, CCU: 0x4d520103 };
 const X_MODE_LAYER = 1;
@@ -61,7 +58,7 @@ class RenderClient extends EventEmitter {
         this.placement = null;
         this.visible = false;
         this.inbuf = Buffer.alloc(0);
-        this.sent = { atlas: new Set(), ramp: new Set(), layer: new Set(), image: new Map(), video: new Set() };
+        this.sent = { atlas: new Set(), ramp: new Set(), layer: new Set(), image: new Map() };
         this.stats = null;
         this.waiting = false;        // a frame was sent, no tick back yet
         this.retry = null;
@@ -180,7 +177,7 @@ class RenderClient extends EventEmitter {
         if (this.sock) this.sock.destroy();
         if (this.fd !== null) { fs.closeSync(this.fd); this.fd = null; }
     }
-    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.sent.video.clear(); this.waiting = false; }
+    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.waiting = false; }
     _write(b) {
         if (this.fd !== null) { fs.writeSync(this.fd, b); return true; }
         return this.sock && this.connected ? this.sock.write(b) : false;
@@ -213,7 +210,7 @@ class RenderClient extends EventEmitter {
             if (type === X.READY && p.length >= 12) {
                 const caps = p.readUInt32LE(8);
                 this.native = true;
-                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4), video: !!(caps & 16) };
+                this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4) };
                 // the app area (where the HMI leaves room for apps, in screen px): after the embed box
                 this.area = p.length >= 44 ? { x: p.readInt32LE(28), y: p.readInt32LE(32), w: p.readInt32LE(36), h: p.readInt32LE(40) } : null;
             } else if (type === E.READY) {
@@ -315,40 +312,6 @@ class RenderClient extends EventEmitter {
         if (r.ramps) r.ramps.forEach((id) => this._ensureRamp(id));
         if (r.layersUsed || r.sublayers) (r.layersUsed || r.sublayers).forEach((id) => this._ensureLayer(id));
         if (r.images) r.images.forEach((id) => this._ensureImage(id));
-        if (r.videos) r.videos.forEach((id) => this._ensureVideo(id));
-    }
-    /**
-     * Name the video's file once per connection (and again after a resize, which drops it, and
-     * after a reconnect). The renderer reads the file's newest frame itself; op 19 only says where
-     * it goes, so a feed costs one message here and none per picture.
-     */
-    _ensureVideo(id) {
-        if (this.sent.video.has(id)) return;
-        const v = rec.videoById.get(id);
-        if (!v) return;
-        /* Both halves are needed: the native dialect (mgu-render/1) and its caps
-         * saying video (16). X_READY version 3 was native before video existed,
-         * and naming a video there is an ERROR from the renderer. */
-        if (!this.native || !this.info || !this.info.video) {
-            if (!this.vidWarned) {
-                this.vidWarned = true;
-                this.log.warn('renderd: this renderer has no video (needs mgu-render/1 with caps 16)');
-            }
-            return;
-        }
-        /* The renderer opens the file when it is named: naming it before the
-         * decoder has written one gets an ERROR and the video never comes back
-         * on this connection. Being named again next frame (a second later at
-         * most) is cheap; a picture that never appears is not. */
-        try { if (!fs.statSync(v.path).isFile()) return; } catch (e) { return; }
-        const p = Buffer.from(v.path + '\0');
-        const b = Buffer.alloc(4 + p.length);
-        b.writeUInt32LE(id, 0); p.copy(b, 4);
-        this._write(msg(VIDEO, b));
-        this.sent.video.add(id);
-    }
-    dropVideo(id) {
-        if (this.sent.video.delete(id) && this.ready) this._write(this._u32msg(DROP_VIDEO, [id]));
     }
     /** upload a pixel image when this connection hasn't got its current version */
     _ensureImage(id) {
