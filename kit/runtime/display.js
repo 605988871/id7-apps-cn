@@ -37,7 +37,7 @@
  * keeps the upstream dialect. Should the renderer's foreground gate not have the app in front
  * while its screen shows, the app draws in the HMI's own image meanwhile (blocked).
  */
-const { Recorder, play } = require('./record');
+const { Recorder, play, imageById } = require('./record');
 const { Canvas } = require('./canvas');
 const { RenderClient } = require('./renderd');
 const G = require('./gauges');
@@ -589,7 +589,13 @@ class Display {
             // iDrive 7: the surface covers the whole screen, so the HMI's own bar can't show under the back
             // arrow column; the page content goes right of that column. iDrive 8: the area under its status bar
             const a = HMI.area ? this._area(HMI) : { x: 0, y: 0, w: scr.w, h: scr.h };
-            const w = a.w - HMI.left, h = a.h, src = FULL.src;
+            const w = a.w - HMI.left, h = a.h;
+            /* Which part of the app's canvas is the page. The default is the 1600 x 520 page
+             * the kit's own chrome leaves room for; an app that draws a picture of another
+             * size (a video feed, a game) says so in its screen and then the whole canvas is
+             * shown. Without that, everything below the 520th row - a third of a 1280 x 720
+             * picture - was simply not drawn. */
+            const src = (this.screen && this.screen.src) || FULL.src;
             const ah = h - this.headH() - this.barH();
             const s = Math.floor(Math.min(w / src.w, ah / src.h) * 1000) / 1000;
             pl = {
@@ -758,12 +764,30 @@ class Display {
         // unchanged frame (parked car, steady values): nothing to send - but at least one a
         // second, the renderer hides an app that goes quiet for 3 s (hung app over the HMI)
         const now = Date.now();
-        if (!force && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
+        /* A pixel image (setImage) is one draw command no matter what its pixels do: id, place
+         * and size are the same in every frame, so the words of a video frame never change and
+         * the check below would treat it as a still picture and post it once a second - the
+         * picture freezes on its first frame while the app keeps decoding into it. The version
+         * each image is at is part of what changed, so it belongs in the comparison. */
+        const ik = this._imageKey(out);
+        if (!force && ik === this.lastImageKey && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
         this.lastSent = now;
+        this.lastImageKey = ik;
         this.gpu.frame(out);
         this.lastWords = Buffer.from(Buffer.from(w.buffer, w.byteOffset, w.byteLength));
         this._keep(name, out, softImage);
         this._stats();
+    }
+
+    /** Which images a frame draws and at which version ('' when it draws none). */
+    _imageKey(out) {
+        if (!out.images || !out.images.size) return '';
+        let k = '';
+        out.images.forEach((id) => {
+            const im = imageById.get(id);
+            k += id + ':' + (im ? im.ver : 0) + ',';
+        });
+        return k;
     }
 
     /** The app's last frame with the current header and bar. */

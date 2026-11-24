@@ -435,10 +435,12 @@ static sock_t tcp_connect(const char *host, int port, int timeout_ms, char *err,
 #define DISC_TIMEOUT_MS 400
 
 /* How many failed dials to a hinted address before looking for the phone on
- * the network we are on now. At the 3 s retry interval this is a minute: long
- * enough that a phone in Wi-Fi power save is not declared missing, short
- * enough that a stale lease does not cost the whole drive. */
-#define HINT_ROUNDS 20
+ * the network we are on now. At the 3 s retry interval this is about twelve
+ * seconds: long enough that a phone in Wi-Fi power save is not declared
+ * missing, short enough that joining another hotspot does not leave the car
+ * dialling the previous network for a whole minute. (Measured on the unit:
+ * the old 20 rounds read as "the address takes a minute to switch".) */
+#define HINT_ROUNDS 4
 
 #ifndef _WIN32
 /* Virtual interfaces are never the phone's network, and every one of them

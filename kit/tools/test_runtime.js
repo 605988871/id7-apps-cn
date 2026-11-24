@@ -55,7 +55,7 @@ const ccu = (k, pb, df) => { const b = Buffer.alloc(5); b.writeUInt16BE(k, 1); b
 const touch = (phase, x, y) => { const b = Buffer.alloc(12); b.writeUInt32LE(phase, 0); b.writeFloatLE(x, 4); b.writeFloatLE(y, 8); return b; };
 
 /** A Display on the stand-in renderer, the kit running the screen (full-screen layout, touch), shown. */
-async function setup() {
+async function setup(extra, needOwn = true) {
     let conn = null;
     onConn = (c) => { conn = c; ready(c); };
     const log = { errors: [], info() {}, warn() {}, debug() {}, error: (...a) => log.errors.push(a) };
@@ -64,9 +64,11 @@ async function setup() {
         rhmi: null, close() {}, visible() {}, onVisible: (fn) => visH.push(fn), isVisible: (n) => vis.has(n),
         setVisible: (v) => { if (v) vis.add('MAIN'); else vis.delete('MAIN'); visH.forEach((fn) => fn('MAIN', v)); },
     };
-    const spec = { id: 'test', title: 'Test', screens: [{ name: 'MAIN', kind: 'canvas', buttons: [['BTN_SETTINGS', 'Settings']] }] };
+    const screen = Object.assign({ name: 'MAIN', kind: 'canvas', buttons: [['BTN_SETTINGS', 'Settings']] }, extra);
+    const spec = { id: 'test', title: 'Test', screens: [screen] };
     const d = new Display(ui, log, spec, { get: () => undefined, onChange() {} }, () => themes.theme());
-    assert(await waitFor(() => conn && d.active() && d.own()), 'display on the renderer');
+    if (needOwn) assert(await waitFor(() => conn && d.active() && d.own()), 'display on the renderer');
+    else assert(await waitFor(() => conn && d.active() && d.place), 'display placed on the renderer');
     return { d, ui, log, c: conn, end() { d.closeSheet(); d.gpu.close(); clearInterval(d.keepTimer); } };
 }
 /** The app draws its page (v: what changes) and hands it over, as ui.image does. */
@@ -116,6 +118,61 @@ test('unchanged frames: not sent again, but one a second (the renderer hides an 
         n = c.frames.length;
         t.d.closeSheet(); await sleep(50);
         assert.strictEqual(c.frames.length, n + 1, 'the sheet closed');
+    } finally { t.end(); }
+});
+
+/* A pixel image (setImage) is one draw command whatever its pixels do: id, place and size are
+ * the same in every frame, so a video drawn that way has identical words from frame to frame.
+ * The unchanged-frame skip in _send() then took it for a still picture, posted it once a second,
+ * and the car screen froze on the first frame while the decoder kept feeding new ones. On the
+ * unit: "only half the screen, stuck on the first frame, touch does nothing". */
+test('a pixel image is a new frame every time, not a still one (words unchanged)', async () => {
+    const { setImage } = require('../runtime/record');
+    const t = await setup(), c = t.c;
+    try {
+        const w = 64, h = 32, buf = Buffer.alloc(w * h * 4, 0x80);
+        const t0 = Date.now();
+        let drawn = 0;
+        while (Date.now() - t0 < 900) {
+            buf[0] = drawn & 0xff;                     // the pixels change, the command does not
+            setImage(1, w, h, buf);
+            const r = t.d.canvas(1600, 520);
+            r.image(1, 100, 100, 400, 200);
+            t.d.present('MAIN', r, () => Promise.resolve());
+            drawn++;
+            await sleep(16);
+        }
+        const sent = c.frames.length;
+        console.log('  ' + drawn + ' frames of one image (same words): ' + sent + ' FRAMEs');
+        assert(sent >= drawn - 2, 'a video drawn as a pixel image must go out every frame: ' + sent + ' of ' + drawn);
+        // and a page that draws no image still skips: the guard is on the image's version only
+        const n = c.frames.length;
+        t.d.present('MAIN', t.d.canvas(1600, 520), () => Promise.resolve());
+        t.d.present('MAIN', t.d.canvas(1600, 520), () => Promise.resolve());
+        await sleep(50);
+        assert(c.frames.length <= n + 2, 'the skip still works without an image: ' + (c.frames.length - n));
+    } finally { t.end(); }
+});
+
+/* A screen whose picture is not the kit's 1600 x 520 page (a video feed, a game) says which
+ * part of its canvas is the page. Without that the full-screen layout always showed the canvas
+ * rows 38 .. 520 - a third of a 720-row picture was never drawn. */
+test('a screen that says which part of its canvas is the page: the whole 720 rows', async () => {
+    const t = await setup({ chrome: false, src: { x: 0, y: 0, w: 1600, h: 720 } }, false);
+    try {
+        const pl = t.d.place;
+        console.log('  src 1600x720 on a 1920x720 screen: scale ' + pl.scale + ', ox ' + pl.ox + ', oy ' + pl.oy);
+        assert.strictEqual(pl.scale, 1, 'a 720-row canvas on a 720-row screen is 1:1: ' + pl.scale);
+        assert.strictEqual(pl.oy, 0, 'the canvas starts at the top row: ' + pl.oy);
+        assert.strictEqual(pl.ox, 202, 'centred right of the 84 px back column: ' + pl.ox);
+        assert.strictEqual(pl.full, true);
+        // the default page still shows only its 482 rows (the kit\'s own chrome is in the way)
+        const d2 = await setup();
+        try {
+            const p2 = d2.d.place;
+            assert(p2.scale > 1, 'the 1600 x 520 page is scaled up: ' + p2.scale);
+            assert(p2.y === 0 && p2.h === 720);
+        } finally { d2.end(); }
     } finally { t.end(); }
 });
 
