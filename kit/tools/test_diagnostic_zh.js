@@ -1,5 +1,5 @@
 'use strict';
-const assert = require('assert'), fs = require('fs'), path = require('path');
+const assert = require('assert'), fs = require('fs'), path = require('path'), zlib = require('zlib');
 /* This fork stages an app as dist/cn_<id>; the CI and the docs still say dist/<id>. Read whichever
  * is on disk, so `node test_diagnostic_zh.js dist/dtc_scanner/source/javascript` keeps working here. */
 const staged = (p) => {
@@ -17,17 +17,21 @@ const i18n = require(path.join(stage, 'kit/i18n'));
 const language = i18n.getLanguage();
 // The corpus sits in the app's own folder (only this app's build reads it, so it
 // stays out of the shared files every store install downloads); older checkouts
-// still have it under kit/localization.
+// still have it under kit/localization. It is stored gzipped (24 MB of JSON is
+// 3 MB of gzip, in the tarball a repo-tree source downloads); a plain .json is
+// still read.
 const corpusFile = ['../apps/cn_dtc_scanner/i18n', '../localization']
     .map((dir) => path.resolve(__dirname, dir, 'diagnostic-full.zh-CN.json'))
-    .find((file) => fs.existsSync(file)) || path.resolve(__dirname, '../apps/cn_dtc_scanner/i18n/diagnostic-full.zh-CN.json');
+    .find((file) => fs.existsSync(file) || fs.existsSync(file + '.gz')) || path.resolve(__dirname, '../apps/cn_dtc_scanner/i18n/diagnostic-full.zh-CN.json');
+const readCorpus = (file) => JSON.parse(fs.existsSync(file) ? fs.readFileSync(file, 'utf8')
+    : zlib.gunzipSync(fs.readFileSync(file + '.gz')).toString('utf8'));
 assert.strictEqual(i18n.setLanguage, undefined, 'No runtime language switching');
 if (language === 'ru') {
     console.log('SKIP ru: Chinese diagnostic checks do not apply to a fixed Russian package');
     process.exit(0); // Test process only; never installed as application code.
 }
 if (language === 'en') {
-    const complete = JSON.parse(fs.readFileSync(corpusFile, 'utf8'));
+    const complete = readCorpus(corpusFile);
     for (const source of Object.keys(complete)) assert.strictEqual(diagnosticText(source),source);
     assert.strictEqual(diagnosticText('5 possible texts (depends on unit type)'), '5 possible texts (depends on unit type)');
     assert(!fs.existsSync(path.join(stage,'diagnostic_i18n.pack')));
@@ -64,8 +68,8 @@ for (const cv of [new Canvas(1600,520), new Recorder(1600,520)]) {
 const db = require(path.join(stage,'kit/pack')).open(path.join(stage,'diagnostic_i18n'));
 const translations = db.json(language+'.json');
 const completeFile = corpusFile;
-if (fs.existsSync(completeFile)) {
-    const complete = JSON.parse(fs.readFileSync(completeFile,'utf8'));
+if (fs.existsSync(completeFile) || fs.existsSync(completeFile + '.gz')) {
+    const complete = readCorpus(completeFile);
     assert.strictEqual(Object.keys(complete).length,86735);
     for (const source of Object.keys(complete)) {
         assert(Object.prototype.hasOwnProperty.call(translations,source),'Missing corpus entry: '+source);

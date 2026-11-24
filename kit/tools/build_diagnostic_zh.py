@@ -7,6 +7,7 @@ The translations are not individually human reviewed; see docs/diagnostic-chines
 """
 import argparse
 import csv
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -16,21 +17,35 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCALIZATION = ROOT / 'kit/localization'
-# The full term corpus (~25 MB, Chinese and Russian) is read by this app's build
-# alone. It sits in the app's own folder so a store install of any other app
-# does not download it: mgu-repo.json's build.shared lists kit/localization, and
-# everything under it goes along with every app's install.
+# The full term corpus, Chinese and Russian, is read by this app's build alone. It
+# sits in the app's own folder so a store install of any other app does not
+# download it: mgu-repo.json's build.shared lists kit/localization, and everything
+# under it goes along with every app's install.
+#
+# It is stored gzipped (24 MB of JSON is 3 MB of gzip). The file is also in the
+# tarball a repo-tree source downloads, and the Store counts a tool (a
+# component.json, no build step) as "the repository", so every component update
+# paid for it. A plain .json is still read, for older checkouts.
 DIAGNOSTIC = ROOT / 'apps/cn_dtc_scanner/i18n'
 
 
 def corpus(name):
     """The corpus file by name: the app's own folder, else kit/localization
-    (where it lived before the move, for older checkouts)."""
+    (where it lived before the move, for older checkouts). Gzipped, else plain."""
     for base in (DIAGNOSTIC, LOCALIZATION):
-        path = base / name
-        if path.is_file():
-            return path
-    return DIAGNOSTIC / name
+        for suffix in ('.gz', ''):
+            path = base / (name + suffix)
+            if path.is_file():
+                return path
+    return DIAGNOSTIC / (name + '.gz')
+
+
+def read_corpus(name):
+    """The corpus by name as a dict, gzipped or plain."""
+    path = corpus(name)
+    opener = gzip.open if path.suffix == '.gz' else open
+    with opener(path, 'rt', encoding='utf-8') as file:
+        return json.load(file)
 
 
 def database_strings():
@@ -61,7 +76,7 @@ def normalize(source):
 
 
 def catalog():
-    values = json.loads(corpus('diagnostic-full.zh-CN.json').read_text(encoding='utf-8'))
+    values = read_corpus('diagnostic-full.zh-CN.json')
     ui = json.loads((ROOT/'kit/runtime/locales/zh-CN.json').read_text(encoding='utf-8'))
     # Preserve the previously shipped complete diagnostic sentences. UI fragments
     # such as ACC/power/software are never substituted into an unknown sentence.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build diagnostic-full.ru.json from user-supplied EN/RU DiagDocDb files.
+"""Build diagnostic-full.ru.json.gz from user-supplied EN/RU DiagDocDb files.
 
 Requires a SQLite3 Multiple Ciphers executable; no Python packages are needed.
 The source databases are opened read-only and are never copied. Matching uses
@@ -8,18 +8,33 @@ records whose IDs differ between versions. The same contexts also map translatio
 onto changed English wording in the bundled dtc_db.pack. English texts with
 conflicting Russian translations are left out for manual review.
 
+The corpus is written gzipped (24 MB of JSON is 3 MB of gzip; it is in the
+repository tarball every install from a repo-tree source downloads). A path that
+does not end in .gz is written plain, which build_diagnostic_*.py also reads.
+
 python kit/tools/import_diagnostic_ru.py --sqlite3mc /path/to/sqlite3mc \
     --en /path/to/EN/SQLiteDBs/DiagDocDb.sqlite \
     --ru /path/to/RU/SQLiteDBs/DiagDocDb.sqlite --report work/diag-ru-report.json
 """
 import argparse
+import gzip
 import json
 from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / 'apps/cn_dtc_scanner/i18n/diagnostic-full.ru.json'
+OUT = ROOT / 'apps/cn_dtc_scanner/i18n/diagnostic-full.ru.json.gz'
 RU_COLUMNS = ('TITLE_RURU', 'TITLE_RU', 'TITLE_RUS')
+
+
+def write_corpus(path, payload):
+    """Gzipped for a .gz name (no timestamp, so two runs of the same input give the
+    same bytes), plain otherwise."""
+    if path.suffix != '.gz':
+        path.write_text(payload, encoding='utf-8')
+        return
+    with gzip.GzipFile(path, 'wb', mtime=0) as file:
+        file.write(payload.encode('utf-8'))
 
 
 def sql_string(value):
@@ -209,8 +224,7 @@ def main():
     corpus = database_strings()
     bundled = {source: value for source, value in translations.items() if source in corpus}
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(bundled, ensure_ascii=False, separators=(',', ':'), sort_keys=True) + '\n',
-                        encoding='utf-8')
+    write_corpus(args.out, json.dumps(bundled, ensure_ascii=False, separators=(',', ':'), sort_keys=True) + '\n')
     stats = {
         'english_rows': len(english),
         'russian_rows': len(russian),

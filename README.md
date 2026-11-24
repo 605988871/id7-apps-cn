@@ -233,6 +233,8 @@ python3 kit/tools/make_kit.py --language en      # 英文套件 -> dist/mgu-cust
 
 本仓库默认语言为简体中文，版本号不加语言后缀，`mgu-repo.json` 的构建模板可直接匹配产物——因此把本仓库作为源添加到 MGU Store 后即可直接构建安装中文应用。中文套件输出为 `dist/mgu-custom-apps(.tar.gz)`，可被推送脚本直接使用；其他语言（ru/es/ko）带后缀。
 
+**以本仓库为源时的下载量。** 仓库型源（`mgu-repo.json`）下载的是该提交的仓库 tarball，车机在上面构建。应用的构建可以在 `build.shared` 里声明它读哪些路径，声明后安装只下载这些文件（本仓库约 5 MB）；但 `tools[]` 里的组件（GPU 渲染器、CarLife 取流与解码、控制器门控）**没有构建步骤，也就没有 `shared`**——升级其中一个组件要把整个仓库重新取一遍。所以 `.gitattributes` 里给 `docs/` 加了 `export-ignore`（README 的截图与动图，20 MB，构建不读），诊断语料存成 `.json.gz`（24 MB JSON → 3 MB）：仓库 tarball 从 63 MB 降到 21 MB。要让单个组件只下载它自己，得走 catalog/releases 布局（每个包一个 artifact，带 size 与 sha256），那是另一种发布方式。
+
 中文套件的 shell 部署需指定 `KIT=dist/mgu-custom-apps-zh-CN`，PowerShell 部署指定 `-Kit dist\mgu-custom-apps-zh-CN.tar.gz`。
 
 随后通过 SSH 推送。macOS/Linux/WSL：

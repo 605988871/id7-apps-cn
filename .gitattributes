@@ -6,3 +6,17 @@
 *.mgu binary
 kit/renderd/prebuilt/mgu-renderd binary
 *.pack binary
+*.json.gz binary
+
+# export-ignore: left out of `git archive` and of the tarball GitHub serves for a
+# branch/tag, which is what a repo-tree source (mgu-repo.json) downloads and the
+# head unit builds from. The store treats a tool (component.json, no build step)
+# as "the repository": a tool update re-downloads that tarball, so what is in it
+# is the price of every component update, not the component's own size.
+#
+# 20 MB of README screenshots and animations (docs/media, docs/screens) are read
+# by nothing but the markdown on github.com, which shows them from the tree, not
+# from an archive. Keep them out of the tarball: the CarLife tool is 0.5 MB and
+# its update was 64 MB because of files like these.
+/docs export-ignore
+/docs/** export-ignore

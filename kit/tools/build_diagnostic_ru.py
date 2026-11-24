@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import re
 
-from build_diagnostic_zh import corpus, database_strings, normalize
+from build_diagnostic_zh import corpus, database_strings, normalize, read_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCALIZATION = ROOT / 'kit/localization'
@@ -21,7 +21,7 @@ LOCALIZATION = ROOT / 'kit/localization'
 
 def catalog():
     full = corpus('diagnostic-full.ru.json')
-    imported = json.loads(full.read_text(encoding='utf-8')) if full.is_file() else {}
+    imported = read_corpus('diagnostic-full.ru.json') if full.is_file() else {}
     texts = database_strings()
     values = {source: value for source, value in imported.items() if source in texts}
     ui = json.loads((ROOT/'kit/runtime/locales/ru.json').read_text(encoding='utf-8'))
