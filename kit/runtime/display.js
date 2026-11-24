@@ -174,8 +174,9 @@ class Display {
     }
 
     _startGpu(file) {
-        // mgu-render/1 for every app that draws no pixel images (Doom: "chrome": false)
-        const native = this.screen.chrome !== false && process.env.MGU_RENDERD_PROTO !== 'upstream';
+        // mgu-render/1 for every app that draws no pixel images (Doom: "chrome": false), and for
+        // every app that draws a video ("video": true): videos only exist in that dialect
+        const native = !!this.screen.video || (this.screen.chrome !== false && process.env.MGU_RENDERD_PROTO !== 'upstream');
         const gpu = this.gpu = new RenderClient(this.spec.id, this.log, Object.assign({ native }, file ? { file } : {}));
         gpu.on('ready', () => { if (this.gpu !== gpu) return; this._place(); this._syncVisible(); this._grab(); });
         gpu.on('tick', () => { if (this.gpu === gpu) { this.tickT = Date.now(); this.tickHandlers.forEach((fn) => fn()); } });
@@ -240,6 +241,15 @@ class Display {
 
     /** The kit runs the screen: mgu-render/1 with touch, full-screen layout. */
     own() { return !!(this.gpu && this.gpu.ready && !this.blocked && this.gpu.native && this.gpu.touch && this.place && this.place.full); }
+    /**
+     * A video can be drawn now: the renderer speaks mgu-render/1 with video, the app's area covers
+     * the screen it is on, and the renderer shows the app. Apps that draw a feed check this
+     * (ctx.video) before they name a video file: without it nothing would be drawn at all.
+     */
+    videoReady() {
+        const g = this.gpu;
+        return !!(g && g.ready && g.native && g.info && g.info.video && !this.blocked && this.active() && this.screen && this.screen.video);
+    }
     /** own() but for the placement, which depends on it (the bar's height): the renderer and layout allow it. */
     ownable() {
         const g = this.gpu;
@@ -521,6 +531,15 @@ class Display {
         const pl = this.place;
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
+        /* A video screen is one picture of the phone's: the whole area it covers is the app's, so
+         * a finger anywhere on the picture goes to the phone instead of to the HMI's own button
+         * bar, which the surface covers but does not remove (tapping the bottom of the picture
+         * opened the HMI's settings). The back-arrow column stays the HMI's. */
+        if (this.screen && this.screen.video) {
+            const hx = HMI.left - pl.x;
+            this.gpu.claim([logical({ x: HMI.left, y: pl.y, w: pl.w - hx, h: pl.h })]);
+            return;
+        }
         const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
         // the header as far as the HMI's status corner shows through it (iDrive 7); iDrive 8 has none in the
         // app's area: the whole row is the app's, as a tap there must not count as the HMI's (mgu-render closes)
@@ -610,11 +629,11 @@ class Display {
             const spare = ah - 2 * PAGE_GAP - src.h * s;
             if (!this.barH() && spare > 0) {
                 const top = Math.round(this.headH() + PAGE_GAP - src.y * s);
-                if (this.screen && this.screen.chrome === false) {
+                if (this.screen && this.screen.chrome === false && !this.screen.video) {
                     // a screen the app draws whole (a game, in screen pixels): its page right at the top
                     pl.oy = top;
                     pl.extra = Math.floor(spare / s);
-                } else {
+                } else if (!this.screen || !this.screen.video) {
                     pl.oyMid = pl.oy;
                     pl.oyTop = Math.max(top, Math.round(this.headH() + (ah - FULL.barH - src.h * s) / 2 - src.y * s));
                     pl.extra = Math.floor((h - PAGE_GAP - pl.oyTop) / s - PAGE.h);
@@ -946,7 +965,7 @@ class Display {
      * bar buttons still exist in the HMI under the surface, for focus and taps, but aren't drawn).
      */
     barH() {
-        if (this.screen && (this.screen.bar === false || this.screen.chrome === false)) return 0;
+        if (this.screen && (this.screen.bar === false || this.screen.chrome === false || this.screen.video)) return 0;
         // the kit's bar with nothing left on it (its buttons on the page, Settings a tab): no bar
         return this.ownable() && !this.buttons().length ? 0 : FULL.barH;
     }
@@ -955,8 +974,8 @@ class Display {
         this.ownHidden.add(id); this._btns = null;
         if (this.place) this._place();
     }
-    /** Header height: 0 for "chrome": false (the app draws the whole screen itself, e.g. a game). */
-    headH() { return this.screen && this.screen.chrome === false ? 0 : FULL.headH; }
+    /** Header height: 0 for "chrome": false (the app draws the whole screen itself, e.g. a game) and for a video. */
+    headH() { return this.screen && (this.screen.chrome === false || this.screen.video) ? 0 : FULL.headH; }
 
     /**
      * The HMI's bar buttons in screen pixels, unscrolled: [{ id, label, x, w }]. Where the kit runs

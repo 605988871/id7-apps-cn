@@ -86,9 +86,10 @@ else
 fi
 boot "decode probe: ${PROBE:-no answer}"
 
-# The app writes the phone's hotspot address here once connected; until then
-# the service exits and retries. Start with no file so a stale address cannot
-# make it dial a phone that is not there.
+# 0.7.9 stopped the app publishing the hotspot address here (the address now
+# comes from find-phone.sh, which reads what the unit knows). Delete the file
+# an older version left behind, so it can never make link dial a phone that is
+# no longer the remembered hotspot.
 rm -f "$DIR/host" 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1; then

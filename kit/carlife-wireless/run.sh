@@ -2,19 +2,24 @@
 # carlife-wireless: take the phone's CarLife H.264 stream over WiFi and hand
 # full-frame pictures to the JS app on a unix socket.
 #
-# Joining the hotspot is done from the app (wifi-bridge -> mgu-uplink), not
-# here. find-phone.sh works out the phone's address from whatever the unit
-# knows about the network; see that script for the six sources and their
-# order. The address may not exist yet: in that case carlife-link runs in
-# discovery mode and picks the phone up by itself once wlan0 has an address.
+# Joining the hotspot is not this tool's business: since 0.7.9 the MGU Store's
+# own Wi-Fi page is the one place that joins it (this app has no Wi-Fi UI - two
+# places joining hotspots would fight over the one wlan0). find-phone.sh works
+# out the phone's address from whatever the unit knows about the network; see
+# that script for the six sources and their order. The address may not exist
+# yet: in that case carlife-link runs in discovery mode and picks the phone up
+# by itself once wlan0 has an address.
 #
 # Two programs, one pipeline:
 #   carlife-link   --host <phone> --seconds 0 --video - --report link.txt
 #       connects the six TCP ports, does the version handshake, asks for video,
 #       and writes the raw Annex-B H.264 to stdout.
-#   carlife-decode --stdin --dir /dev/shm/carlife-wireless
+#   carlife-decode --stdin --dir /dev/shm/carlife-wireless --video-file /dev/shm/mgu-video-carlife
 #       reads that stream from stdin, decodes with the unit's MSDK, and writes
-#       CLMF frames to /dev/shm/carlife-wireless/live.sock (1280x480 per crop.json).
+#       the whole picture, at the size the phone sends, into the GPU renderer's
+#       video file (mgu-render op 19). The renderer reads that file itself, so
+#       there is no socket and no queue between the phone and the glass - a
+#       socket between two processes is a buffer, and a buffer is lag.
 #
 # The link's ctl socket (127.0.0.1:7399) is where the app sends taps back to
 # the phone. Nothing here touches the car's own carlife process, so this cannot
@@ -28,6 +33,9 @@ FINDER="$HERE/find-phone.sh"
 DIR=${CARLIFE_DIR:-/dev/shm/carlife-wireless}
 RUN_TXT="$DIR/run.txt"
 PORT=${CARLIFE_PORT:-7240}
+# The renderer finds a video only under this name (/dev/shm/mgu-video-<letters,
+# digits, - _ .>), so the app's setVideo() and this line have to agree.
+VIDEO=${CARLIFE_VIDEO_FILE:-/dev/shm/mgu-video-carlife}
 
 mkdir -p "$DIR"
 chmod 0777 "$DIR"
@@ -136,7 +144,12 @@ fi
 chmod 0666 "$FIFO" 2>/dev/null || true
 
 ( set +e
-  "$LINK" run "$@" --port "$PORT" --seconds 0 \
+  # --fps 30: the link asks for 60 by default, and every picture is a 2 MB
+  # decode plus a 2 MB copy here. The screen is 60 Hz and a mirrored phone is
+  # read, not played, so 30 halves the work for nothing the eye can see. The
+  # size is left at the link's default: the phone answers with the size it
+  # really encodes (1920x720 on this car), and the decoder follows that answer.
+  "$LINK" run "$@" --port "$PORT" --seconds 0 --fps 30 \
     --video - --report "$DIR/link.txt" --ctl 7399 --drop-uid "$LINK_UID" > "$FIFO" &
   child=$!
   printf '%s\n' "$child" > "$DIR/link.pid"
@@ -145,7 +158,7 @@ chmod 0666 "$FIFO" 2>/dev/null || true
   printf '%s\n' "$?" > "$DIR/link.rc" ) &
 link_pid=$!
 ( set +e
-  "$DECODE" --stdin --dir "$DIR" < "$FIFO" &
+  "$DECODE" --stdin --dir "$DIR" --video-file "$VIDEO" < "$FIFO" &
   child=$!
   printf '%s\n' "$child" > "$DIR/decode.pid"
   trap 'kill "$child" 2>/dev/null || true' TERM INT

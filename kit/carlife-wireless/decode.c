@@ -47,6 +47,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -126,6 +127,13 @@ static unsigned long g_soft;
  * answers, and nothing on the car's screen could tell them apart before. */
 static unsigned long long g_in_bytes;
 static unsigned g_connects;
+/* When the first byte of the stream arrived and when the first picture came
+ * out of it. The gap is MSDK's own start-up (session, VPP, surfaces), and it is
+ * the number that explained half a minute of "receiving picture" on the car -
+ * the stream was there, the decoder was still building itself. */
+static long long g_t_first_byte;
+static long long g_t_first_frame;
+static long long g_boot_ms = -1;         /* MSDK's own start-up, before any stream */
 
 static void note(const char *fmt, ...)
 {
@@ -852,6 +860,96 @@ static size_t find_sps(const unsigned char *p, size_t n)
     return n;
 }
 
+/* --------------------------------------------------------- the app's video -- */
+/* Wireless edition: instead of CLMF frames over a unix socket - which the JS app
+ * then has to colour in JS and upload, megabytes a frame - the decoder writes
+ * straight into the file the GPU renderer reads: /dev/shm/mgu-video-<name>, a
+ * 64-byte header and nslot frames of I420, the format mgu-render's op 19 draws.
+ *
+ * That removes the queue the old path had. A socket between two processes that
+ * run at different speeds is a buffer, and a buffer in front of a phone's camera
+ * feed is a picture that answers seconds late: every stage kept up "on average"
+ * while the picture slid further behind. Here the renderer looks at the header
+ * and draws whatever the newest frame is, so the age of a picture can never
+ * grow - the frame that arrives is the frame on the glass. */
+typedef struct {
+    int fd;
+    unsigned char *map;
+    size_t cap;
+    unsigned w, h, nslot, slot;
+    uint32_t seq;
+    unsigned long frames;
+    long long last_try;              /* a failed open is not retried per frame */
+} Vid;
+
+#define VID_HDR   64
+#define VID_SLOTS 3                     /* the writer is two frames from the one being read */
+#define VID_MAGIC 0x4656474du           /* "MGVF" */
+
+static void vid_close(Vid *v)
+{
+    if (v->map) munmap(v->map, v->cap);
+    if (v->fd >= 0) close(v->fd);
+    memset(v, 0, sizeof *v);
+    v->fd = -1;
+}
+
+/* The file is made to its final size once and then written in place: the
+ * renderer may look at it any time and must never read a file that is shorter
+ * than its header says (it would keep the last picture instead). */
+static int vid_open(Vid *v, const char *path, unsigned w, unsigned h)
+{
+    uint32_t *hd;
+    size_t fsz;
+    /* The renderer only draws a slot after this counter moves: a new size must
+     * not publish the zero-filled slot as a picture, so the count goes on from
+     * where it was and the first frame of the new size is the next one. */
+    uint32_t keep = v->seq;
+
+    vid_close(v);
+    v->seq = keep;
+    v->last_try = now_ms();
+    if (w < 16 || h < 16 || (w & 1) || (h & 1) || w > 2048 || h > 2048) {
+        soft_why("cannot show this picture size as a video (needs even, 16..2048)", 0);
+        return 0;
+    }
+    v->fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (v->fd < 0) { soft_why("cannot create the video file", errno); return 0; }
+    fsz = (size_t)w * h * 3 / 2;
+    v->cap = VID_HDR + (size_t)VID_SLOTS * fsz;
+    if (ftruncate(v->fd, (off_t)v->cap) != 0) { soft_why("cannot size the video file", errno); vid_close(v); return 0; }
+    v->map = mmap(NULL, v->cap, PROT_READ | PROT_WRITE, MAP_SHARED, v->fd, 0);
+    if (v->map == MAP_FAILED) { v->map = NULL; soft_why("cannot map the video file", errno); vid_close(v); return 0; }
+    /* Header: magic, version, size, no frame yet, BT.601 limited (what a phone's
+     * H.264 carries), three slots. */
+    hd = (uint32_t *)v->map;
+    memset(v->map, 0, VID_HDR);
+    hd[0] = VID_MAGIC; hd[1] = 1; hd[2] = w; hd[3] = h;
+    hd[4] = keep; hd[5] = 0; hd[6] = VID_SLOTS; hd[7] = 0; hd[8] = 0;
+    v->w = w; v->h = h; v->nslot = VID_SLOTS; v->slot = 0;
+    note("video %ux%u into %s", w, h, path);
+    return 1;
+}
+
+/* One picture, whole: the slot after the newest, then the header says which one
+ * that is (a reader that comes in between sees the previous frame, never half of
+ * this one). */
+static void vid_put(Vid *v, const Dec *d)
+{
+    size_t fsz = (size_t)v->w * v->h * 3 / 2;
+    unsigned slot = (v->slot + 1) % v->nslot;
+    unsigned char *dst = v->map + VID_HDR + (size_t)slot * fsz;
+    uint32_t *hd = (uint32_t *)v->map;
+    Rect full;
+
+    full.x = 0; full.y = 0; full.w = v->w; full.h = v->h;
+    blit(dst, v->w, v->h, d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, full);
+    hd[5] = slot;
+    hd[4] = ++v->seq;
+    v->slot = slot;
+    v->frames++;
+}
+
 /* ---------------------------------------------------------------- frames -- */
 
 static Out g_map = { g_map_sock, -1, 0, 0, 0 };
@@ -870,6 +968,10 @@ static Crop g_crop;
 static Rect g_map_rect, g_card_rect;
 static int g_have_rects;
 static long long g_crop_read_ms;
+/* Wireless edition: the renderer's video file (--video-file). Empty: the old
+ * CLMF picture sockets, which the cluster apps still read. */
+static const char *g_vid_path;
+static Vid g_vid = { -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 /* An atlas buffer of exactly this size, remade when a setting changes its
  * size. Never reused across a size change: a frame is taken only at its
@@ -922,6 +1024,30 @@ static void produce(const Dec *d)
         return;                          /* keep the last good frame on screen */
     }
 
+    /* Wireless edition: the whole picture, at the size the phone sent it, into
+     * the renderer's video file. No cutting, no scaling, no socket: the renderer
+     * fits it to the screen itself, and 1920x720 down to the app's 1835x688 is
+     * one filtered step - while the old path went 1920 -> 1280 here (nearest
+     * pixel, which is what made it look soft) and then 1280 -> 1835 there. */
+    if (g_vid_path) {
+        /* Opening the file is a page-cache and mmap cost that must not be paid
+         * per frame when it cannot work (a full /dev/shm, a read-only unit). */
+        if (!g_vid.map && g_vid.last_try && t - g_vid.last_try < 1000) return;
+        if (!g_vid.map || g_vid.w != d->w || g_vid.h != d->h)
+            vid_open(&g_vid, g_vid_path, d->w, d->h);
+        if (!g_vid.map) return;          /* the report says why */
+        vid_put(&g_vid, d);
+        if (!g_t_first_frame) g_t_first_frame = t;
+        g_frames++;
+        g_last_frame_ms = t;
+        if (t - g_rate_at_ms >= 1000) {
+            g_rate = (unsigned long)((g_frames - g_rate_at_frames) * 1000 / (t - g_rate_at_ms));
+            g_rate_at_frames = g_frames;
+            g_rate_at_ms = t;
+        }
+        return;
+    }
+
     /* The app rewrites the file when a setting changes and cannot tell this
      * program so: read it again, but not once per frame - a picture every
      * 60 ms is faster than anyone turns a dial. */
@@ -965,6 +1091,7 @@ static void produce(const Dec *d)
 
     g_frames++;
     g_last_frame_ms = t;
+    if (!g_t_first_frame) g_t_first_frame = t;
     if (t - g_rate_at_ms >= 1000) {
         g_rate = (unsigned long)((g_frames - g_rate_at_frames) * 1000 / (t - g_rate_at_ms));
         g_rate_at_frames = g_frames;
@@ -995,7 +1122,9 @@ static void write_report(void)
         "state: %s\n"
         "frames: %lu rate %lu fps last %lldms\n"
         "sockets: map=%s(%lu) card=%s(%lu) drops=%lu+%lu\n"
+        "video: %s seq=%lu %ux%u frames=%lu\n"
         "in: %llu bytes, %u connection%s\n"
+        "first: session %lldms, byte->frame %lldms\n"
         "out: map %ux%u card %s\n"
         "crop: map t%.0f b%.0f l%.0f r%.0f %s; card t%.0f b%.0f l%.0f r%.0f %s\n"
         "rect: map %u,%u %ux%u; card %u,%u %ux%u\n"
@@ -1008,7 +1137,10 @@ static void write_report(void)
         g_map.fd >= 0 ? "on" : "waiting", g_map.frames,
         g_card.fd >= 0 ? "on" : "waiting", g_card.frames,
         g_map.drops, g_card.drops,
+        g_vid_path ? g_vid_path : "off", (unsigned long)g_vid.seq, g_vid.w, g_vid.h, g_vid.frames,
         g_in_bytes, g_connects, g_connects == 1 ? "" : "s",
+        g_boot_ms,
+        (g_t_first_byte && g_t_first_frame) ? (g_t_first_frame - g_t_first_byte) : -1LL,
         (unsigned)g_crop.map_w, (unsigned)g_crop.map_h, card,
         g_crop.map_top, g_crop.map_bottom, g_crop.map_left, g_crop.map_right,
         g_crop.map_stretch ? "stretch" : "fill",
@@ -1129,6 +1261,9 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc) set_dir(argv[++i]);
         else if (strcmp(argv[i], "--stdin") == 0) stdin_mode = 1;
+        /* Wireless edition: the picture goes to the renderer's video file
+         * (/dev/shm/mgu-video-<name>) instead of the CLMF sockets. */
+        else if (strcmp(argv[i], "--video-file") == 0 && i + 1 < argc) g_vid_path = argv[++i];
     }
 
     signal(SIGPIPE, SIG_IGN);
@@ -1151,6 +1286,21 @@ int main(int argc, char **argv)
      * set up to cut even while it waits for the tap. */
     read_crop(&g_crop);
     g_crop_read_ms = now_ms();
+    /* MSDK's own start-up - MFXInit, the VA display, the DRI node - is what
+     * stands between the phone's first byte and its first picture, and it was
+     * tens of seconds of "receiving picture" on the car before this line. It
+     * needs no stream, so it happens now, while the unit waits for the phone
+     * anyway. dec_start() keeps the session it finds. */
+    {
+        long long w0 = now_ms();
+        open_session(&dec);
+        g_boot_ms = now_ms() - w0;
+        if (!dec.session) {
+            note("decoder session did not come up after %lld ms", now_ms() - w0);
+        } else {
+            note("decoder ready after %lld ms, waiting for the stream", now_ms() - w0);
+        }
+    }
     if (stdin_mode) {
         client = STDIN_FILENO;
         g_connects = 1;
@@ -1219,6 +1369,7 @@ int main(int argc, char **argv)
                 if (k > 0) {
                     ilen += (size_t)k;
                     g_in_bytes += (unsigned long long)k;
+                    if (!g_t_first_byte) g_t_first_byte = now_ms();
                 } else if (k == 0 || (errno != EAGAIN && errno != EINTR)) {
                     if (stdin_mode) {
                         /* The pipe from carlife-link closed: it exited or lost

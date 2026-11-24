@@ -1,6 +1,6 @@
 # CarLife 无线投屏（cn_carlife_wireless）
 
-把手机百度 CarLife 的**完整画面**通过 WiFi 热点投到 iDrive 7/8 中控屏。目前是**只显示**：触摸回传的代码在，但这条显示通路（upstream 方言的像素图）本身放弃触摸 claim，见文末。
+把手机百度 CarLife 的**完整画面**通过 WiFi 热点投到 iDrive 7/8 中控屏，**画面上可以直接触摸/拖拽**（0.8.0 起，手势经 `carlife-link` 的控制通道回传给手机）。
 
 ## 和旧方案的区别
 
@@ -41,18 +41,18 @@ iDrive 7 的 BCM4359 只有 `wlan0` 一个 station 接口，车的 `wpa_supplica
 | 版本握手 | cmd 7240 返回 `MATCH_STATUS status=1`（手机接受车机身份） |
 | H.264 取流 | 20 秒收到 287 帧 / 2.2 MB，SPS/PPS/IDR 齐全 |
 | 画面 | 解码后确认是完整 CarLife 界面（地图 + 音乐卡 + 语音卡），颜色正确 |
-| 显示链路 | CLMF → CarlifeSource → toRgba → RGBA 用真实帧验证，画面与原图一致 |
+| 显示链路 | 0.8.0 起画面不再经 JS：`carlife-decode` 把 I420 写进 MGVF 视频文件，渲染器读文件自己画（桌面用 `kit/tools/test_video.js` 钉住协议） |
 
 ## 组成
 
 | 组件 | 作用 |
 |---|---|
-| `kit/carlife-wireless/carlife-link` | 连手机 6 端口、握手、收 H.264，裸流写到 stdout |
-| `kit/carlife-wireless/carlife-decode` | 从 stdin 读流，用车的 Intel MSDK 硬解，输出 CLMF 帧到 unix socket |
+| `kit/carlife-wireless/carlife-link` | 连手机 6 端口、握手、收 H.264，裸流写到 stdout，并把触摸回传给手机 |
+| `kit/carlife-wireless/carlife-decode` | 从 stdin 读流，用车的 Intel MSDK 硬解，把整幅画面按手机原始尺寸写进渲染器的视频文件 `/dev/shm/mgu-video-carlife`（MGVF + I420） |
 | `kit/carlife-wireless/run.sh` | 把上面两个用管道串起来，任一退出则整组重启 |
 | `kit/carlife-wireless/carlife-wireless.service` | systemd 常驻，未连手机时循环重试 |
 | `kit/carlife-wireless/wifi-bridge` | root 代理：Wi-Fi 请求 → mgu-uplink 的 root-only socket（本应用已不再调用） |
-| `apps/cn_carlife_wireless/` | JS app：读帧 → 转 RGBA → 铺满中控屏（触摸回传代码保留，未生效） |
+| `apps/cn_carlife_wireless/` | JS app：向渲染器声明视频文件、claim 画面区域、把触摸归一化后回传 |
 
 ## 安装
 
@@ -149,6 +149,53 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 16:9 的画面在 1920×720（8:3）的屏幕上，等比满高时只能占约 67% 宽，两边留黑是**比例决定的**，
 不是 bug。要真正满屏得让手机按车机的横向比例编码（`carlife-link --width/--height`，当前默认
 1280×720），那需要手机端接受非标准分辨率，留作下一步。
+
+**0.8.0：画面走渲染器的视频通道，于是也就能触摸了**
+
+0.7.9 之后车上还剩五个问题：连接慢（半分钟）、画面卡（手机移动后好几秒才变）、点不动、
+画面糊、点画面底部会点到被画面盖住的 HMI 按钮。这五个其实是**同一件事**的五个面：画面是
+由 app 自己"搬"上屏的。
+
+- 0.7.9 的通路：解码器 → CLMF 帧 → `unix socket` → app（JS 里 YUV→RGBA，1280×480 约 30 ms）
+  → 每帧 2.4 MB 的像素图消息 → 渲染器。**每个进程之间都有一个缓冲区**，而手机一直以 30 fps
+  生产：只要某一段稍微慢一点，帧就在队列里堆积，画面"平均能看"却永远晚几秒。同时这条通路
+  用的是 upstream 方言，而那个方言下像素图与触摸 claim 互斥（`CLAIM` 和 `IMAGE` 共用 9 号
+  消息），所以点不动。
+
+- 0.8.0 换成 mgu-render 的**视频通道**（`mgu-render/1` 的 `VIDEO` 消息 + 绘制 op 19）：
+  解码器把整幅画面写进 `/dev/shm/mgu-video-carlife`（64 字节头 + 3 个 I420 槽位，写者和
+  读者永远隔两帧），渲染器**自己每 5 ms 看一次文件头**、有新帧就重画。队列消失了，
+  任何一帧被读到都必然是**最新的那一帧**，所以"晚几秒"这个问题从结构上不存在了；app 只发
+  一条 `VIDEO` 消息和每秒一帧的保活，卡顿、CPU、带宽一起消失。
+
+- **糊**是因为中间被缩了两次：0.7.9 的解码器把 1920×720 用**最近邻**缩到 1280×480，渲染器
+  再放大 1.434 倍到屏幕。现在解码器**不缩放**（VPP 只做拷贝），画面按 1920×720 原样交给
+  GPU，由它一次性双线性缩到 1835×688（0.956 倍），只降不升。
+
+- **点不动 / 点到底部系统按钮**：视频通路不再发像素图，连接就是 `mgu-render/1`，于是
+  `CLAIM`（9 号消息）可用了。app 把画面覆盖的整块区域（84..1920 × 0..720，逻辑坐标）claim
+  给自己：落在这块里的手势由渲染器**转给本应用**（`TOUCH`），再由 `carlife-link` 的 7399
+  控制口发给手机；落在返回箭头列的手势仍归 HMI。被画面盖住的那条 HMI 按钮栏**再也收不到
+  触摸**——这正是"点画面底部打开车机设置"的原因。
+
+- **连接慢半分钟**：解码器的 MSDK 会话（`MFXInit` + VA display + DRI 节点）原来是在**第一帧
+  到达时**才建立的，那几十秒就挂在"正在接收画面"上。现在 `carlife-decode` 启动时就把会话
+  建好（车机等手机的时间本来也是空等），`decode.txt` 也多两行计时可以核对：
+  `first: session <ms>, byte->frame <ms>`（会话建立耗时、从收到第一个字节到出第一帧的耗时）。
+
+- **顺手清掉约 1500 行死代码**：删掉旧像素通路的全部（`carlife_source.js`、`atlas.js`、
+  `hud_convert.js`、`wait_policy.js`）和两个这份代码里已经没人 require 的模块
+  （`cluster_render_client.js`、`speller.js`）。build.py 把 app 目录下每个 `.js` 都拷进安装包，
+  所以它们一直在车上；现在包里只剩 `app.js` 和 `kit/`，`test/` 目录也不再打包（`buildOnly`）。
+
+- **命名视频文件的两道闸**：`_ensureVideo` 要求渲染器**既**说 `mgu-render/1` **又**在 caps
+  里报 16——`X_READY` 版本 3 是 native 但还没有视频，在那种连接上命名一条 `VIDEO` 只会收到
+  ERROR（检查 caps 之前漏了这一条）。另外它**等解码器真的写出文件之后**才发第一条：
+  提前发一次 ERROR，这条连接就再也拿不到画面。两种情况都只发一次，不按帧发。
+
+- 车机渲染器必须支持视频通道：`app.json` 的 `requires.idrive7-renderd` 已是 MGU 商店的
+  GPU 渲染器（mgu-render）。若某台车上是别的渲染器，状态页会写「渲染器不支持视频通道」，
+  而不是留一张黑屏。
 - `run.sh` **不再删除** `link.txt`：0.5.0 每当 pipeline 有一半退出就删一次报告，
   车上只会看到"取流：尚未启动"，真实原因被抹掉。
 
@@ -291,14 +338,14 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 python3 kit/carlife-wireless/link/test/test_link.py
 # 解码几何：裁剪/尺寸/色度布局（含 1920x1080 全画面）
 python3 kit/carlife-wireless/decode_math_test.py
-# 应用内连热点：桥接白名单、请求协议、版本一致
-python3 kit/carlife-wireless/wifi_test.py
 # 手机地址发现：手填 / lease / 默认路由 / status 推算 / auto
 python3 kit/carlife-wireless/test/find_phone_test.py
 # 启动器：不删 link.txt、崩溃时写 run.txt、无地址也启动链路
 python3 kit/carlife-wireless/test/run_sh_test.py
 # 车机模拟：占位帧、按钮、触摸、诊断显示（纯 Node，无需车机）
 node apps/cn_carlife_wireless/test/simulate_car.js
-# 显示链路（需先用 ffmpeg 从真实 h264 导出一帧）
-node apps/cn_carlife_wireless/test/test_display.js <frame720_nv12.yuv>
+# 视频通道：claim 整块画面、只在 caps 有 16 且文件已存在时命名一次（不需要 socket）
+node kit/tools/test_video.js
+# 渲染器运行时（需要能建 unix socket；Windows 上常见 listen EACCES）
+node kit/tools/test_runtime.js
 ```

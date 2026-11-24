@@ -37,27 +37,29 @@ async function waitFor(fn, ms) {
 // the renderer's side: the app's FRAMEs (time of each, a TICK back for each), READY on connect (onConn)
 let onConn = null;
 const server = net.createServer((s) => {
-    const c = { s, frames: [], buf: Buffer.alloc(0), send: (t, p) => s.write(msg(t, p)) };
+    const c = { s, frames: [], framesPayload: [], msgs: [], buf: Buffer.alloc(0), send: (t, p) => s.write(msg(t, p)) };
     s.on('data', (d) => {
         c.buf = Buffer.concat([c.buf, d]);
         while (c.buf.length >= 8) {
             const t = c.buf.readUInt32LE(0), n = c.buf.readUInt32LE(4);
             if (c.buf.length < 8 + n) break;
+            const p = c.buf.slice(8, 8 + n);
             c.buf = c.buf.slice(8 + n);
-            if (t === FRAME) { c.frames.push(Date.now()); c.send(TICK, u32(c.frames.length, 0)); }
+            c.msgs.push({ t, p });
+            if (t === FRAME) { c.frames.push(Date.now()); c.framesPayload.push(p); c.send(TICK, u32(c.frames.length, 0)); }
         }
     });
     s.on('error', () => {});
     onConn(c);
 });
-const ready = (c) => { c.send(X_READY, u32(1, 1, 7)); c.send(READY, u32(4, 1920, 720, 1)); };   // touch, controller, front gate
+const ready = (c, video) => { c.send(X_READY, u32(1, 1, video ? 23 : 7)); c.send(READY, u32(4, 1920, 720, 1)); };   // touch, controller, front gate (+ video)
 const ccu = (k, pb, df) => { const b = Buffer.alloc(5); b.writeUInt16BE(k, 1); b[3] = pb; b[4] = df; return b; };
 const touch = (phase, x, y) => { const b = Buffer.alloc(12); b.writeUInt32LE(phase, 0); b.writeFloatLE(x, 4); b.writeFloatLE(y, 8); return b; };
 
 /** A Display on the stand-in renderer, the kit running the screen (full-screen layout, touch), shown. */
 async function setup(extra, needOwn = true) {
     let conn = null;
-    onConn = (c) => { conn = c; ready(c); };
+    onConn = (c) => { conn = c; ready(c, !!(extra && extra.video)); };
     const log = { errors: [], info() {}, warn() {}, debug() {}, error: (...a) => log.errors.push(a) };
     const vis = new Set(['MAIN']), visH = [];
     const ui = {
@@ -151,6 +153,66 @@ test('a pixel image is a new frame every time, not a still one (words unchanged)
         t.d.present('MAIN', t.d.canvas(1600, 520), () => Promise.resolve());
         await sleep(50);
         assert(c.frames.length <= n + 2, 'the skip still works without an image: ' + (c.frames.length - n));
+    } finally { t.end(); }
+});
+
+/* A video (record.js setVideo + cv.video, op 19) is the whole point of a feed: the renderer reads
+ * the file itself, so the app sends one VIDEO message and then one small frame a second - not
+ * megabytes of pixels per picture. And because no pixel image is sent, the connection is
+ * mgu-render/1, where the app can claim the picture's area: that is what lets a tap on the picture
+ * go to the phone instead of to the HMI bar drawn under it. */
+test('a video screen: one VIDEO, op 19, and a claim over the whole area', async () => {
+    const { setVideo } = require('../runtime/record');
+    /* The renderer only takes a file that is there: naming one before the decoder
+     * wrote it is an ERROR and the video never comes back on that connection, so
+     * the transport waits for it (and asks again next frame). */
+    const vpath = path.join(dir, 'mgu-video-probe');
+    setVideo(1, vpath);
+    const t = await setup({ chrome: false, video: true, src: { x: 0, y: 0, w: 1920, h: 720 } });
+    const c = t.c;
+    try {
+        assert(t.d.videoReady(), 'a video screen on a renderer that offers video');
+        assert(t.d.own(), 'the kit runs the screen, so touch is routed here');
+        /* first frame with the file missing: no VIDEO at all */
+        t.d.present('MAIN', t.d.canvas(1920, 720).video(1, 0, 0, 1920, 720, 0), () => Promise.resolve());
+        await sleep(60);
+        assert.strictEqual(c.msgs.filter((m) => m.t === 13).length, 0, 'no file, no VIDEO');
+        fs.writeFileSync(vpath, Buffer.alloc(64));
+        const r = t.d.canvas(1920, 720);
+        r.video(1, 0, 0, 1920, 720, 0);
+        t.d.present('MAIN', r, () => Promise.resolve());
+        await sleep(150);
+
+        const vids = c.msgs.filter((m) => m.t === 13);
+        assert.strictEqual(vids.length, 1, 'one VIDEO per connection: ' + vids.length);
+        assert.strictEqual(vids[0].p.readUInt32LE(0), 1, 'the video id');
+        assert.strictEqual(vids[0].p.slice(4).toString().replace(/\0+$/, ''), vpath, 'the file it names');
+
+        const f = c.framesPayload[c.framesPayload.length - 1];
+        assert.strictEqual(f.readUInt32LE(0), 19, 'the frame draws the video: op ' + f.readUInt32LE(0));
+        assert.strictEqual(f.readUInt32LE(24), 1, 'with the video id');
+
+        const claims = c.msgs.filter((m) => m.t === 9);
+        assert(claims.length >= 1, 'a claim');
+        const cl = claims[claims.length - 1].p;
+        assert.strictEqual(cl.readUInt32LE(0), 1, 'one rect, the whole app area: ' + cl.readUInt32LE(0));
+        const rx = cl.readFloatLE(4), rw = cl.readFloatLE(12), rh = cl.readFloatLE(16);
+        console.log('  claim over the picture: x ' + rx.toFixed(1) + ', w ' + rw.toFixed(1) + ', h ' + rh.toFixed(1));
+        assert(rw > 1800 && rh > 700, 'the claim covers the picture: ' + rw + 'x' + rh);
+
+        /* The whole point: nothing is uploaded per picture. The op is the same words every frame,
+         * so only the once-a-second keepalive goes out. */
+        const n = c.frames.length;
+        const t0 = Date.now();
+        while (Date.now() - t0 < 1200) { t.d.present('MAIN', t.d.canvas(1920, 720).video(1, 0, 0, 1920, 720, 0), () => Promise.resolve()); await sleep(16); }
+        console.log('  75 frames of the same video op in 1.2 s: ' + (c.frames.length - n) + ' FRAMEs');
+        assert(c.frames.length - n <= 2, 'a feed costs no upload per picture: ' + (c.frames.length - n));
+
+        /* A renderer without the video capability: the app must be told so (the status page says
+         * it) rather than drawing a black picture. */
+        c.send(X_READY, u32(1, 1, 7));
+        await sleep(50);
+        assert(!t.d.videoReady(), 'no video capability, no video');
     } finally { t.end(); }
 });
 
@@ -483,7 +545,11 @@ test('signals: watch() set-ups still go while method calls keep the urgent lane 
 });
 
 (async () => {
-    await new Promise((r) => server.listen(process.env.MGU_RENDERD_SOCKET, r));
+    /* listen's failure is asynchronous and the uncaughtException handler above
+     * only collects it, so a socket this machine cannot create used to end the
+     * run silently: no output, exit 0, "green". Fail loudly instead. (Windows:
+     * a unix socket outside the app's own directories can be EACCES.) */
+    await new Promise((res, rej) => { server.once('error', rej); server.listen(process.env.MGU_RENDERD_SOCKET, res); });
     let failed = 0;
     for (const [name, fn] of cases) {
         try { await fn(); console.log('ok    ' + name); } catch (e) { failed++; console.log('FAIL  ' + name + '\n      ' + e.message.split('\n')[0]); }
@@ -492,4 +558,4 @@ test('signals: watch() set-ups still go while method calls keep the urgent lane 
     fs.rmSync(dir, { recursive: true, force: true });
     console.log(failed ? failed + ' of ' + cases.length + ' failed' : 'runtime: all ok');
     process.exit(failed ? 1 : 0);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.error('runtime: ' + e.message); process.exit(1); });
