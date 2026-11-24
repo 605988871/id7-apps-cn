@@ -43,8 +43,7 @@ function msg(type, payload) {
     return b;
 }
 
-/* The app at the phone's own frame size, as apps/cn_carlife_wireless declares it:
- * a chrome-less canvas, 1920x720 at 0,0, the whole screen. */
+/* A full-screen 1920x720 frame: a chrome-less canvas at 0,0, the whole screen. */
 function videoScreen() {
     return {
         place: { x: 0, y: 0, w: 1920, h: 720, ox: 0, oy: 0, scale: 1 },

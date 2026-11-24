@@ -66,8 +66,8 @@ def main():
     credit_source = credit_file.read_text(encoding='utf-8') if credit_file.exists() else ''
     # Characters an app draws itself that no kit locale carries. The atlas is the
     # only font a JS app can reach, and a character that was never baked is drawn
-    # as '?' on the car screen - which is how "CarLife 无线投屏" came out as
-    # "CarLife 无线?屏" and every 「连接热点」 as "?连接热点?". Keep this a short
+    # as '?' on the car screen - which is how a two-word title can come out as
+    # "无线?屏" and every 「连接热点」 as "?连接热点?". Keep this a short
     # list of missing characters, not a place for sentences.
     extra_file = ROOT / 'kit/localization' / ('extra-%s.txt' % language)
     extra = ''
