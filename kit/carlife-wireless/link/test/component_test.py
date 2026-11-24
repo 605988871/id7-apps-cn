@@ -14,7 +14,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent.parent
+# This file lives with the native tools (link/test/) but checks the component
+# directory above them. Walking up to component.json instead of counting
+# parents keeps it working from either place - it spent a while failing with
+# "No such file: link/component.json", i.e. doing no checking at all.
+HERE = Path(__file__).resolve().parent
+while HERE != HERE.parent and not (HERE / 'component.json').exists():
+    HERE = HERE.parent
+ELF_CHECK = Path(__file__).resolve().parent / 'elf_check.py'
 ROOT = HERE.parent.parent
 APP = ROOT / 'apps/cn_carlife_wireless/app.json'
 problems = []
@@ -40,20 +47,30 @@ def main():
 
     units = [u['name'] for u in spec.get('units', [])]
     check(bool(units), 'the component ships a unit')
+    launcher = HERE / 'run.sh'
+    run_txt = launcher.read_text(encoding='utf-8') if launcher.exists() else ''
     for unit in units:
         path = HERE / unit
         check(path.exists(), 'unit file exists: ' + unit)
         if path.exists():
             text = path.read_text(encoding='utf-8')
-            want = '/var/opt/%s/current/carlife-link' % spec['id']
-            check(want in text, 'the unit starts the payload through the Store\'s stable path')
-            check('--report /dev/shm/' in text, 'the unit passes a report path the app can read')
+            stable = '/var/opt/%s/current/' % spec['id']
+            check(stable in text, 'the unit starts a payload file through the Store\'s stable path')
+            if unit == 'carlife-wireless.service':
+                # Since 0.5.0 the stream unit runs run.sh, which owns the whole
+                # two-process pipeline; the binary is started by the launcher,
+                # not by systemd. This used to assert the old direct ExecStart
+                # and had been red ever since - a check nobody could see fail.
+                check(stable + 'run.sh' in text, 'the stream unit runs the launcher')
+                check('--report "$DIR/link.txt"' in run_txt and
+                      'DIR=${CARLIFE_DIR:-/dev/shm/carlife-wireless}' in run_txt,
+                      'the launcher writes its report where the app reads it')
     check(any(e.get('unit') in units for e in spec.get('enable', [])), 'the unit is enabled at install time')
     check(bool(spec.get('postInstall')), 'a postInstall script runs after every install')
     for script in spec.get('postInstall', []):
         check(script in files, 'postInstall names a payload file: ' + script)
 
-    res = subprocess.run([sys.executable, str(HERE / 'test/elf_check.py'), str(HERE / 'carlife-link')],
+    res = subprocess.run([sys.executable, str(ELF_CHECK), str(HERE / 'carlife-link')],
                          capture_output=True, text=True)
     check(res.returncode == 0, 'the payload is a binary the unit can start')
     if res.returncode:

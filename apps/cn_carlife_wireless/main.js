@@ -358,8 +358,19 @@ mgu.run({
                     }
                 }
             } else if (lr) {
-                lines.push(LINK_STATE_ZH[(lr.state || '').trim()] || ('取流：' + lr.state));
-                if (lr.error && lr.error !== 'none') lines.push('取流错误：' + lr.error);
+                const lstate = (lr.state || '').trim();
+                lines.push(LINK_STATE_ZH[lstate] || ('取流：' + lr.state));
+                /* While the link is re-homing after a hotspot change it is
+                 * still holding the address it dialled a moment ago, and the
+                 * dial error names exactly that address. Shown beside "正在
+                 * 查找手机" it reads as "the IP never switched" - which is
+                 * what the car reported. Name the address and say what the
+                 * link is doing with it instead. */
+                if (lstate === 'looking for the phone' || lstate === 'no phone on the network') {
+                    lines.push('地址：' + (lr.host || '?') + '（按当前网络重新查找）');
+                } else if (lr.error && lr.error !== 'none') {
+                    lines.push('取流错误：' + lr.error);
+                }
             } else if (rr) {
                 /* No link report: the service ran but carlife-link never got
                  * as far as writing one. run.txt says what it was dialing. */

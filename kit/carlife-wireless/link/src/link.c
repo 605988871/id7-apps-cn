@@ -437,9 +437,11 @@ static sock_t tcp_connect(const char *host, int port, int timeout_ms, char *err,
 /* How many failed dials to a hinted address before looking for the phone on
  * the network we are on now. At the 3 s retry interval this is about twelve
  * seconds: long enough that a phone in Wi-Fi power save is not declared
- * missing, short enough that joining another hotspot does not leave the car
- * dialling the previous network for a whole minute. (Measured on the unit:
- * the old 20 rounds read as "the address takes a minute to switch".) */
+ * missing. Joining another hotspot is caught earlier and exactly by the
+ * address watch in the main loop (a few hundred ms after DHCP), so this is
+ * only the fallback for a hint that is still on our subnet but wrong.
+ * (Measured on the unit: the old 20 rounds read as "the address takes a
+ * minute to switch".) */
 #define HINT_ROUNDS 4
 
 #ifndef _WIN32
@@ -631,6 +633,68 @@ static int discover(int port, char *host, size_t hostlen, char *swept, size_t sw
     return -1;
 }
 
+/* ---------- did the network underneath us change? ----------
+ * Joining another hotspot never restarts this process: run.sh already picked
+ * an address, the app already shows it, and the old TCP sessions just stop
+ * carrying frames. The only early signal available without a DHCP client, a
+ * netlink socket or root is the head unit's own interface table - wlan0 is
+ * renumbered within a second of associating, long before any dial times out.
+ * Watching that is what turns "the address takes a minute to switch" into
+ * "the address switches before the picture even stops". */
+
+/* The /24 a dotted quad sits on; 0 means "not an address I can reason about"
+ * (a hostname override), which keeps every caller behaving as before. */
+static uint32_t host_net(const char *h)
+{
+    unsigned a, b, c, d;
+    char tail;
+    if (!h || sscanf(h, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4) return 0;
+    if (a > 255 || b > 255 || c > 255 || d > 255) return 0;
+    return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8);
+}
+
+/* Is `net` one of the /24s this machine is on right now? No opinion (0) or no
+ * local address yet counts as yes: the caller then waits for dial failures
+ * exactly as it did before, instead of sweeping a network we are not on. */
+static int on_any_net(uint32_t net, const uint32_t *self, int nself)
+{
+    int i;
+    if (!net || nself <= 0) return 1;
+    for (i = 0; i < nself; i++)
+        if ((self[i] & 0xffffff00u) == net) return 1;
+    return 0;
+}
+
+/* Same set of addresses. Order is not a promise: getifaddrs() hands them out
+ * in whatever order the kernel's lists happen to be in. */
+static int net_same(const uint32_t *a, int na, const uint32_t *b, int nb)
+{
+    int i, j, hit;
+    if (na != nb) return 0;
+    for (i = 0; i < na; i++) {
+        hit = 0;
+        for (j = 0; j < nb; j++)
+            if (a[i] == b[j]) hit = 1;
+        if (!hit) return 0;
+    }
+    return 1;
+}
+
+static void fmt_addrs(const uint32_t *ips, int n, char *out, size_t cap)
+{
+    size_t used = 0;
+    int i;
+    if (!cap) return;
+    out[0] = '\0';
+    for (i = 0; i < n && used + 1 < cap; i++) {
+        int w = snprintf(out + used, cap - used, "%s%u.%u.%u.%u", used ? " " : "",
+                         (ips[i] >> 24) & 0xff, (ips[i] >> 16) & 0xff,
+                         (ips[i] >> 8) & 0xff, ips[i] & 0xff);
+        if (w <= 0 || (size_t)w >= cap - used) break;
+        used += (size_t)w;
+    }
+}
+
 /* ---------- protobuf, written by hand: a dozen fields, no library ---------- */
 
 static size_t pb_varint(uint8_t *o, size_t cap, uint64_t v)
@@ -762,6 +826,14 @@ typedef struct {
     int retry_idx;   /* which critical channel the next reopen pass starts at */
     double t_keepalive;  /* when the last periodic cmd message went out */
     int fail_rounds;     /* consecutive dials that reached no cmd channel */
+
+    /* The head unit's own IPv4 addresses, and when they were last read. A
+     * change here means the car joined a different network, which is the one
+     * event that must not wait for a dial to time out. */
+    uint32_t self[8];
+    int nself;
+    double t_net;
+    char netlist[96];    /* self, as text, for the report */
 } link_t;
 
 static link_t L;
@@ -799,6 +871,21 @@ static void link_close(link_t *l)
     for (i = 0; i < NCH; i++) chan_close(&l->ch[i]);
     if (l->ctl_client != NO_SOCK) sclose(l->ctl_client);
     l->ctl_client = NO_SOCK;
+}
+
+/* Every session channel is dropped, the app's control socket is not: a tap
+ * must keep working across a hotspot change. Used when the network changed -
+ * those sockets belong to the old one, and a half-dead socket that never sees
+ * a RST would otherwise keep reporting "open" while no frame arrives.
+ * The handshake bookkeeping is reset with them, because the phone starts a
+ * fresh encoder for every session anyway. */
+static void channels_reset(link_t *l)
+{
+    int i;
+    for (i = 0; i < NCH; i++) chan_close(&l->ch[i]);
+    l->matched = l->init_done = l->started = 0;
+    l->got_w = l->got_h = l->got_fps = 0;
+    l->saw_sps = l->saw_pps = l->saw_idr = 0;
 }
 
 static void send_frame(link_t *l, int ci, uint32_t type, const uint8_t *body, size_t n)
@@ -1013,6 +1100,10 @@ static void write_report(link_t *l)
     fprintf(f, "host: %s\n", l->host);
     fprintf(f, "base: %d\n", l->base_port);
     fprintf(f, "scan: %s\n", l->scan[0] ? l->scan : "none");
+    /* The car's own addresses. When the screen says "no phone on the
+     * network", this is what says whether it is even on the same network as
+     * the phone - i.e. whether the hotspot change actually took. */
+    fprintf(f, "net: %s\n", l->netlist[0] ? l->netlist : "none");
     fprintf(f, "up: %.0f s\n", secs);
     fprintf(f, "cmd: %s rx=%lu tx=%lu match=%s\n", l->ch[CH_CMD].open ? "open" : "closed",
             l->cmd_rx, l->cmd_tx, l->matched ? "yes" : "no");
@@ -1521,6 +1612,11 @@ int main(int argc, char **argv)
     L.t0 = now_ms();
     L.t_retry = L.t0;
     L.t_keepalive = L.t0;
+    /* Baseline for the network watch: only a change from here is a hotspot
+     * change, so the first look must never fire the "network changed" path. */
+    L.nself = local_ipv4(L.self, 8);
+    L.t_net = L.t0;
+    fmt_addrs(L.self, L.nself, L.netlist, sizeof L.netlist);
     if (L.find_mode) {
         char found[64];
         snprintf(L.state, sizeof L.state, "looking for the phone");
@@ -1556,6 +1652,50 @@ int main(int argc, char **argv)
         }
 
         now = now_ms();
+        /* Hotspot change watch: one getifaddrs() a second. When the set of
+         * local addresses differs from the last look, the car has joined a
+         * different network - the session we were dialling belongs to the old
+         * one, so it is dropped and the phone is looked for again at once.
+         * This is the whole fix for "the address takes a minute to switch":
+         * whatever the dials are doing, DHCP renumbers wlan0 within a second
+         * or two of associating, and that is now the trigger. */
+        if (now - L.t_net >= 1000) {
+            uint32_t cur[8];
+            int ncur = local_ipv4(cur, 8);
+            L.t_net = now;
+            if (!net_same(L.self, L.nself, cur, ncur)) {
+                int was = L.nself;
+                char before[96], after[96], found[64];
+                fmt_addrs(L.self, was, before, sizeof before);
+                fmt_addrs(cur, ncur, after, sizeof after);
+                memcpy(L.self, cur, sizeof cur);
+                L.nself = ncur;
+                snprintf(L.netlist, sizeof L.netlist, "%s", after);
+                logline(&L, "network changed (%d -> %d addresses: %s -> %s), looking for the phone again",
+                        was, ncur, before[0] ? before : "none", after[0] ? after : "none");
+                L.fail_rounds = 0;
+                channels_reset(&L);
+                snprintf(L.state, sizeof L.state, "looking for the phone");
+                if (discover(L.base_port, found, sizeof found, L.scan, sizeof L.scan) == 0) {
+                    if (strcmp(found, L.host)) snprintf(L.host, sizeof L.host, "%s", found);
+                    logline(&L, "found the phone at %s", found);
+                    L.t_retry = now;
+                    connect_all(&L);
+                } else {
+                    /* No address at all is not the same as an address with no
+                     * phone behind it: the car may still be associating, and
+                     * "找不到手机" while wlan0 has no lease would be a lie. */
+                    snprintf(L.state, sizeof L.state,
+                             ncur ? "no phone on the network" : "looking for the phone");
+                    /* Keep the address we had: it may be the right one with
+                     * the phone's CarLife simply not open yet, and the retry
+                     * loop below takes over from here either way. */
+                    logline(&L, ncur ? "no phone answered on the new network yet"
+                                     : "no address yet, waiting for the hotspot");
+                }
+                write_report(&L);
+            }
+        }
         if (now - L.t_reported >= 1000) {
             L.t_reported = now;
             write_report(&L);
@@ -1582,13 +1722,20 @@ int main(int argc, char **argv)
                     snprintf(L.state, sizeof L.state, "no phone on the network");
                     logline(&L, "still no phone answering on this network");
                 }
-            } else if (++L.fail_rounds >= HINT_ROUNDS) {
+            } else if (++L.fail_rounds >=
+                       (on_any_net(host_net(L.host), L.self, L.nself) ? HINT_ROUNDS : 2)) {
                 /* The address was a hint (mgu-uplink's lease, the file the app
                  * writes): a lease outlives the network it describes, so after
                  * the car joins another hotspot it can name a router that is
                  * not on this link at all, and dialling it recovers never.
                  * Sweep the network we are on now and switch if the phone is
-                 * somewhere else on it. */
+                 * somewhere else on it.
+                 *
+                 * A hint that is not even on one of our own /24s gets only two
+                 * rounds: it cannot be the phone, so there is nothing to wait
+                 * for. (This is what catches a host file typed for an earlier
+                 * hotspot, including the one the app publishes from Settings.)
+                 * The network-change watch above normally fires first. */
                 char found[64];
                 L.fail_rounds = 0;
                 if (discover(L.base_port, found, sizeof found, L.scan, sizeof L.scan) == 0) {

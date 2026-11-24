@@ -216,6 +216,19 @@ function check(name, cond) {
         c = render();
         check('C3 link report names the real reason', c.texts.some((t) => t.includes('找不到手机')));
 
+        /* Right after a hotspot change the link still holds the address it
+         * dialled a moment ago, and its dial error names exactly that address.
+         * Printed beside "正在查找手机" the error reads as "the IP never
+         * switched" - which is how the car reported it. Name the address and
+         * what the link is doing with it instead. */
+        put(linkFile, 'state: looking for the phone\nhost: 10.92.100.115\n' +
+            'error: 10.92.100.115:7240 timed out\n');
+        c = render();
+        check('C9 re-homing names the address, not the old timeout',
+            c.texts.some((t) => t.includes('正在查找手机')) &&
+            c.texts.some((t) => t.includes('地址：10.92.100.115（按当前网络重新查找）')) &&
+            !c.texts.some((t) => t.includes('取流错误')));
+
         fs.rmSync(linkFile);
         put(runFile, 'state: starting\nphone: 192.168.43.1\nsource: default route on wlan0\n');
         c = render();

@@ -415,6 +415,50 @@ def test_frame_rate_and_session_stability():
           'the head unit keeps the cmd channel alive every two seconds')
 
 
+def test_network_change_rehomes():
+    """Joining another hotspot must re-home the link immediately.
+
+    The service is not restarted when the car switches Wi-Fi: run.sh chose an
+    address once, and from then on the address is carlife-link's business.
+    Waiting for dial timeouts is what left the screen dialling the previous
+    hotspot for about a minute. DHCP renumbers wlan0 within a second or two of
+    associating, so the local address set is the earliest signal available -
+    and it costs no root, no DHCP client and no wpa_cli.
+
+    Guarded at the source because neither harness can change an interface:
+    the fake phone lives on 127.0.0.1 and the address never moves.
+    """
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+
+    check('uint32_t self[8];' in src and 'int nself;' in src and 'double t_net;' in src,
+          'the link keeps a snapshot of its own addresses')
+    check('L.nself = local_ipv4(L.self, 8);' in src and 'L.t_net = L.t0;' in src,
+          'the baseline is taken at start, so the first look is not a change')
+
+    start = src.find('if (now - L.t_net >= 1000)')
+    body = src[start:start + 2400] if start >= 0 else ''
+    check(start > 0, 'the address table is looked at once a second')
+    check('channels_reset(&L);' in body,
+          'the session built on the old network is dropped, not left half-open')
+    check('discover(L.base_port, found' in body,
+          'the phone is looked for again as soon as the change is seen')
+    check('L.fail_rounds = 0;' in body,
+          'the change resets the failure count instead of waiting it out')
+
+    retry = src.find('nothing connected: keep trying')
+    check(start > 0 and retry > 0 and start < retry,
+          'the change is handled before the retry branch can dial the old address',
+          (start, retry))
+
+    check('on_any_net(host_net(L.host), L.self, L.nself) ? HINT_ROUNDS : 2' in src,
+          'an address outside every local /24 is swept after two rounds')
+
+    start = src.find('static void channels_reset')
+    body = src[start:start + 700] if start >= 0 else ''
+    check('ctl_client' not in body,
+          "a hotspot change keeps the app's control socket open")
+
+
 def read_interp(blob):
     """PT_INTERP, the loader the kernel must find before this program runs.
 
@@ -482,6 +526,7 @@ def main():
     test_reconnect_latency()
     test_frame_rate_and_session_stability()
     test_shipped_binaries()
+    test_network_change_rehomes()
     zig = find_zig()
     if not zig:
         print('zig not found: set ZIG= or put it on PATH')
