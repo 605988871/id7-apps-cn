@@ -144,17 +144,56 @@ static void fail(const char *fmt, ...)
     va_end(ap);
 }
 
+/* The number alone is not a diagnosis. On the car's screen every failure is
+ * a black picture, and "-3" and "-17" look equally like a hopeless unit:
+ * one means "this MSDK cannot do it", the other "the device fell over". The
+ * names come from the same header the constants do, so they cannot drift. */
+static const char *mfx_name(mfxStatus sts)
+{
+    switch ((int)sts) {
+    case MFX_ERR_NONE:                     return "ok";
+    case MFX_ERR_UNKNOWN:                  return "unknown";
+    case MFX_ERR_NULL_PTR:                 return "null pointer";
+    case MFX_ERR_UNSUPPORTED:              return "unsupported";
+    case MFX_ERR_MEMORY_ALLOC:              return "out of memory";
+    case MFX_ERR_NOT_ENOUGH_BUFFER:        return "not enough buffer";
+    case MFX_ERR_INVALID_HANDLE:           return "invalid handle";
+    case MFX_ERR_LOCK_MEMORY:              return "cannot lock memory";
+    case MFX_ERR_NOT_INITIALIZED:          return "not initialised";
+    case MFX_ERR_NOT_FOUND:                return "not found";
+    case MFX_ERR_MORE_DATA:                return "more data needed";
+    case MFX_ERR_MORE_SURFACE:             return "more surfaces needed";
+    case MFX_ERR_ABORTED:                  return "aborted";
+    case MFX_ERR_DEVICE_LOST:              return "device lost";
+    case MFX_ERR_INCOMPATIBLE_VIDEO_PARAM: return "incompatible video params";
+    case MFX_ERR_INVALID_VIDEO_PARAM:      return "invalid video params";
+    case MFX_ERR_UNDEFINED_BEHAVIOR:       return "undefined behaviour";
+    case MFX_ERR_DEVICE_FAILED:            return "device failed";
+    case MFX_ERR_MORE_BITSTREAM:           return "more bitstream needed";
+    case MFX_ERR_GPU_HANG:                 return "GPU hang";
+    case MFX_ERR_REALLOC_SURFACE:          return "surface realloc needed";
+    case MFX_WRN_DEVICE_BUSY:              return "device busy";
+    case MFX_WRN_VIDEO_PARAM_CHANGED:      return "video params changed";
+    case MFX_WRN_PARTIAL_ACCELERATION:     return "partial acceleration";
+    default:                               return NULL;
+    }
+}
+
 static void mfx_why(const char *call, mfxStatus sts)
 {
-    fail("%s: %d", call, (int)sts);
+    const char *n = mfx_name(sts);
+    if (n) fail("%s: %d (%s)", call, (int)sts, n);
+    else fail("%s: %d", call, (int)sts);
 }
 
 /* A failure that is recovered from: counted, shown as what is happening, and
  * never mistaken for the reason there is no picture. */
 static void soft_why(const char *call, mfxStatus sts)
 {
+    const char *n = mfx_name(sts);
     g_soft++;
-    note("%s: %d (#%lu)", call, (int)sts, g_soft);
+    if (n) note("%s: %d (%s) (#%lu)", call, (int)sts, n, g_soft);
+    else note("%s: %d (#%lu)", call, (int)sts, g_soft);
 }
 
 static long long now_ms(void)
@@ -1048,6 +1087,44 @@ int main(int argc, char **argv)
         printf("selftest ok, glibc %s\n", gnu_get_libc_version());
         fflush(stdout);
         return 0;
+    }
+    /* --probe: can this unit decode at all?
+     *
+     * install.sh runs it as root straight after unpacking, before anyone is
+     * sitting in the car with a phone. It opens the DRI node, brings up the
+     * VA display and initialises the MSDK session - the three things that
+     * depend on the unit's own libraries and can be tested nowhere else.
+     * No picture is decoded, so it needs no stream and takes milliseconds.
+     *
+     * This is the difference between finding out at install time and finding
+     * out after a drive: without it the first sign of a missing MSDK is a
+     * black screen and a restart loop, with the reason four files deep. */
+    if (argc > 1 && strcmp(argv[1], "--probe") == 0) {
+        Dec d;
+        int ok;
+        memset(&d, 0, sizeof d);
+        d.dri = -1;
+        if (!load_mfx()) {
+            printf("probe: %s\n", g_why[0] ? g_why : "no MSDK library");
+            fflush(stdout);
+            return 1;
+        }
+        ok = open_session(&d);
+        if (ok) {
+            /* display=no still means the session came up: MFXInit can make
+             * its own device, and that is a working decoder on this unit. */
+            printf("probe: mfx=%s api=%d va=%s display=%s %s\n",
+                   g_mfx_lib, g_mfx_ver,
+                   g_va_lib[0] == '-' ? "none" : g_va_lib,
+                   d.display ? "yes" : "no", g_note);
+        } else {
+            printf("probe: %s%s%s\n",
+                   g_why[0] ? g_why : "the MSDK will not start",
+                   g_note[0] ? " / " : "", g_note[0] ? g_note : "");
+        }
+        dec_stop(&d);
+        fflush(stdout);
+        return ok ? 0 : 1;
     }
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc) set_dir(argv[++i]);

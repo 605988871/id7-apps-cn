@@ -24,10 +24,11 @@ done
 printf '' > "$BOOT" 2>/dev/null || BOOT=/tmp/carlife-wireless-boot.txt
 if read -r UP _ < /proc/uptime 2>/dev/null; then boot "uptime: $UP"; fi
 
-# The decoder (root) listens on live.sock, the app listens on its ctl and reads
-# the frames: creating a unix socket needs write permission on the directory.
-# 0777 after mkdir, because a service umask of 022 leaves 0755 and listen()
-# then fails with EACCES - which reads as "the decoder never came".
+# The app creates live.sock and the decoder connects to it (whoever captures
+# connects; the app is the one that comes and goes). Creating a unix socket
+# needs write permission on the directory, and that directory is the app's to
+# write: 0777 after mkdir, because a service umask of 022 leaves 0755 and
+# listen() then fails with EACCES - which reads as "the decoder never came".
 if mkdir -p "$DIR" 2>/dev/null; then
     chmod 0777 "$DIR" 2>/dev/null || true
     boot "shm: $DIR $(ls -ld "$DIR" 2>/dev/null | cut -c1-10)"
@@ -71,6 +72,19 @@ for pair in "link:$LINK" "decode:$DECODE" "bridge:$BRIDGE"; do
         boot "exec $TAG: will not run (rc $RC): $(printf '%s' "$OUT" | head -1)"
     fi
 done
+
+# The decoder's real dependency is not its ELF interpreter but the unit's own
+# MSDK, libva and DRI node, and none of those can be checked anywhere but on
+# the unit. Probe them now - while the installer is still on screen - so a
+# unit that cannot decode says so in boot.txt instead of showing a black
+# picture after a drive. A failure here is recorded, not fatal: the rest of
+# the pipeline still works and the reason is what the user needs to see.
+if command -v timeout >/dev/null 2>&1; then
+    PROBE=$(timeout 15 "$DECODE" --probe 2>&1) || PROBE="${PROBE:-probe timed out}"
+else
+    PROBE=$("$DECODE" --probe 2>&1) || PROBE="${PROBE:-probe failed}"
+fi
+boot "decode probe: ${PROBE:-no answer}"
 
 # The app writes the phone's hotspot address here once connected; until then
 # the service exits and retries. Start with no file so a stale address cannot

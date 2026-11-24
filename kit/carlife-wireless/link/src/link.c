@@ -194,6 +194,11 @@ static void *sink_run(void *arg)
         if (stop) break;
         if (!fr) { sink_sleep(); continue; }
         if (fr->n) (void)!fwrite(fr->data, 1, fr->n, s->f);
+        /* A pipe is fully buffered: without this the last few kilobytes of
+         * every frame sit in this process until the NEXT frame pushes them
+         * out, which is a whole frame of latency bought for nothing. The
+         * decoder downstream is waiting on exactly these bytes. */
+        fflush(s->f);
         free(fr);
     }
     fflush(s->f);

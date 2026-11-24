@@ -187,7 +187,23 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
   解码器。现在用 `$DIR/stream.fifo` 把两端接回去（`open()` 会等对端就位，所以不会
   出现半边先跑），两半仍各自写 `.rc`，`run_sh_test.py` 里加了"字节必须真的送达"
   的用例把它钉住。
-- **车型**：解码依赖车机自带的 Intel MSDK 2017（`libmfxhw64.so` API 1.24）+ libva；若车型不同可能缺失（install.sh 的 selftest 会报告）。
+- **装了不等于能解码：`decode probe:` 这一行要看**：解码器真正依赖的是车机自带的
+  MSDK、libva 和 `/dev/dri/renderD128`，这三样只有车机上有，PC 上验不了。
+  `install.sh` 现在会在装完那一刻以 root 跑一次 `carlife-decode --probe`，把结果
+  写进 `/dev/shm/carlife-wireless-boot.txt`：
+
+  ```
+  decode probe: mfx=libmfxhw64.so.1 api=124 va=libva display=yes reading the stream from stdin
+  ```
+
+  没有这一行里的 `mfx=…` 就是没找到 MSDK 库；`display=no` 说明 VA 没起来（MSDK 可能
+  改用自带设备，仍能解码）；整行以 `probe: ` 开头的错误才是真的不能解码。之前这类
+  失败要等取流跑起来、看到黑屏才知道，现在安装时就写在纸上。MSDK 的返回码同时打印
+  名字（`-3 (unsupported)`、`-17 (device failed)`），不再是看不懂的数字。
+- **`sink` 每帧 flush**：`carlife-link` 把流写到管道时，stdio 是全缓冲的：不 flush
+  的话每帧末尾几 KB 会一直留在 link 的用户态缓冲里，直到下一帧把它挤出去——白送一
+  帧延迟。现在每帧写完立刻 `fflush`。
+- **车型**：解码依赖车机自带的 Intel MSDK 2017（`libmfxhw64.so` API 1.24）+ libva；若车型不同可能缺失（install.sh 的 probe 会报告，不再是盲区）。
 - **网络白名单依赖 mgu-uplink**：`carlife-link` 降到 uid 65534 才能从车机 WiFi 发包；这依赖 Store 在装本组件时写好 `uids.d/carlife-wireless`。若白名单没写进去，link 会连不上手机——按上面"第一步"检查该文件。
 
 ##  desk 回归测试（PC，不需要车）
