@@ -41,21 +41,22 @@ def write(path, data, mode=0o644):
 
 
 class Fixture:
-    def __init__(self):
+    def __init__(self, link_body=None, decode_body=None):
         self.dir = tempfile.mkdtemp(prefix='carlife-run-')
         self.state = os.path.join(self.dir, 'state')
         os.makedirs(self.state, exist_ok=True)
         for name in ('run.sh', 'find-phone.sh'):
             shutil.copyfile(os.path.join(KIT, name), os.path.join(self.dir, name))
         write(os.path.join(self.dir, 'crop.json'), '{}\n')
-        # The link records its argv, then stays alive; the decoder dies at
-        # once, which is what a unit without MSDK looks like.
-        write(os.path.join(self.dir, 'carlife-link'),
-              '#!/bin/sh\n'
-              'printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
-              'sleep 8\n', 0o755)
-        write(os.path.join(self.dir, 'carlife-decode'),
-              '#!/bin/sh\nexit 7\n', 0o755)
+        # Defaults: the link records its argv and stays alive, the decoder
+        # dies at once, which is what a unit without MSDK looks like.
+        if link_body is None:
+            link_body = ('printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
+                         'sleep 8\n')
+        if decode_body is None:
+            decode_body = 'exit 7\n'
+        write(os.path.join(self.dir, 'carlife-link'), '#!/bin/sh\n' + link_body, 0o755)
+        write(os.path.join(self.dir, 'carlife-decode'), '#!/bin/sh\n' + decode_body, 0o755)
         # Git Bash honours chmod on its mounts; do it through sh as well.
         subprocess.run(['sh', '-c', 'chmod +x "$1" "$2"', 'sh',
                         posix(os.path.join(self.dir, 'carlife-link')),
@@ -127,6 +128,72 @@ def main():
           repr(f.argv().replace('\n', ' ')))
     check('run.txt says discovery is the source', 'auto discovery' in f.read('run.txt'))
     check('link.txt still survives', f.read('link.txt').strip() == 'state: sentinel')
+    f.close()
+
+    # 3. the stream itself crosses from link to decoder
+    #
+    # 0.7.1 shipped link and decode as two sibling subshells with no pipe
+    # between them. The decoder's stdin was the launcher's (on the unit:
+    # /dev/null), so it exited rc 2 "stream ended" instantly and the car
+    # showed only that. Every older check passed anyway, because the mock
+    # decoder never read stdin. This one sends real bytes and looks for them.
+    payload = 'CARLIFE-STREAM-OK\n'
+    f = Fixture(link_body='printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
+                          "printf 'CARLIFE-STREAM-OK\\n'\n"
+                          'sleep 3\n',
+                decode_body='head -c %d > "$MOCK_DIR/decode.in"\nexit 0\n' % len(payload))
+    r = f.run()
+    got = ''
+    try:
+        with open(os.path.join(f.dir, 'decode.in'), 'rb') as fh:
+            got = fh.read().decode('latin-1')
+    except OSError:
+        pass
+    check('link output reaches the decoder over the FIFO', got == payload, repr(got))
+    f.close()
+
+    # 4. when the decoder goes first the link is named, not the decoder
+    #
+    # The link is the half that owns the socket and the phone, so its death
+    # is the cause and the decoder's rc 2 is only the symptom. The launcher
+    # polls once a second; a link that dies just after a poll must still be
+    # what run.txt names.
+    f = Fixture(link_body='printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
+                          'sleep 1.5\nexit 3\n',
+                decode_body='exit 0\n')
+    r = f.run()
+    run = f.read('run.txt')
+    check('a late link death is still reported as the link', 'carlife-link exited (rc 3)' in run,
+          repr(run.replace('\n', ' | ')))
+    f.close()
+
+    # 5. the real cascade: the link goes away, the decoder reads EOF and exits 2
+    #
+    # This is exactly what the car showed in 0.7.1 - "carlife-decode exited
+    # (rc 2)" plus "stream ended" - except there the link was healthy and
+    # there was no pipe at all. Decode status 2 is the decoder saying "my
+    # stdin closed", so the link has to be the one named.
+    f = Fixture(link_body='printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
+                          'sleep 0.5\nexit 3\n',
+                decode_body='cat > /dev/null\nexit 2\n')
+    r = f.run()
+    run = f.read('run.txt')
+    check('decode rc 2 (stdin closed) blames the link', 'carlife-link exited (rc 3)' in run,
+          repr(run.replace('\n', ' | ')))
+    f.close()
+
+    # 6. a decoder that failed on its own must not be hidden behind the link
+    #
+    # The decoder exits 1 when there is no MSDK. Insisting on the link for
+    # every restart would turn that into "carlife-link exited (rc 141)" the
+    # moment the link's next write hits a closed pipe.
+    f = Fixture(link_body='printf "%s\\n" "$@" > "$MOCK_DIR/link.args"\n'
+                          'sleep 2\nexit 3\n',
+                decode_body='exit 1\n')
+    r = f.run()
+    run = f.read('run.txt')
+    check('decode rc 1 (no MSDK) names the decoder', 'carlife-decode exited (rc 1)' in run,
+          repr(run.replace('\n', ' | ')))
     f.close()
 
     print()

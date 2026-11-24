@@ -134,7 +134,8 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 - `decode.txt`: `frames` 增长、`errors: 0` → 解码成功
 - 应用主页面会把以上状态直接画出来，不用 SSH 也能定位卡在哪一步：
   「热点：已关联…（尚未获取 IP 租约）」= mgu-uplink 只关联成功；
-  「取流服务：反复重启 · carlife-decode exited (rc N)」= 解码器起不来；
+  「取流服务：反复重启 · carlife-decode exited (rc N)」= 先退出的是解码器；
+  `rc 2` 且下面一行写「取流链路已断开」时，是上游的 link 先没了，看「取流链路」那行；
   「取流服务：未检测到，请重装…」= 组件没装或服务没起来。
 - `run.sh` **不再删除** `link.txt`：0.5.0 每当 pipeline 有一半退出就删一次报告，
   车上只会看到"取流：尚未启动"，真实原因被抹掉。
@@ -177,6 +178,15 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
   `/lib/ld-linux-x86-64.so.2`。现在三重防护：`build.sh` 关掉路径改写（改用相对路径
   以免连带破坏其它参数）、`elf_check.py` 解析 `PT_INTERP` 精确比对、`test_link.py`
   直接校验仓库里这三个二进制，坏文件进不了提交。
+- **`run.sh` 用 FIFO 连接两半，不是两个独立 subshell**：0.7.0/0.7.1 为了分别记录
+  各自的退出码，把原来的 `link | decode` 拆成两个并列的 subshell，管道也就没了：
+  `carlife-link` 把流写进启动脚本自己的 stdout（进 journal），`carlife-decode` 读的
+  是启动脚本的 stdin（在车机上就是 `/dev/null`），于是它一启动就 `read` 到 EOF、
+  `rc 2` 退出，屏幕显示「反复重启 · carlife-decode exited (rc 2)」+「解码：stream
+  ended」——而 link 那边其实还在正常拨号、还在写字句通顺的报告。真崩的是管道，不是
+  解码器。现在用 `$DIR/stream.fifo` 把两端接回去（`open()` 会等对端就位，所以不会
+  出现半边先跑），两半仍各自写 `.rc`，`run_sh_test.py` 里加了"字节必须真的送达"
+  的用例把它钉住。
 - **车型**：解码依赖车机自带的 Intel MSDK 2017（`libmfxhw64.so` API 1.24）+ libva；若车型不同可能缺失（install.sh 的 selftest 会报告）。
 - **网络白名单依赖 mgu-uplink**：`carlife-link` 降到 uid 65534 才能从车机 WiFi 发包；这依赖 Store 在装本组件时写好 `uids.d/carlife-wireless`。若白名单没写进去，link 会连不上手机——按上面"第一步"检查该文件。
 

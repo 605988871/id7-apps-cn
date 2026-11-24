@@ -339,6 +339,24 @@ mgu.run({
                 (!lr || mtime(RUN_TXT) >= mtime(LINK_TXT) - 2000);
             if (crashed) {
                 lines.push('取流服务：反复重启 · ' + (rr.detail || '原因未知'));
+                /* run.txt only knows which half exited, not why. link.txt is
+                 * the report the linker writes while it runs, so it still
+                 * holds the reason the stream stopped ("no phone on the
+                 * network", a refused handshake). Without it the screen can
+                 * only name a symptom - which is how a launcher that never
+                 * connected the two halves looked like a decoder bug. */
+                if (lr && lr.error && lr.error !== 'none') {
+                    lines.push('取流错误：' + lr.error);
+                } else if (lr) {
+                    /* "streaming" is the state the link had a moment before it
+                     * died; repeating it beside "反复重启" would contradict
+                     * itself. Only a state that says something is wrong is
+                     * worth a line here. */
+                    const st = LINK_STATE_ZH[(lr.state || '').trim()];
+                    if (st && (lr.state || '').trim() !== 'streaming') {
+                        lines.push('取流链路：' + st);
+                    }
+                }
             } else if (lr) {
                 lines.push(LINK_STATE_ZH[(lr.state || '').trim()] || ('取流：' + lr.state));
                 if (lr.error && lr.error !== 'none') lines.push('取流错误：' + lr.error);
@@ -360,7 +378,19 @@ mgu.run({
             }
             const dr = readKV(DECODE_TXT);
             if (dr) {
-                if (dr.state && dr.state !== 'starting') lines.push('解码：' + dr.state);
+                /* The decoder's state is the last line it noted, which is an
+                 * English sentence from the C side. The one the user actually
+                 * meets is the cascade after the link goes away; say that in
+                 * Chinese, and leave anything unknown in its original words -
+                 * a wrong translation would be worse than none. */
+                const DS_ZH = {
+                    'stream ended, exiting for service restart':
+                        '取流链路已断开，等待服务重启',
+                    'stream ended':
+                        '取流链路已断开，等待服务重启'
+                };
+                const ds = DS_ZH[(dr.state || '').trim()] || dr.state;
+                if (ds && ds !== 'starting') lines.push('解码：' + ds);
                 if (dr.error && dr.error !== 'none') lines.push('解码错误：' + dr.error);
             }
             return lines;

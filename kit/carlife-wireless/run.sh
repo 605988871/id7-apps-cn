@@ -113,9 +113,31 @@ fi
 # some shells, which used to leave this launcher spinning forever.
 rm -f "$DIR/link.rc" "$DIR/decode.rc" "$DIR/link.pid" "$DIR/decode.pid" 2>/dev/null || true
 
+# The two halves are separate subshells (each has to record its own exit
+# status), and that is exactly how 0.7.1 shipped with no pipe between them:
+# the link wrote the stream to the launcher's stdout, the decoder read the
+# launcher's stdin, and on the unit that stdin is /dev/null. The decoder
+# therefore exited with rc 2 "stream ended" before the first frame existed,
+# while the link went on dialling the phone and writing a healthy report -
+# the car could only show the symptom. A FIFO puts the pipe back and still
+# keeps both exit statuses: open() blocks until the other end is there, so
+# neither half can start before the other is ready.
+FIFO="$DIR/stream.fifo"
+rm -f "$FIFO" 2>/dev/null || true
+# stderr is left alone on purpose: mkfifo's own reason goes to the journal,
+# the summary goes to the screen.
+if ! mkfifo "$FIFO"; then
+    write_run 'restarting' "cannot create $FIFO with mkfifo - no pipeline possible"
+    echo "carlife-wireless: mkfifo $FIFO failed" >&2
+    exit 4
+fi
+# The link opens its end as root and drops to LINK_UID inside the binary, so
+# the mode only matters if that ever changes; it costs nothing to be right.
+chmod 0666 "$FIFO" 2>/dev/null || true
+
 ( set +e
   "$LINK" run "$@" --port "$PORT" --seconds 0 \
-    --video - --report "$DIR/link.txt" --ctl 7399 --drop-uid "$LINK_UID" &
+    --video - --report "$DIR/link.txt" --ctl 7399 --drop-uid "$LINK_UID" > "$FIFO" &
   child=$!
   printf '%s\n' "$child" > "$DIR/link.pid"
   trap 'kill "$child" 2>/dev/null || true' TERM INT
@@ -123,7 +145,7 @@ rm -f "$DIR/link.rc" "$DIR/decode.rc" "$DIR/link.pid" "$DIR/decode.pid" 2>/dev/n
   printf '%s\n' "$?" > "$DIR/link.rc" ) &
 link_pid=$!
 ( set +e
-  "$DECODE" --stdin --dir "$DIR" &
+  "$DECODE" --stdin --dir "$DIR" < "$FIFO" &
   child=$!
   printf '%s\n' "$child" > "$DIR/decode.pid"
   trap 'kill "$child" 2>/dev/null || true' TERM INT
@@ -147,11 +169,31 @@ done
 # Name the half that died and its exit status: "decoder exited rc=1" on the
 # car's screen tells us the MSDK is unavailable, which no amount of waiting
 # for a phone address would have fixed.
+#
+# Which half FAILED is not the same as which half wrote its .rc first, and
+# with a real pipe between them the cascade is the normal case: the decoder
+# exits 2 exactly when its stdin closes (the link is gone), and any other
+# status - 1 for no MSDK, no /dev/dri - is the decoder's own fault. Only in
+# the second case did the decoder kill the stream; in the first the link did,
+# and the link dying can also take the decoder down with it. So decode 0 and
+# 2 mean "upstream ended" and everything else means "the decoder broke".
+# When the decoder went first, give the link a second to record its own
+# status, otherwise a link that died just after the launcher's one-second
+# poll would still be reported as a decoder failure.
 detail='a pipeline stage ended'
-if [ -f "$DIR/link.rc" ]; then
-    detail="carlife-link exited (rc $(head -1 "$DIR/link.rc" 2>/dev/null))"
-elif [ -f "$DIR/decode.rc" ]; then
-    detail="carlife-decode exited (rc $(head -1 "$DIR/decode.rc" 2>/dev/null))"
+drc=''
+lrc=''
+if [ -f "$DIR/decode.rc" ]; then drc=$(head -1 "$DIR/decode.rc" 2>/dev/null); fi
+if [ -n "$drc" ] && [ "$drc" != 0 ] && [ "$drc" != 2 ]; then
+    detail="carlife-decode exited (rc $drc)"
+else
+    if [ ! -f "$DIR/link.rc" ]; then sleep 1; fi
+    if [ -f "$DIR/link.rc" ]; then lrc=$(head -1 "$DIR/link.rc" 2>/dev/null); fi
+    if [ -n "$lrc" ]; then
+        detail="carlife-link exited (rc $lrc)"
+    elif [ -n "$drc" ]; then
+        detail="carlife-decode exited (rc $drc, stream ended)"
+    fi
 fi
 
 write_run 'restarting' "$detail"
