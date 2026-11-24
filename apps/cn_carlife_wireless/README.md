@@ -1,6 +1,6 @@
 # CarLife 无线投屏（cn_carlife_wireless）
 
-把手机百度 CarLife 的**完整画面**通过 WiFi 热点投到 iDrive 7/8 中控屏，并支持触摸回传。
+把手机百度 CarLife 的**完整画面**通过 WiFi 热点投到 iDrive 7/8 中控屏。目前是**只显示**：触摸回传的代码在，但这条显示通路（upstream 方言的像素图）本身放弃触摸 claim，见文末。
 
 ## 和旧方案的区别
 
@@ -8,42 +8,30 @@
 
 本方案**完全不碰原车 CarLife、不碰 USB**：
 - 手机开热点，运行百度 CarLife（不是 vivo 智能车载，不需要蓝牙配对）
-- **在本应用内直接扫描并连上该热点**（复用 `mgu-uplink`，不用先打开 MGU 商店；见下）
+- **热点在 MGU 商店的 Wi-Fi 页连接**：本应用没有 Wi-Fi 界面，也不该有（见下）
 - 一个独立的原生链路连到手机的 6 个 TCP 端口，握手、取 H.264 流、解码、显示
 - 原车 `carlife` 进程始终没有被触碰
 
-## 在应用内连热点：复用 MGU Store 的 mgu-uplink（关键）
+## 热点由 MGU 商店连接（本应用不做 Wi-Fi 界面）
 
-连热点这一步不用重复造轮子：MGU Store 的「设置 → Wi-Fi」页面背后的
-`mgu-uplink` 已经解决了 iDrive 7 上最棘手的部分——
+iDrive 7 的 BCM4359 只有 `wlan0` 一个 station 接口，车的 `wpa_supplicant` 用它挂热点、
+跑无线 CarPlay。MGU 商店的「设置 → Wi-Fi」背后的 `mgu-uplink` 已经把这件最难的事做完了：
+通过 D-Bus 在同一个接口上 `AddNetwork`（`id_str=mgu-uplink`）加入手机热点，不打断原车
+连接，并把租约写进 `/run/mgu-uplink/lease.json`。**两个地方都能连热点只会互相抢
+`wlan0`**，所以 0.7.9 起本应用把 Wi-Fi 界面整块删了：连热点只走商店。
 
-- iDrive 7 的 BCM4359 芯片只有 `wlan0` 一个 station 接口，车的
-  `wpa_supplicant` 用它挂热点和无线 CarPlay。`mgu-uplink` 通过 D-Bus 在这个
-  接口上 `AddNetwork`（标记 `id_str=mgu-uplink`）加入手机热点，**不打断原车
-  热点和无线 CarPlay**，网络只在内存里、退出即移除。
-- 它把连上后的租约写到 `/run/mgu-uplink/lease.json`，其中 `router` 就是热
-  点网关（= 手机 IP）。本组件的 `run.sh` 直接读这个值，**不需要手填 IP**。
-- 它的防火墙只允许白名单 uid 从 WiFi 接口发包，root 永远不在白名单里。
-  因此 `carlife-link` 用 `--drop-uid 65534` 在二进制内降到该 uid，
-  `component.json` 用 `internet:true` + `uids:[65534]` 让 Store 把该 uid 加进
-  白名单（写入 `/var/opt/mgu-uplink/uids.d/carlife-wireless`）。解码器不联网，
-  保持 root 以用车的 MSDK/GPU。
+本应用只从 uplink 拿两样东西，都不需要改它：
 
-**但 Store 的 Wi-Fi 页不能直接从别的 app 调用**：`ctl.sock` 是 0600 root-only，
-而 updater 只把 Wi-Fi 请求转发给 Store app（要它的 secret）。因此本组件带了
-一个 root 常驻的 `wifi-bridge`：它监听 `/dev/shm/carlife-wireless/wifi.sock`
-（0660，`tm_oap_app` 组），只放行 `wifi-enable / wifi-5ghz / wifi-scan /
-wifi-connect / wifi-forget` 五个操作，原样转发到 uplink 的 `ctl.sock`。
-`prefer`、`usb-phone` 会动到原车连接优先级，刻意不暴露。
+- `lease.json` 的 `router`（= 手机 IP）与 `status.json` 的 `wifi` 状态——`run.sh` 用前者
+  找手机，状态页用后者告诉用户"热点还没连"还是"连了但没租约"；
+- 防火墙白名单：`mgu-uplink` 只让白名单 uid 从 WiFi 发包，root 永远不在里面。所以
+  `carlife-link` 用 `--drop-uid 65534` 在二进制内降到该 uid，`component.json` 用
+  `internet:true` + `uids:[65534]` 让 Store 把该 uid 写进白名单。解码器不联网，保持
+  root 以用车的 MSDK/GPU。
 
-app 的「连热点」页读公开的 `/run/mgu-uplink/status.json` 拿扫描结果，密码优
-先用车机原生键盘（与 Store 同一个 SOME/IP speller）输入，取不到时用「设置 →
-热点密码」里预填的值。连上手机热点后 `lease.json` 的 `router` 就是手机 IP，
-取流服务自动读取，不用填地址。
-
-前提：车机已装 MGU Store 且 `mgu-uplink` 组件在运行。未满足时仍可在 app
-设置里手填手机 IP 作为回退，但需车机另有可用的 WiFi 客户端连接。Store 的
-「设置 → Wi-Fi」页始终可用，作为本应用内连接失败时的第二条路。
+`wifi-bridge`（root 代理，转发 enable/scan/connect 给 uplink）与 `carlife-wifi.service`
+仍在组件里，但本应用已经不再调用它们；保留是因为它们不占资源、以后要做独立 Wi-Fi 页
+时不用重写。
 
 ## 可行性：已在 PC 上用真机验证（2026-11-23）
 
@@ -63,10 +51,8 @@ app 的「连热点」页读公开的 `/run/mgu-uplink/status.json` 拿扫描结
 | `kit/carlife-wireless/carlife-decode` | 从 stdin 读流，用车的 Intel MSDK 硬解，输出 CLMF 帧到 unix socket |
 | `kit/carlife-wireless/run.sh` | 把上面两个用管道串起来，任一退出则整组重启 |
 | `kit/carlife-wireless/carlife-wireless.service` | systemd 常驻，未连手机时循环重试 |
-| `kit/carlife-wireless/wifi-bridge` | root 代理：app 的 Wi-Fi 请求 → mgu-uplink 的 root-only socket |
-| `kit/carlife-wireless/carlife-wifi.service` | 独立的常驻 unit：未连热点时也能从 app 连 |
-| `apps/cn_carlife_wireless/wifi_page.js` | 应用内「连热点」页：扫描、选网、密码、连接状态 |
-| `apps/cn_carlife_wireless/` | JS app：读帧 → 显示到中控屏 → 触摸回传 |
+| `kit/carlife-wireless/wifi-bridge` | root 代理：Wi-Fi 请求 → mgu-uplink 的 root-only socket（本应用已不再调用） |
+| `apps/cn_carlife_wireless/` | JS app：读帧 → 转 RGBA → 铺满中控屏（触摸回传代码保留，未生效） |
 
 ## 安装
 
@@ -86,16 +72,13 @@ app 的「连热点」页读公开的 `/run/mgu-uplink/status.json` 拿扫描结
 ## 使用
 
 1. 手机开热点，打开**百度 CarLife**，停在等待连接界面、保持屏幕点亮
-2. 打开「CarLife 无线投屏」应用，点右上角**「连热点」**
-   - 第一次：点「开启 Wi-Fi」→「扫描」→ 点手机热点名称 → 用车机键盘输密码
-   - 已经连过（已保存网络）：直接点热点名称即可，不用再输密码
-   - 键盘调不出来时：在「设置 → 热点密码」预填密码后再点热点
-3. 连接成功后应用自动回到画面；service 从 `lease.json` 读到手机 IP，自动连手机取流
-4. 画面出现后，触摸中控屏即可操作手机 CarLife
+2. 在 **MGU 商店 → 设置 → Wi-Fi** 里连上手机热点（第一次要输密码，之后自动连）
+3. 打开「CarLife 无线投屏」：service 从 `lease.json` 读到手机 IP 自动取流，画面直接铺满
+4. 若是先开应用、后连热点也没有关系：link 每秒看一次车机自己的接口地址，网段一变就
+   立刻在新网段重找手机
 
-> 也可以在 **MGU 商店 → 设置 → Wi-Fi** 连热点，效果完全相同。回退：若车机未装
-> `mgu-uplink`，可在 app「设置 → 手机热点地址」手填手机 IP，写到
-> `/dev/shm/carlife-wireless/host`；但前提是车机此时已有其它方式连上该热点。
+> 回退：若车机没装 `mgu-uplink`，可把手机 IP 写到 `/dev/shm/carlife-wireless/host`
+> （本应用不再提供设置项），前提是车机已用别的办法连上该热点。
 
 ## 上车验证清单（按成本从低到高）
 
@@ -114,7 +97,7 @@ cat /var/opt/mgu-uplink/uids.d/carlife-wireless   # 应为 65534（Store 安装�
   校验不过就落到局域网发现；0.7.6 起 `carlife-link` **每秒看一眼车机自己的接口地址**，
   DHCP 一换网段就立刻丢掉旧连接、在新网段重扫（`link.txt` 的 `net:` 记车机当前地址，
   `scan:` 记扫过哪些 /24）。所以换热点后 1～3 秒就能用新地址，不必等拨号超时累积。
-- 在车机 UI 上：底栏的「连接热点」打开原生热点列表，能看到手机热点、点它输密码、状态变「已连接」
+- 在车机 UI 上：**MGU 商店 → Wi-Fi** 连热点；本应用的状态页只显示它读到的东西
 - `status.json` 的 `wifi.link` 若为 `unavailable`，看 `error`——通常是车的 Wi-Fi 被关掉或车自身占用 `wlan0`
 - 本项目不需要车机"能否做 STA"的额外前提：`mgu-uplink` 已经通过车的 `wlan0` 解决
 
@@ -182,7 +165,29 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 本机任何 /24 的提示地址只等两轮拨号就被扫网替换——这正好覆盖"在设置里手填过旧热点 IP"
 的情况。`link.txt` 多了一行 `net:`，记录车机当前地址，用来确认换网真的生效。
 
-**Wi-Fi 界面为什么是车机原生菜单（0.7.7）**
+**0.7.9：删掉应用内的 Wi-Fi 界面，并把画面铺满**
+
+用户的决定：热点统一在 MGU 商店里连。于是 `WIFI` 菜单、底栏的「连接热点」、
+`wifi_page.js`、自动重连、`host` / `wifi_ssid` / `wifi_psk` 三个设置项全部删除；
+没有画面时画布上只剩一张状态页，第一行就写「请在 MGU 商店里连接手机热点」。
+
+同一版修掉"等半天出第一帧、然后定格、而且没铺满"：
+
+- **画布从 1600×720 改成手机画面的原始比例 1280×480**。1600×720 是一层"包装"，
+  每帧都要把整块 4.6 MB 画布重新上传；现在画布就是那一帧（2.4 MB），渲染器再按
+  1836/1280 = 1.434 倍放大到屏幕的应用区（84..1920 × 0..720），所以画面**铺满**，
+  只留 HMI 的返回箭头列（84 px）和上下各 16 px。
+- **解码器输出改成 1280×480**（`crop.json` 的 `mapW/mapH`，与 1920×720 等比 1.5 倍）。
+  之前是 1920×720 → stretch 到 1280×720，把手机的 8:3 界面横向压扁了 1.5 倍，所以
+  圆形图标看起来是竖长的椭圆。
+- **只在新帧到达时重绘**。原来循环跟着渲染器的 tick 跑，60 次/秒把**同一张**画布传过去
+  （像素图的 `ver` 每次都变，去重永远命中不了），app 的事件循环全花在拷贝上，取流
+  socket 饿死——`decode.txt` 里 `drops=1598+0`（1599 帧只读出 1 帧）就是它。现在
+  静止画面每秒只发一次，视频按到达的帧数发。
+- **kit 侧加了背压**（`display.js` 的 `_send`）：渲染器还没 TICK 回上一帧就不再发新的，
+  一帧在途。慢渲染器只会让帧率下降，不会再堆出几百 MB 的 socket 队列。
+
+**Wi-Fi 界面为什么曾经是车机原生菜单（0.7.7，历史）**
 
 0.7.6 及更早把"连接热点"画成画布中央一个蓝色大按钮，配上自绘的热点列表。**那个按钮在
 车上永远点不动**：画面用 renderd 的像素图（op 18）送屏，而像素图只在 upstream 方言里有，

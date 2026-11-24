@@ -770,6 +770,14 @@ class Display {
          * picture freezes on its first frame while the app keeps decoding into it. The version
          * each image is at is part of what changed, so it belongs in the comparison. */
         const ik = this._imageKey(out);
+        /* The renderer answers every frame with a TICK. Sending the next one
+         * before that reply only queues pixels in the socket - and a video
+         * frame is megabytes. The app then spends its event loop copying them
+         * and the socket that carries the phone's own frames goes unread: on
+         * the car that was 1598 dropped frames out of 1599 behind a picture
+         * that never moved. One frame in flight, no more. (A lost TICK must
+         * not freeze the app for good, hence the timeout.) */
+        if (!force && this.gpu.waiting && now - this.lastSent < 500) return;
         if (!force && ik === this.lastImageKey && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
         this.lastSent = now;
         this.lastImageKey = ik;

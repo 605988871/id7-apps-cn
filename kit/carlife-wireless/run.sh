@@ -14,7 +14,7 @@
 #       and writes the raw Annex-B H.264 to stdout.
 #   carlife-decode --stdin --dir /dev/shm/carlife-wireless
 #       reads that stream from stdin, decodes with the unit's MSDK, and writes
-#       CLMF frames to /dev/shm/carlife-wireless/live.sock (1280x720 per crop.json).
+#       CLMF frames to /dev/shm/carlife-wireless/live.sock (1280x480 per crop.json).
 #
 # The link's ctl socket (127.0.0.1:7399) is where the app sends taps back to
 # the phone. Nothing here touches the car's own carlife process, so this cannot

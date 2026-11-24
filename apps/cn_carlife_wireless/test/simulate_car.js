@@ -8,21 +8,21 @@
  *      placeholder `real=false`.
  *   B. main.js ignores the placeholder (the connect button stays up) and only
  *      shows the picture once a real frame arrives.
- *   C. Touch routing: no picture -> a tap on the button opens the Wi-Fi page;
- *      every other tap is swallowed, nothing leaks.
+ *   C. Touch routing: with no picture every tap is swallowed, nothing leaks.
+ *   D. app.json and the code agree: no Wi-Fi UI (the Store owns the hotspot),
+ *      and the canvas is the size the decoder actually emits.
  *
  * The car-only pieces are stubbed: kit/mgu (the OAP runtime), kit/record
- * (setImage), wifi_page (which needs the HMI speller), and the unix socket the
- * decoder writes (Windows has no AF_UNIX). Everything under test is the real
- * shipping code.
+ * (setImage), and the unix socket the decoder writes (Windows has no
+ * AF_UNIX). Everything under test is the real shipping code.
  *
  *   node test/simulate_car.js
  */
 const Module = require('module');
 const assert = require('assert');
 
-const W = 1280, H = 720;
-const ATLAS = W * (H + H / 2);              /* 1382400 bytes, the decoder's frame */
+const W = 1280, H = 480;
+const ATLAS = W * (H + H / 2);              /* 921600 bytes, the decoder's frame */
 const MAGIC = 0x464d4c43;
 
 /* ------------------------------------------------------------------ stubs -- */
@@ -44,11 +44,6 @@ const mockNet = {
         };
     },
 };
-
-/* The real Wi-Fi page: its bind() is what makes the HMI rows pressable, and
- * that is the half of the app this file now has to prove. It only touches the
- * unix socket on a click, so loading it here is safe. */
-
 
 /* The real source, minus the unix socket it listens on. */
 const RealCarlifeSource = require('../carlife_source').CarlifeSource;
@@ -148,25 +143,38 @@ function check(name, cond) {
 }
 
 /* --------------------------------------------------------------------- D -- */
-/* The menu app.json declares and the rows this app fills must be one set. A
- * mistyped component name cannot be seen on the car: ui.comp() returns null,
- * ui.onClick() binds to nothing, and the row simply never answers. */
+/* app.json and the code must agree, and the app must not grow a second Wi-Fi
+ * UI: the hotspot is MGU Store's, and two places that both join one wlan0
+ * fight each other (0.7.7's in-app page could not even be pressed - see the
+ * note at the top of main.js). */
 (function () {
+    const fs = require('fs');
+    const path = require('path');
     const spec = require('../app.json');
-    const { MAX_ROWS } = require('../wifi_page');
-    const scr = (n) => (spec.screens || []).find((s) => s.name === n) || {};
-    const wifi = scr('WIFI');
-    const names = (wifi.items || []).map((it) => it[1]);
-    check('D1 the Wi-Fi page is an HMI menu state', wifi.kind === 'menu');
-    check('D2 the main screen has the bar button',
-        (scr('MAIN').buttons || []).some((b) => b[0] === 'BTN_WIFI'));
-    ['BTN_WIFI_TOGGLE', 'BTN_WIFI_SCAN', 'BTN_WIFI_PSK', 'BTN_WIFI_BACK', 'WIFI_STATUS', 'WIFI_NOTE']
-        .forEach((n) => check('D3 the menu declares ' + n, names.indexOf(n) >= 0));
-    const nets = names.filter((n) => /^NET_\d+$/.test(n));
-    check('D4 one menu row per MAX_ROWS (' + MAX_ROWS + ')', nets.length === MAX_ROWS,
-        nets.length + ' rows declared');
-    check('D5 the rows are in order', nets.join(',') ===
-        Array.from({ length: MAX_ROWS }, (_, i) => 'NET_' + (i + 1)).join(','));
+    const scr = (n) => (spec.screens || []).find((x) => x.name === n) || {};
+    const main = scr('MAIN');
+    check('D1 no Wi-Fi screen in the app',
+        !(spec.screens || []).some((x) => x.name === 'WIFI'),
+        (spec.screens || []).map((x) => x.name).join(','));
+    check('D2 no hotspot button on the bar',
+        !(main.buttons || []).some((b) => b[0] === 'BTN_WIFI'));
+    check('D3 MAIN is a chrome-less canvas the app fills',
+        main.kind === 'canvas' && main.chrome === false);
+
+    /* The canvas IS the phone's frame: if app.json and crop.json disagree, the
+     * decoder's picture is drawn into the wrong rect (or not at all). */
+    const crop = JSON.parse(fs.readFileSync(
+        path.join(__dirname, '../../../kit/carlife-wireless/crop.json'), 'utf8'));
+    check('D4 the canvas is the size the decoder emits (' + crop.mapW + 'x' + crop.mapH + ')',
+        main.src.w === crop.mapW && main.src.h === crop.mapH, JSON.stringify(main.src));
+    check('D5 the canvas is 8:3, the shape the phone lays CarLife out in',
+        Math.abs(main.src.w / main.src.h - 8 / 3) < 0.02, main.src.w + 'x' + main.src.h);
+    /* ...and main.js must ask the source for exactly that many bytes. */
+    const code = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    const m = /const SRC_W = (\d+), SRC_H = (\d+);/.exec(code);
+    check('D6 main.js decodes frames of that size too',
+        !!m && +m[1] === crop.mapW && +m[2] === crop.mapH, m && m.slice(1).join('x'));
+    check('D7 the app has no Wi-Fi code left', !/wifi_page|WifiPage|BTN_WIFI/.test(code));
 })();
 
 /* D6: every Chinese character this app can put on the canvas must exist in the
@@ -181,7 +189,7 @@ function check(name, cond) {
     const atlas = JSON.parse(fs.readFileSync(
         path.join(__dirname, '../../../kit/runtime/fonts/cjk.json'), 'utf8'));
     const have = new Set(Object.keys(atlas.sizes[0].glyphs).map(Number));
-    const sources = ['main.js', 'wifi_page.js', 'app.json']
+    const sources = ['main.js', 'app.json']
         .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
     const missing = [...new Set([...sources].filter((ch) =>
         ch.codePointAt(0) > 0x2000 && !have.has(ch.codePointAt(0))))];
@@ -220,17 +228,18 @@ function check(name, cond) {
     await impl.start(ctx);
     assert(renderFn && touchHandler, 'loop/onTouch were not registered');
 
-    /* B1: no frames yet -> button, no picture. */
+    /* B1: no frames yet -> the status page, no picture, and nothing drawn
+     * that looks like it could be pressed (the HMI owns every tap here). */
     let c = render();
-    check('B1 no frame: button shown, no picture',
-        c.image === 0 && c.roundRect >= 1 &&
-        c.texts.some((t) => t.includes('连接热点') || t.includes('连接中')));
+    check('B1 no frame: status page, no picture, no fake button',
+        c.image === 0 && c.roundRect === 0 &&
+        c.texts.some((t) => t.includes('MGU 商店')));
 
-    /* B2: placeholder frame -> button STILL shown (the 0.5.0 fix). */
+    /* B2: placeholder frame -> status page STILL shown (the 0.5.0 fix). */
     lastSource.emit('frame', Buffer.alloc(ATLAS, 128), 0, false);
     c = render();
-    check('B2 placeholder frame ignored, button stays',
-        c.image === 0 && c.roundRect >= 1);
+    check('B2 placeholder frame ignored, status page stays',
+        c.image === 0 && c.texts.some((t) => t.includes('MGU 商店')));
 
     /* C: diagnose() must name the stage that is actually stuck. 0.6.0 added
      * the launcher (run.txt) and install (boot.txt) reports, and distinguishes
@@ -342,28 +351,12 @@ function check(name, cond) {
     const swallowed = touchHandler(1, 30, 30) === true && touchHandler(1, 1500, 700) === true;
     check('B3 other taps swallowed, nothing leaks', swallowed);
 
-    /* B4: the HMI bar's own "连接热点" opens the WIFI menu state.
-     *
-     * A drawn button could never do this on the car: the picture needs pixel
-     * images, and a connection that sends them cannot claim touches (CLAIM
-     * shares IMAGE's message number), so every tap goes to the HMI. The app
-     * used to draw a big blue button that no finger could ever press - which is
-     * exactly what "点了没反应" looked like. The bar button is an HMI component
-     * and does get its click (cn_doom plays on a screen of this kind). */
-    uiState.opened.length = 0;
-    const wifiClick = uiState.clicks['BTN_WIFI'];
-    check('B4 BTN_WIFI is bound as an HMI button', typeof wifiClick === 'function');
-    if (wifiClick) wifiClick();
-    check('B4 it opens the WIFI menu state', uiState.opened.indexOf('WIFI') >= 0,
-        uiState.opened.join(','));
-    const wfi = uiState.clicks['NET_1'];
-    check('B4 the menu rows are bound too (NET_1)', typeof wfi === 'function' &&
-        typeof uiState.clicks['NET_8'] === 'function' &&
-        typeof uiState.clicks['BTN_WIFI_SCAN'] === 'function');
-    check('B4 the menu was painted (status line filled)',
-        typeof uiState.texts['WIFI_STATUS'] === 'string');
-    /* No scan result yet: the eight row slots must not show as empty buttons. */
-    check('B4 unused network rows are hidden', uiState.visible['NET_1'] === false);
+    /* B4: nothing is bound to a hotspot button or a hotspot row any more -
+     * the app has no Wi-Fi UI at all (MGU Store owns the uplink). */
+    check('B4 no hotspot button is bound', typeof uiState.clicks['BTN_WIFI'] !== 'function');
+    check('B4 no hotspot row is bound',
+        Object.keys(uiState.clicks).every((k) => !/^NET_|^BTN_WIFI/.test(k)),
+        Object.keys(uiState.clicks).join(','));
 
     /* B5: real frame -> picture shown, button gone. */
     lastSource.emit('frame', Buffer.alloc(ATLAS, 128), 1, true);

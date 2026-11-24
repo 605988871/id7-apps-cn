@@ -4,8 +4,8 @@
   "mapLeft": 0,
   "mapRight": 0,
   "mapW": 1280,
-  "mapH": 720,
+  "mapH": 480,
   "mapFit": "stretch",
   "cardMode": "off",
-  "_comment": "Wireless edition: the whole phone frame, uncut, for the central display."
+  "_comment": "Wireless edition: the whole phone frame, uncut, at the canvas size the app draws (1280x480 = 8:3, scaled up by the renderer into the 1836x688 app area)."
 }
