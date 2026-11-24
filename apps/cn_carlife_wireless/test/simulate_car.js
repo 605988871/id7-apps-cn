@@ -45,15 +45,10 @@ const mockNet = {
     },
 };
 
-let wifiRendered = 0;
-let lastWifiPage = null;
-class MockWifiPage {
-    constructor(ctx, settings, onBack) { this.settings = settings; this.onBack = onBack; lastWifiPage = this; }
-    refresh() {}
-    connect(ssid, psk) { return Promise.resolve({ ok: true }); }
-    render() { wifiRendered++; }
-    touch() { return true; }
-}
+/* The real Wi-Fi page: its bind() is what makes the HMI rows pressable, and
+ * that is the half of the app this file now has to prove. It only touches the
+ * unix socket on a click, so loading it here is safe. */
+
 
 /* The real source, minus the unix socket it listens on. */
 const RealCarlifeSource = require('../carlife_source').CarlifeSource;
@@ -71,7 +66,6 @@ Module._load = function (request, parent, isMain) {
         if (request === 'net') return mockNet;
         if (request === './kit/mgu') return mockMgu;
         if (request === './kit/record') return mockRecord;
-        if (request === './wifi_page') return { WifiPage: MockWifiPage };
         if (request === './carlife_source') return { CarlifeSource: ControllableCarlifeSource };
     }
     return realLoad.call(this, request, parent, isMain);
@@ -96,8 +90,26 @@ let touchHandler = null;
 let renderFn = null;
 const store = {};
 
+/* The HMI side: only components can be pressed on the car (pixel images give
+ * up touch claims), so these handlers are the app's only way in. */
+const uiState = { clicks: {}, opened: [], visible: {}, texts: {} };
+const mockUi = {
+    image() { return 'MAIN_GFX'; },
+    comp() { return null; },                 /* the mock HMI has no components */
+    onClick(name, fn) { uiState.clicks[name] = fn; },
+    text(name, v) { uiState.texts[name] = v; return Promise.resolve(); },
+    cells(name, row, obj) { uiState.texts[name] = obj; return Promise.resolve(); },
+    visible(name, on) { uiState.visible[name] = !!on; return Promise.resolve(); },
+    enabled() { return Promise.resolve(); },
+    rows() { return Promise.resolve(); },
+    open(name) { uiState.opened.push(name); return Promise.resolve(); },
+    close(name) { uiState.opened.push('close:' + name); return Promise.resolve(); },
+    isVisible(name) { return uiState.opened[uiState.opened.length - 1] === name; },
+    onVisible() {},
+};
+
 const ctx = {
-    ui: { image() { return 'MAIN_GFX'; } },
+    ui: mockUi,
     settings: {
         get(k) { return store[k] !== undefined ? store[k] : ''; },
         set(k, v) { store[k] = v; },
@@ -134,6 +146,28 @@ function check(name, cond) {
     if (cond) { console.log('ok   ' + name); }
     else { failed++; console.error('FAIL ' + name); }
 }
+
+/* --------------------------------------------------------------------- D -- */
+/* The menu app.json declares and the rows this app fills must be one set. A
+ * mistyped component name cannot be seen on the car: ui.comp() returns null,
+ * ui.onClick() binds to nothing, and the row simply never answers. */
+(function () {
+    const spec = require('../app.json');
+    const { MAX_ROWS } = require('../wifi_page');
+    const scr = (n) => (spec.screens || []).find((s) => s.name === n) || {};
+    const wifi = scr('WIFI');
+    const names = (wifi.items || []).map((it) => it[1]);
+    check('D1 the Wi-Fi page is an HMI menu state', wifi.kind === 'menu');
+    check('D2 the main screen has the bar button',
+        (scr('MAIN').buttons || []).some((b) => b[0] === 'BTN_WIFI'));
+    ['BTN_WIFI_TOGGLE', 'BTN_WIFI_SCAN', 'BTN_WIFI_PSK', 'BTN_WIFI_BACK', 'WIFI_STATUS', 'WIFI_NOTE']
+        .forEach((n) => check('D3 the menu declares ' + n, names.indexOf(n) >= 0));
+    const nets = names.filter((n) => /^NET_\d+$/.test(n));
+    check('D4 one menu row per MAX_ROWS (' + MAX_ROWS + ')', nets.length === MAX_ROWS,
+        nets.length + ' rows declared');
+    check('D5 the rows are in order', nets.join(',') ===
+        Array.from({ length: MAX_ROWS }, (_, i) => 'NET_' + (i + 1)).join(','));
+})();
 
 /* --------------------------------------------------------------------- A -- */
 /* The source itself must tag placeholder vs real frames. */
@@ -276,15 +310,28 @@ function check(name, cond) {
     const swallowed = touchHandler(1, 30, 30) === true && touchHandler(1, 1500, 700) === true;
     check('B3 other taps swallowed, nothing leaks', swallowed);
 
-    /* B4: tap on the button (still no real picture) opens the Wi-Fi page. */
-    wifiRendered = 0;
-    const BTN = { x: (1600 - 440) / 2, y: (720 - 110) / 2 };
-    const ret = touchHandler(1, BTN.x + 220, BTN.y + 55);        /* button centre */
-    render();
-    check('B4 tap on button opens Wi-Fi page', ret === true && wifiRendered >= 1);
-
-    /* back to the main page so the picture test below sees the frame path. */
-    lastWifiPage.onBack();
+    /* B4: the HMI bar's own "连接热点" opens the WIFI menu state.
+     *
+     * A drawn button could never do this on the car: the picture needs pixel
+     * images, and a connection that sends them cannot claim touches (CLAIM
+     * shares IMAGE's message number), so every tap goes to the HMI. The app
+     * used to draw a big blue button that no finger could ever press - which is
+     * exactly what "点了没反应" looked like. The bar button is an HMI component
+     * and does get its click (cn_doom plays on a screen of this kind). */
+    uiState.opened.length = 0;
+    const wifiClick = uiState.clicks['BTN_WIFI'];
+    check('B4 BTN_WIFI is bound as an HMI button', typeof wifiClick === 'function');
+    if (wifiClick) wifiClick();
+    check('B4 it opens the WIFI menu state', uiState.opened.indexOf('WIFI') >= 0,
+        uiState.opened.join(','));
+    const wfi = uiState.clicks['NET_1'];
+    check('B4 the menu rows are bound too (NET_1)', typeof wfi === 'function' &&
+        typeof uiState.clicks['NET_8'] === 'function' &&
+        typeof uiState.clicks['BTN_WIFI_SCAN'] === 'function');
+    check('B4 the menu was painted (status line filled)',
+        typeof uiState.texts['WIFI_STATUS'] === 'string');
+    /* No scan result yet: the eight row slots must not show as empty buttons. */
+    check('B4 unused network rows are hidden', uiState.visible['NET_1'] === false);
 
     /* B5: real frame -> picture shown, button gone. */
     lastSource.emit('frame', Buffer.alloc(ATLAS, 128), 1, true);

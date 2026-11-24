@@ -11,19 +11,27 @@
  * normalised points.
  *
  * Flow (the simplest it can be):
- *   - no picture yet  -> one big "connect hotspot" button in the middle;
- *                         tapping it opens the Wi-Fi page (scan / pick / join).
- *   - hotspot joined   -> the button goes away and the CarLife picture shows.
+ *   - no picture yet  -> status lines and where to go: the HMI bar's own
+ *                        "连接热点" button (never a drawn one - see below).
+ *   - that button     -> opens the WIFI menu state: scan / pick / join, as
+ *                        native HMI rows, so every row can actually be pressed.
+ *   - hotspot joined   -> back to this page and the CarLife picture shows.
  *   - next launch      -> the remembered hotspot is joined automatically, so
  *                         the picture appears without touching anything.
  *
  * This app never starts the native helpers - a JS app cannot spawn processes.
  * The carlife-wireless service owns both and restarts them together.
  *
- * NOTE on touch: the iDrive 7 HMI keeps its own back column (left) and status
- * icons (top right). A tap there is claimed by the HMI, so every control here
- * lives in the middle of the canvas, and while there is no picture every tap
- * is swallowed by the app (never forwarded to the phone or leaked to the HMI).
+ * NOTE on touch, and why nothing here is drawn as a button: the picture is
+ * sent with renderd's pixel-image op, which only exists in the upstream
+ * dialect - and that dialect gives up touch claims (CLAIM shares IMAGE's
+ * message number), so the renderer routes every tap to the HMI instead. A
+ * drawn "connect hotspot" button was therefore a control that could never be
+ * pressed; on the car it looked like a dead app. The bar buttons and the WIFI
+ * menu are HMI components, which do get their clicks (cn_doom plays that way
+ * on a screen of this same kind). Turning taps on the picture into phone taps
+ * would need the native dialect, which cannot carry pixel images - so for now
+ * the picture is watch-only.
  *
  * Split out so each half can be checked on a desk:
  *   carlife_source.js  CLMF frames off the socket (with its own tests)
@@ -80,8 +88,17 @@ mgu.run({
         if (settings.onChange) settings.onChange(publishHost);   /* any settings change rechecks the host */
 
         /* ---------- Wi-Fi page (join the phone hotspot from here) ---------- */
-        let page = 'main';                  /* 'main' | 'wifi' */
-        const wifiPage = new WifiPage(ctx, settings, () => { page = 'main'; });
+        /* A menu state, not a drawn page: only HMI components receive taps on
+         * this kind of screen (see the note at the top). onBack closes it. */
+        const wifiPage = new WifiPage(ctx, settings, () => { try { ui.close('WIFI'); } catch (e) { /* gone */ } });
+        wifiPage.bind(ui);
+        ui.onClick('BTN_WIFI', () => { wifiPage.refresh(); wifiPage.paint(); ui.open('WIFI'); });
+        /* A scan's results land in status.json a second later, and the uplink
+         * can change link state on its own: repaint while the menu is up (the
+         * same polling cn_doom uses for its menu). */
+        const wifiTimer = setInterval(() => {
+            if (ui.isVisible && ui.isVisible('WIFI')) { wifiPage.refresh(); wifiPage.paint(); }
+        }, 2000);
 
         /* ---------- picture source ---------- */
         const source = new CarlifeSource({ w: SRC_W, h: SRC_H, fps: 30, sockPath: SOCK });
@@ -176,15 +193,11 @@ mgu.run({
             if (wait > 0) setTimeout(sendUp, wait); else sendUp();
         }
 
-        /* The one big "connect" button, dead centre, well inside the HMI's
-         * claimed touch area (away from the left back column and the top-right
-         * status icons). */
+        /* Where the HMI bar's "连接热点" button is described to the user. The
+         * drawn box is a signpost only: taps on this screen go to the HMI (see
+         * the note at the top), so it must not look pressable. */
         const BTN_W = 440, BTN_H = 110;
         const WIFI_BTN = { x: (W - BTN_W) / 2, y: (H - BTN_H) / 2, w: BTN_W, h: BTN_H };
-        function inWifiButton(x, y) {
-            return x >= WIFI_BTN.x && x <= WIFI_BTN.x + WIFI_BTN.w &&
-                y >= WIFI_BTN.y && y <= WIFI_BTN.y + WIFI_BTN.h;
-        }
 
         /* ---------- automatic reconnect of the remembered hotspot ---------- */
         let autoConnecting = false;
@@ -220,12 +233,12 @@ mgu.run({
                 autoMsg = msg;
             };
             bail = setTimeout(() => {
-                if (autoConnecting) settle('自动连接超时，点下方按钮手动连接');
+                if (autoConnecting) settle('自动连接超时，点下方「连接热点」手动选择');
             }, 15000);
             wifiPage.connect(ssid, psk).then((r) => {
-                settle((r && r.ok) ? '' : ('自动连接 ' + ssid + ' 失败，点下方按钮手动连接'));
+                settle((r && r.ok) ? '' : ('自动连接 ' + ssid + ' 失败，点下方「连接热点」手动选择'));
             }).catch(() => {
-                settle('自动连接 ' + ssid + ' 失败，点下方按钮手动连接');
+                settle('自动连接 ' + ssid + ' 失败，点下方「连接热点」手动选择');
             });
         }
         /* give carlife-wifi.service a moment to be up before the first attempt */
@@ -234,19 +247,11 @@ mgu.run({
         /* ---------- touch routing ---------- */
         if (ctx.onTouch) {
             ctx.onTouch((phase, x, y) => {
-                if (page === 'wifi') return wifiPage.touch(phase, x, y);
-                if (!haveFrame) {
-                    /* No picture: only the connect button acts, and the app
-                     * swallows every other tap so nothing leaks to the HMI. */
-                    if (phase === 1 && inWifiButton(x, y) && !autoConnecting) {
-                        /* Switch first, refresh second. The other order made one
-                         * throwing read swallow the tap: the page never changed
-                         * and the button looked dead. */
-                        page = 'wifi';
-                        try { wifiPage.refresh(); } catch (e) { /* the page says why */ }
-                    }
-                    return true;
-                }
+                /* Kept for the day the picture can carry touch (native dialect
+                 * with a video path). On the car this never fires: the renderer
+                 * cannot claim touches on a connection that sends pixel images,
+                 * so taps go to the HMI and reach the WIFI menu instead. */
+                if (!haveFrame) return true;
                 sendTouch(phase, x, y);
                 return true;                    /* the whole gesture belongs to the phone */
             });
@@ -256,10 +261,6 @@ mgu.run({
         const t = ctx.theme ? ctx.theme() : null;
         function render() {
             const cv = ctx.canvas(W, H).clear(t ? t.bg : '#000000');
-            if (page === 'wifi') {
-                wifiPage.render(cv, t, W, H);
-                return ui.image('MAIN_GFX', cv);
-            }
             if (haveFrame) {
                 const r = frameRect();
                 setImage(IMG, SRC_W, SRC_H, frame);
@@ -271,8 +272,8 @@ mgu.run({
                 }
                 return ui.image('MAIN_GFX', cv);
             }
-            /* No picture yet: one centred button and a plain reason why. */
-            drawConnectButton(cv);
+            /* No picture yet: a plain reason why, and where the button is. */
+            drawHint(cv);
             return ui.image('MAIN_GFX', cv);
         }
         /* Parse a "key: value" report (link.txt / decode.txt) into an object,
@@ -407,21 +408,25 @@ mgu.run({
             return lines;
         }
 
-        function drawConnectButton(cv) {
+        /* No picture: the reason, then where the button is. Nothing drawn here
+         * is a control - on this screen the HMI bar's own buttons are the only
+         * things a finger can press (see the note at the top), so the box is a
+         * signpost with a dark fill rather than a bright button. */
+        function drawHint(cv) {
             const b = WIFI_BTN;
             cv.text('CarLife 无线投屏', W / 2, b.y - 92, 36, '#ffffff', { align: 'center', literal: true });
             const sub = autoConnecting ? ('正在连接 ' + rememberedSsid() + '…') : '';
             cv.text(sub, W / 2, b.y - 54, 20, '#9aa0a6', { align: 'center', literal: true });
-            cv.roundRect(b.x, b.y, b.w, b.h, 16, '#1d4ed8');
-            cv.text(autoConnecting ? '连接中…' : '连接热点', W / 2, b.y + b.h / 2 + 10, 32,
+            cv.roundRect(b.x, b.y, b.w, b.h, 16, '#1f2937');
+            cv.text(autoConnecting ? '连接中…' : '点下方「连接热点」', W / 2, b.y + b.h / 2 + 10, 30,
                 '#ffffff', { align: 'center', literal: true });
 
             /* The real reason nothing shows yet, straight from the pipeline. */
             const lines = autoConnecting
                 ? ['正在连接热点，请稍候…']
-                : diagnose().slice(0, 5);
-            if (!autoConnecting && autoMsg && lines.length < 5) lines.push(autoMsg);
-            if (!lines.length) lines.push('点击后选择手机热点，连接成功即显示 CarLife 画面');
+                : diagnose().slice(0, 4);
+            if (!autoConnecting && autoMsg && lines.length < 4) lines.push(autoMsg);
+            if (!lines.length) lines.push('点下方「连接热点」，选择手机热点后即显示画面');
             let dy = b.y + b.h + 44;
             lines.forEach((line) => {
                 const warn = /失败|错误|找不到|未检测|尚未/.test(line);
@@ -435,6 +440,7 @@ mgu.run({
          * mgu.run (MainApp asks us to exit), so stop our timers then. */
         process.on('exit', () => {
             clearInterval(ctlTimer);
+            clearInterval(wifiTimer);
             if (gesture) clearTimeout(gesture.moveTimer);
             try { source.stop(); } catch (e) { /* shutting down */ }
             if (ctl) { try { ctl.destroy(); } catch (e) { /* closed */ } }

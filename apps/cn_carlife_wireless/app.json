@@ -2,7 +2,7 @@
   "id": "cn_carlife_wireless",
   "title": "CarLife Wireless",
   "description": "把手机百度 CarLife 的完整画面通过 WiFi 热点投到中控屏，并支持触摸操作。可在本应用内直接扫描并连接手机热点，无需先打开 MGU 商店。手机开热点、打开百度 CarLife 等待连接，然后点本应用中间的「连接热点」；连接成功后自动显示 CarLife 画面，之后每次打开应用都会自动连接该热点。取流与解码组件随应用一同安装。第一阶段为画面与触摸，音频与通话后续版本支持。",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "vendor": "custom",
   "loggingId": "OAA7",
   "iconGlyph": "phone",
@@ -29,8 +29,93 @@
       "title": "CarLife 无线投屏",
       "buttons": [
         [
+          "BTN_WIFI",
+          "连接热点"
+        ],
+        [
+          "BTN_SETTINGS",
+          "设置"
+        ],
+        [
           "BTN_BACK",
           "返回"
+        ]
+      ]
+    },
+    {
+      "name": "WIFI",
+      "kind": "menu",
+      "title": "连接手机热点",
+      "items": [
+        [
+          "button",
+          "BTN_WIFI_TOGGLE",
+          "开启 Wi-Fi"
+        ],
+        [
+          "button",
+          "BTN_WIFI_SCAN",
+          "扫描附近热点"
+        ],
+        [
+          "button",
+          "BTN_WIFI_PSK",
+          "输入热点密码"
+        ],
+        [
+          "text",
+          "WIFI_STATUS",
+          ""
+        ],
+        [
+          "text",
+          "WIFI_NOTE",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_1",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_2",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_3",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_4",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_5",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_6",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_7",
+          ""
+        ],
+        [
+          "twocol",
+          "NET_8",
+          ""
+        ],
+        [
+          "button",
+          "BTN_WIFI_BACK",
+          "返回画面"
         ]
       ]
     }
@@ -41,14 +126,16 @@
       "label": "手机热点地址",
       "type": "text",
       "default": "",
-      "hint": "车机连上手机热点后通常自动发现；留空即可"
+      "hint": "通常自动发现，留空即可；需要固定地址时在组件目录的 settings 里填",
+      "hidden": true
     },
     {
       "key": "wifi_psk",
       "label": "热点密码",
       "type": "text",
       "default": "",
-      "hint": "加密热点首次连接可用车机键盘输入，也可在此预设；留空表示使用已保存的网络"
+      "hint": "在本应用的「连接热点」页点「输入热点密码」，或连接加密热点时按提示输入",
+      "hidden": true
     },
     {
       "key": "wifi_ssid",
