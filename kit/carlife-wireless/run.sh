@@ -36,6 +36,14 @@ PORT=${CARLIFE_PORT:-7240}
 # The renderer finds a video only under this name (/dev/shm/mgu-video-<letters,
 # digits, - _ .>), so the app's setVideo() and this line have to agree.
 VIDEO=${CARLIFE_VIDEO_FILE:-/dev/shm/mgu-video-carlife}
+# LEAVE THIS EMPTY unless a run proves the decoder cannot keep up: ask the
+# phone for 30 fps and it caps the whole session instead - link.c measured
+# 12 fps at 30 against 28-38 fps at 60 on the same phone. 0.8.0 shipped
+# --fps 30 and the car showed exactly that: a picture (and every touch)
+# seconds late. Empty: link's own default, 60.
+FPS=${CARLIFE_FPS:-}
+FPSARG=
+[ -n "$FPS" ] && FPSARG="--fps $FPS"
 
 mkdir -p "$DIR"
 chmod 0777 "$DIR"
@@ -144,12 +152,11 @@ fi
 chmod 0666 "$FIFO" 2>/dev/null || true
 
 ( set +e
-  # --fps 30: the link asks for 60 by default, and every picture is a 2 MB
-  # decode plus a 2 MB copy here. The screen is 60 Hz and a mirrored phone is
-  # read, not played, so 30 halves the work for nothing the eye can see. The
-  # size is left at the link's default: the phone answers with the size it
-  # really encodes (1920x720 on this car), and the decoder follows that answer.
-  "$LINK" run "$@" --port "$PORT" --seconds 0 --fps 30 \
+  # $FPSARG is empty by default (see the note at the top of this script): the
+  # link's own 60 is what keeps the phone pushing. The picture size is left at
+  # the link's default too - the phone answers with the size it really encodes
+  # (1920x720 on this car) and the decoder follows that answer.
+  "$LINK" run "$@" --port "$PORT" --seconds 0 $FPSARG \
     --video - --report "$DIR/link.txt" --ctl 7399 --drop-uid "$LINK_UID" > "$FIFO" &
   child=$!
   printf '%s\n' "$child" > "$DIR/link.pid"

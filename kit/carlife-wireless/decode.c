@@ -47,6 +47,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -880,6 +881,8 @@ typedef struct {
     uint32_t seq;
     unsigned long frames;
     long long last_try;              /* a failed open is not retried per frame */
+    unsigned long copy_sum, copy_n;  /* ms spent writing a picture, since the report window opened */
+    unsigned copy_max;
 } Vid;
 
 #define VID_HDR   64
@@ -933,21 +936,60 @@ static int vid_open(Vid *v, const char *path, unsigned w, unsigned h)
 
 /* One picture, whole: the slot after the newest, then the header says which one
  * that is (a reader that comes in between sees the previous frame, never half of
- * this one). */
+ * this one).
+ *
+ * The chroma split is NOT blit()'s: blit writes the atlas layout (U in the left
+ * half of each chroma row, V in the right half), because that is what the CLMF
+ * atlases of the cluster apps contain, while the renderer reads a video slot as
+ * plain I420 - the Y plane, then the whole U plane, then the whole V plane
+ * (proto.h, struct mgu_video_head). Handing blit's layout to it was 0.8.0's
+ * black-and-white picture: every chroma row was a U half next to a V half, so
+ * the colours came out as noise and a map looked grey. */
+static void vid_copy_i420(unsigned char *dst, unsigned w, unsigned h,
+                          const unsigned char *sy, unsigned spitch,
+                          const unsigned char *suv)
+{
+    unsigned cw = w / 2, ch = h / 2, x, y;
+    unsigned char *du = dst + (size_t)w * h;
+    unsigned char *dv = du + (size_t)cw * ch;
+
+    if (spitch == w) {
+        memcpy(dst, sy, (size_t)w * h);
+    } else {
+        for (y = 0; y < h; y++) memcpy(dst + (size_t)y * w, sy + (size_t)y * spitch, w);
+    }
+    for (y = 0; y < ch; y++) {
+        const unsigned char *s = suv + (size_t)y * spitch;
+        unsigned char *ru = du + (size_t)y * cw;
+        unsigned char *rv = dv + (size_t)y * cw;
+        for (x = 0; x < cw; x++, s += 2) { ru[x] = s[0]; rv[x] = s[1]; }   /* NV12 -> planar */
+    }
+}
+
 static void vid_put(Vid *v, const Dec *d)
 {
     size_t fsz = (size_t)v->w * v->h * 3 / 2;
     unsigned slot = (v->slot + 1) % v->nslot;
     unsigned char *dst = v->map + VID_HDR + (size_t)slot * fsz;
     uint32_t *hd = (uint32_t *)v->map;
-    Rect full;
+    long long t0 = now_ms();
 
-    full.x = 0; full.y = 0; full.w = v->w; full.h = v->h;
-    blit(dst, v->w, v->h, d->vout.Data.Y, d->pitch, d->vout.Data.UV, d->pitch, full);
+    vid_copy_i420(dst, v->w, v->h, d->vout.Data.Y, d->pitch, d->vout.Data.UV);
     hd[5] = slot;
     hd[4] = ++v->seq;
     v->slot = slot;
     v->frames++;
+    /* How long one picture costs here. The queue in front of this program is a
+     * 64 KB pipe: if this number plus the decode is more than a phone's frame
+     * interval, link blocks on the pipe, the phone's send window closes and the
+     * whole session (touch included) answers seconds late - so the report has to
+     * carry it. */
+    {
+        long long dt = now_ms() - t0;
+        v->copy_sum += (unsigned long)dt;
+        v->copy_n++;
+        if (dt > v->copy_max) v->copy_max = (unsigned)dt;
+    }
 }
 
 /* ---------------------------------------------------------------- frames -- */
@@ -957,6 +999,10 @@ static Out g_card = { g_card_sock, -1, 0, 0, 0 };
 static unsigned char *g_mapbuf, *g_cardbuf;
 static size_t g_mapbuf_sz, g_cardbuf_sz;
 static long long g_last_frame_ms;
+/* The fd the H.264 comes in on (stdin or the accepted socket): FIONREAD on it
+ * is how many bytes are still queued in the pipe/socket in front of us - the
+ * one number that says whether this program is the slow stage. */
+static int g_in_fd = -1;
 static unsigned long g_frames, g_rate, g_rate_at_frames;
 static unsigned long g_blank;           /* decoded pictures dropped for empty chroma */
 static long long g_rate_at_ms;
@@ -971,7 +1017,7 @@ static long long g_crop_read_ms;
 /* Wireless edition: the renderer's video file (--video-file). Empty: the old
  * CLMF picture sockets, which the cluster apps still read. */
 static const char *g_vid_path;
-static Vid g_vid = { -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0 };
+static Vid g_vid = { .fd = -1 };      /* everything else 0: no file, no frame yet */
 
 /* An atlas buffer of exactly this size, remade when a setting changes its
  * size. Never reused across a size change: a frame is taken only at its
@@ -1101,6 +1147,17 @@ static void produce(const Dec *d)
 
 /* ------------------------------------------------------------- main loop -- */
 
+/* Bytes the stage in front of this one has queued for us (a 64 KB pipe, or the
+ * socket's receive buffer). Non-zero on every report means this program cannot
+ * keep up: link then blocks writing to the pipe, the phone's send window closes
+ * and the whole session - touch included - answers seconds late. */
+static long long in_backlog(void)
+{
+    int n = 0;
+    if (g_in_fd >= 0 && ioctl(g_in_fd, FIONREAD, &n) == 0 && n > 0) return n;
+    return 0;
+}
+
 static void write_report(void)
 {
     char buf[2048];
@@ -1122,9 +1179,10 @@ static void write_report(void)
         "state: %s\n"
         "frames: %lu rate %lu fps last %lldms\n"
         "sockets: map=%s(%lu) card=%s(%lu) drops=%lu+%lu\n"
-        "video: %s seq=%lu %ux%u frames=%lu\n"
+        "video: %s seq=%lu %ux%u frames=%lu copy=%lu/%lums\n"
         "in: %llu bytes, %u connection%s\n"
         "first: session %lldms, byte->frame %lldms\n"
+        "queue: %lld KB in front of this program (non-zero: it is the slow stage)\n"
         "out: map %ux%u card %s\n"
         "crop: map t%.0f b%.0f l%.0f r%.0f %s; card t%.0f b%.0f l%.0f r%.0f %s\n"
         "rect: map %u,%u %ux%u; card %u,%u %ux%u\n"
@@ -1138,9 +1196,11 @@ static void write_report(void)
         g_card.fd >= 0 ? "on" : "waiting", g_card.frames,
         g_map.drops, g_card.drops,
         g_vid_path ? g_vid_path : "off", (unsigned long)g_vid.seq, g_vid.w, g_vid.h, g_vid.frames,
+        g_vid.copy_n ? g_vid.copy_sum / g_vid.copy_n : 0UL, (unsigned long)g_vid.copy_max,
         g_in_bytes, g_connects, g_connects == 1 ? "" : "s",
         g_boot_ms,
         (g_t_first_byte && g_t_first_frame) ? (g_t_first_frame - g_t_first_byte) : -1LL,
+        in_backlog() / 1024,
         (unsigned)g_crop.map_w, (unsigned)g_crop.map_h, card,
         g_crop.map_top, g_crop.map_bottom, g_crop.map_left, g_crop.map_right,
         g_crop.map_stretch ? "stretch" : "fill",
@@ -1168,6 +1228,9 @@ static void write_report(void)
             close(fd);
         }
     }
+    /* the copy numbers are per report window, like the frame rate */
+    g_vid.copy_sum = g_vid.copy_n = 0;
+    g_vid.copy_max = 0;
 }
 
 /* Run the same decoder for another app: its own folder for the sockets and
@@ -1303,6 +1366,7 @@ int main(int argc, char **argv)
     }
     if (stdin_mode) {
         client = STDIN_FILENO;
+        g_in_fd = client;
         g_connects = 1;
         note("reading the stream from stdin");
     } else {
@@ -1335,6 +1399,7 @@ int main(int argc, char **argv)
             if (c >= 0) {
                 if (client >= 0) close(client);   /* one capture at a time */
                 client = c;
+                g_in_fd = client;
                 g_connects++;
                 ilen = iconsumed = 0;
                 note("stream connected");
@@ -1383,6 +1448,7 @@ int main(int argc, char **argv)
                     }
                     close(client);
                     client = -1;
+                    g_in_fd = -1;
                     ilen = iconsumed = 0;
                     header_done = 0;
                     dec_stop(&dec);
