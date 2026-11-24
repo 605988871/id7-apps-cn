@@ -215,9 +215,12 @@ mgu.run({
                  * picture. That is the whole fix for a picture that was seconds
                  * behind: nothing between the phone and the glass buffers it. */
                 cv.video(VIDEO_ID, 0, 0, W, H, 0);
+                if (lagLine) {
+                    cv.text(lagLine, 24, 40, 22, '#fbbf24', { literal: true });
+                }
                 if (settings.get('showStats')) {
                     cv.text('CarLife ' + vidSeq + ' frames · ' + Math.round(sinceStart() / 1000) + 's · ' +
-                        vidW + 'x' + vidH, 24, 40, 22, '#ffffff', { literal: true });
+                        vidW + 'x' + vidH, 24, 74, 22, '#ffffff', { literal: true });
                 }
                 return ui.image('MAIN_GFX', cv);
             }
@@ -238,6 +241,30 @@ mgu.run({
                 });
                 return o;
             } catch (e) { return null; }
+        }
+
+        /* carlife-link used to queue 6 MB before the decoder - six to ten
+         * seconds of screen content, which is why a gesture appeared that long
+         * after the finger moved. It is 1 MB now, but only the car can tell us
+         * whether the decoder still falls behind. One small line appears when
+         * it does, so the numbers are on the screen instead of needing a shell
+         * on the head unit. Only redrawn when the line changes: the renderer
+         * refreshes the picture itself. */
+        let lagLine = '', lagShown = '', lagAt = 0;
+        function readLag() {
+            const now = Date.now();
+            if (now - lagAt < 500) return;
+            lagAt = now;
+            const d = readKV(DECODE_TXT), l = readKV(LINK_TXT);
+            if (!d || !l) { lagLine = ''; return; }
+            const f = /^(\d+)\s+rate\s+(\d+)\s+fps\s+last\s+(\d+)ms/.exec(d.frames || '');
+            const v = l.video || '';
+            const want = /@(\d+)/.exec(v), buf = /backlog=(\d+)%/.exec(v),
+                  skip = /skipped=(\d+)/.exec(v);
+            const rate = f ? +f[2] : 0, fps = want ? +want[1] : 0,
+                  q = buf ? +buf[1] : 0, sk = skip ? +skip[1] : 0;
+            lagLine = ((fps && rate && rate + 4 < fps) || q > 20)
+                ? 'DEC ' + rate + '/' + fps + 'fps  BUF ' + q + '%  SKIP ' + sk : '';
         }
 
         const LINK_STATE_ZH = {
@@ -406,9 +433,11 @@ mgu.run({
              * written, and at what size - so it is read on every tick rather
              * than reasoned about. */
             readVideo();
+            readLag();
             ready = vidSeq > 0 && !!ctx.video();
-            if (ready !== showing) {
+            if (ready !== showing || (showing && lagShown !== lagLine)) {
                 showing = ready;
+                lagShown = lagLine;
                 return render();
             }
             /* While waiting, this page follows the reports - the kit does not

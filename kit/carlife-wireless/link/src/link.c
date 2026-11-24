@@ -126,7 +126,19 @@ static void net_done(void) {}
  * happens on its own thread, into a bounded backlog: when nobody keeps up,
  * pictures are dropped and the session carries on. */
 
-#define SINK_BACKLOG (6u << 20)
+/* Small on purpose: this backlog IS the picture's latency. 6 MB of 1920x720
+ * screen content is six to ten seconds, and on a unit whose decoder is even
+ * slightly slower than the phone the backlog never drains - it just sits full,
+ * so every gesture showed up seconds late while the picture itself looked
+ * fine. One megabyte is under a second at the bit rates CarLife sends. */
+#define SINK_BACKLOG (1u << 20)
+
+/* Dropping a picture mid-GOP leaves the decoder without its reference and the
+ * screen smears until the phone sends another IDR. So when the backlog is over
+ * the limit, skip whole pictures until one carries an IDR and resume from
+ * there. A stream that gives no IDR for this long is not worth waiting for:
+ * write anyway rather than freeze the picture. */
+#define SINK_IDR_WAIT_MS 800
 
 typedef struct sink_frame {
     struct sink_frame *next;
@@ -140,6 +152,12 @@ typedef struct {
     sink_frame *head, *tail;
     size_t backlog;
     unsigned long dropped;
+    /* Skipping to catch up: pictures thrown away waiting for an IDR, and when
+     * that wait began, so a stream without keyframes cannot stall the picture
+     * for ever. */
+    unsigned long skipped;
+    int want_idr;
+    double t_want;
     volatile int stopping, finished;
 #ifdef _WIN32
     HANDLE thread;
@@ -263,6 +281,24 @@ static void sink_put(sink_t *s, const uint8_t *p, size_t n)
     if (s->tail) s->tail->next = fr; else s->head = fr;
     s->tail = fr;
     s->backlog += n;
+    sink_unlock(s);
+}
+
+/* Throw away the oldest queued pictures until at most keep bytes remain.
+ * Used when the decoder has fallen so far behind that even a waiting IDR
+ * cannot help: writing more into a full backlog only grows the latency. */
+static void sink_trim(sink_t *s, size_t keep)
+{
+    sink_frame *fr;
+    sink_lock(s);
+    while (s->head && s->backlog > keep) {
+        fr = s->head;
+        s->head = fr->next;
+        if (!s->head) s->tail = NULL;
+        s->backlog -= fr->n;
+        s->dropped++;
+        free(fr);
+    }
     sink_unlock(s);
 }
 
@@ -1067,9 +1103,12 @@ static void on_cmd(link_t *l, uint32_t type, const uint8_t *body, size_t n)
 
 /* Every start code in the payload, not just the one at byte 4: the first
  * message of a session is SPS, PPS and IDR concatenated. */
-static void scan_annexb(link_t *l, const uint8_t *p, size_t n)
+/* 1 if this access unit carries an IDR - the point at which a decoder that
+ * skipped pictures can start again without smearing. */
+static int scan_annexb(link_t *l, const uint8_t *p, size_t n)
 {
     size_t i = 0;
+    int idr = 0;
     while (i + 3 < n) {
         size_t sc = 0;
         if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1) sc = 4;
@@ -1079,13 +1118,14 @@ static void scan_annexb(link_t *l, const uint8_t *p, size_t n)
                 unsigned nal = p[i + sc] & 0x1f;
                 if (nal == 7) l->saw_sps = 1;
                 else if (nal == 8) l->saw_pps = 1;
-                else if (nal == 5) l->saw_idr = 1;
+                else if (nal == 5) { l->saw_idr = 1; idr = 1; }
             }
             i += sc;
         } else {
             i++;
         }
     }
+    return idr;
 }
 
 static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, size_t n)
@@ -1100,16 +1140,38 @@ static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, si
         if (l->verbose) logline(l, "video type %08x (%u bytes) ignored", type, (unsigned)n);
         return;
     }
-    if (n >= 5) scan_annexb(l, p, n);
-    l->vid_frames++;
-    l->vid_bytes += n;
-    l->t_last_video = now_ms();
-    l->t_progress = l->t_last_video;
-    /* Whatever went wrong before this frame is history: the screen reads
-     * error: verbatim, and a stale "read on the video channel failed" beside
-     * a running picture is worse than no line at all. */
-    if (l->error[0]) l->error[0] = 0;
-    sink_put(&l->sink, p, n);
+    {
+        int idr = n >= 5 ? scan_annexb(l, p, n) : 0;
+        double now = now_ms();
+        l->vid_frames++;
+        l->vid_bytes += n;
+        l->t_last_video = now;
+        l->t_progress = now;
+        /* Whatever went wrong before this frame is history: the screen reads
+         * error: verbatim, and a stale "read on the video channel failed"
+         * beside a running picture is worse than no line at all. */
+        if (l->error[0]) l->error[0] = 0;
+        if (l->sink.want_idr) {
+            if (!idr) {
+                if (now - l->sink.t_want < SINK_IDR_WAIT_MS) {
+                    l->sink.skipped++;
+                    return;             /* catch up to a point we can draw from */
+                }
+                /* No keyframe came: drop the stale backlog and resume here.
+                 * This can smear for a moment, but a picture a moment late is
+                 * better than one frozen six seconds behind the phone. */
+                sink_trim(&l->sink, SINK_BACKLOG / 4);
+                l->sink.skipped++;
+            }
+            l->sink.want_idr = 0;
+        } else if (l->sink.backlog + n > SINK_BACKLOG && !idr) {
+            l->sink.want_idr = 1;
+            l->sink.t_want = now;
+            l->sink.skipped++;
+            return;
+        }
+        sink_put(&l->sink, p, n);
+    }
     if (!strcmp(l->state, "waiting for picture")) snprintf(l->state, sizeof l->state, "streaming");
 }
 
@@ -1137,9 +1199,11 @@ static void write_report(link_t *l)
     fprintf(f, "up: %.0f s\n", secs);
     fprintf(f, "cmd: %s rx=%lu tx=%lu match=%s\n", l->ch[CH_CMD].open ? "open" : "closed",
             l->cmd_rx, l->cmd_tx, l->matched ? "yes" : "no");
-    fprintf(f, "video: %s %dx%d@%d frames=%lu %.1f MB beats=%lu dropped=%lu\n", l->ch[CH_VIDEO].open ? "open" : "closed",
+    fprintf(f, "video: %s %dx%d@%d frames=%lu %.1f MB beats=%lu dropped=%lu skipped=%lu backlog=%u%%\n",
+            l->ch[CH_VIDEO].open ? "open" : "closed",
             l->got_w, l->got_h, l->got_fps, l->vid_frames, (double)l->vid_bytes / 1048576.0, l->vid_keepalive,
-            l->sink.dropped);
+            l->sink.dropped, l->sink.skipped,
+            (unsigned)(l->sink.backlog * 100 / SINK_BACKLOG));
     fprintf(f, "stream: sps=%s pps=%s idr=%s\n", l->saw_sps ? "yes" : "no", l->saw_pps ? "yes" : "no",
             l->saw_idr ? "yes" : "no");
     fprintf(f, "audio: media=%llu tts=%llu vr=%llu  %.1f KB\n",

@@ -491,6 +491,26 @@ def test_frame_rate_and_session_stability():
           'the head unit keeps the cmd channel alive every two seconds')
 
 
+def test_backlog_is_latency():
+    """The decoder's input queue is the picture's delay, so it must be small.
+
+    A 6 MB backlog of 1920x720 screen content is six to ten seconds, and on a
+    unit whose decoder is a little slower than the phone it simply stays full:
+    the picture looks fine but every gesture appears seconds late. One MB is
+    under a second, and pictures thrown away to catch up must resume on an
+    IDR rather than in the middle of a GOP (which smears until the next one).
+    """
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+    check('#define SINK_BACKLOG (1u << 20)' in src,
+          'the decoder queue is 1 MB, not the 6 MB that cost six seconds')
+    check('#define SINK_IDR_WAIT_MS 800' in src and 'sink.want_idr' in src,
+          'dropping pictures waits for an IDR, with a timeout')
+    check('sink_trim(&l->sink, SINK_BACKLOG / 4)' in src,
+          'a stream with no keyframes trims the old queue instead of freezing')
+    check('skipped=%lu backlog=%u%%' in src,
+          'the report names both the skipped pictures and how full the queue is')
+
+
 def test_network_change_rehomes():
     """Joining another hotspot must re-home the link immediately.
 
@@ -601,6 +621,7 @@ def main():
     test_nonblocking_connect_waits()
     test_reconnect_latency()
     test_frame_rate_and_session_stability()
+    test_backlog_is_latency()
     test_shipped_binaries()
     test_network_change_rehomes()
     test_optional_channel_quiet()
