@@ -291,11 +291,19 @@ mgu.run({
             if (!d || !l) { lagLine = ''; return; }
             const f = /^(\d+)\s+rate\s+(\d+)\s+fps\s+last\s+(\d+)ms/.exec(d.frames || '');
             const v = l.video || '';
-            const want = /@(\d+)/.exec(v), buf = /backlog=(\d+)%/.exec(v),
+            /* @60 is the phone's ENCODER CONFIGURATION, not the frames it
+             * actually sends: on the car it said @60 while the stream carried
+             * about 24. push=Nfps is measured from received frames. */
+            const want = /push=(\d+)fps/.exec(v), buf = /backlog=(\d+)%/.exec(v),
                   skip = /skipped=(\d+)/.exec(v);
             const rate = f ? +f[2] : 0, fps = want ? +want[1] : 0,
                   q = buf ? +buf[1] : 0, sk = skip ? +skip[1] : 0;
-            lagLine = ((fps && rate && rate + 4 < fps) || q > 20)
+            /* Normally this stays hidden so the picture is clean. With the
+             * "show stats" setting on it is always drawn: the car reported
+             * @60 (encoder config) while actually pushing ~24, so seeing the
+             * two rates together is how the next report gets answered without
+             * another round of guessing. */
+            lagLine = (settings.get('showStats') || (fps && rate && rate + 4 < fps) || q > 20)
                 ? 'DEC ' + rate + '/' + fps + 'fps  BUF ' + q + '%  SKIP ' + sk : '';
         }
 

@@ -2,7 +2,7 @@
   "id": "cn_carlife_wireless",
   "title": "CarLife Wireless",
   "description": "把手机百度 CarLife 的完整画面通过 WiFi 热点投到中控屏。热点的连接统一在 MGU 商店的 Wi-Fi 页面完成，本应用只显示画面：手机开热点并打开百度 CarLife，车机按 MGU 商店里记下的热点连上后，本应用自动取流并铺满显示，画面上可直接触摸、拖拽，点击不再落到被画面盖住的车机按钮栏。取流与解码组件随应用一同安装。音频后续版本支持。",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "vendor": "custom",
   "loggingId": "OAA7",
   "iconGlyph": "phone",
@@ -13,7 +13,7 @@
   "requires": {
     "idrive7-renderd": "2.1.15",
     "mgu-inputgate": "1.1.0",
-    "carlife-wireless": "0.8.3"
+    "carlife-wireless": "0.8.4"
   },
   "buildOnly": [
     "test"

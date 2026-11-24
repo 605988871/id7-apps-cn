@@ -870,6 +870,12 @@ typedef struct {
 
     unsigned long cmd_rx, cmd_tx;
     unsigned long vid_frames, vid_keepalive, touch_sent, touch_drop;
+    /* How many pictures a second actually arrived. got_fps is what the phone
+     * told us its encoder was configured for; on the car it said 60 while the
+     * stream really carried about 24, which sent the latency hunt in the
+     * wrong direction. This is counted from received frames instead. */
+    unsigned long vid_push_rate, vid_rate_at_frames;
+    double t_vid_rate;
     unsigned long long vid_bytes;
     unsigned long long audio_bytes;
     int saw_sps, saw_pps, saw_idr;
@@ -1145,6 +1151,13 @@ static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, si
         double now = now_ms();
         l->vid_frames++;
         l->vid_bytes += n;
+        if (!l->t_vid_rate) l->t_vid_rate = now;
+        if (now - l->t_vid_rate >= 1000.0) {
+            l->vid_push_rate = (unsigned long)((l->vid_frames - l->vid_rate_at_frames) * 1000.0 /
+                                               (now - l->t_vid_rate));
+            l->vid_rate_at_frames = l->vid_frames;
+            l->t_vid_rate = now;
+        }
         l->t_last_video = now;
         l->t_progress = now;
         /* Whatever went wrong before this frame is history: the screen reads
@@ -1157,17 +1170,25 @@ static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, si
                     l->sink.skipped++;
                     return;             /* catch up to a point we can draw from */
                 }
-                /* No keyframe came: drop the stale backlog and resume here.
-                 * This can smear for a moment, but a picture a moment late is
-                 * better than one frozen six seconds behind the phone. */
-                sink_trim(&l->sink, SINK_BACKLOG / 4);
+                /* No keyframe came: resume here even without one. This can
+                 * smear for a moment, but a moment late beats seconds late. */
                 l->sink.skipped++;
             }
+            /* The IDR we waited for is no use if the queue is still full:
+             * sink_put would reject it and the picture would stay pinned to
+             * the old frames for ever. Make room before writing it. */
+            sink_trim(&l->sink, SINK_BACKLOG / 4);
             l->sink.want_idr = 0;
         } else if (l->sink.backlog + n > SINK_BACKLOG && !idr) {
             l->sink.want_idr = 1;
             l->sink.t_want = now;
             l->sink.skipped++;
+            /* sink_run takes frames off the HEAD of the queue. Merely
+             * skipping new pictures cannot drain what is already there, so
+             * the backlog sat at 87% and every gesture stayed a second behind
+             * even though the session looked healthy. Drop the old frames
+             * the moment we fall behind, then wait for an IDR to restart. */
+            sink_trim(&l->sink, SINK_BACKLOG / 4);
             return;
         }
         sink_put(&l->sink, p, n);
@@ -1199,9 +1220,10 @@ static void write_report(link_t *l)
     fprintf(f, "up: %.0f s\n", secs);
     fprintf(f, "cmd: %s rx=%lu tx=%lu match=%s\n", l->ch[CH_CMD].open ? "open" : "closed",
             l->cmd_rx, l->cmd_tx, l->matched ? "yes" : "no");
-    fprintf(f, "video: %s %dx%d@%d frames=%lu %.1f MB beats=%lu dropped=%lu skipped=%lu backlog=%u%%\n",
+    fprintf(f, "video: %s %dx%d@%d push=%lufps frames=%lu %.1f MB beats=%lu dropped=%lu skipped=%lu backlog=%u%%\n",
             l->ch[CH_VIDEO].open ? "open" : "closed",
-            l->got_w, l->got_h, l->got_fps, l->vid_frames, (double)l->vid_bytes / 1048576.0, l->vid_keepalive,
+            l->got_w, l->got_h, l->got_fps, l->vid_push_rate, l->vid_frames,
+            (double)l->vid_bytes / 1048576.0, l->vid_keepalive,
             l->sink.dropped, l->sink.skipped,
             (unsigned)(l->sink.backlog * 100 / SINK_BACKLOG));
     fprintf(f, "stream: sps=%s pps=%s idr=%s\n", l->saw_sps ? "yes" : "no", l->saw_pps ? "yes" : "no",

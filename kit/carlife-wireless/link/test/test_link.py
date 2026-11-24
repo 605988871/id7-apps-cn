@@ -510,6 +510,19 @@ def test_backlog_is_latency():
     check('skipped=%lu backlog=%u%%' in src,
           'the report names both the skipped pictures and how full the queue is')
 
+    # The 0.8.2 catch-up had a hole: it skipped new pictures while waiting for
+    # an IDR, but never dropped what was already queued. sink_run takes from
+    # the HEAD, so the backlog stayed at 87%, and the IDR that finally came was
+    # rejected by a full sink_put - the picture never recovered.
+    body = src[src.find('if (l->sink.want_idr) {'):src.find('sink_put(&l->sink, p, n);', src.find('if (l->sink.want_idr) {'))]
+    check(body.count('sink_trim(') >= 2,
+          'both entering catch-up and the IDR arriving clear the old queue')
+    check('else if (l->sink.backlog + n > SINK_BACKLOG && !idr)' in body and
+          'sink_trim(' in body[body.find('else if'):],
+          'crossing the limit drops old frames at once, not just new ones')
+    check('push=%lufps' in src and 'vid_push_rate' in src and 'l->vid_frames++' in src,
+          'the report counts frames actually received, not the encoder config @60')
+
 
 def test_network_change_rehomes():
     """Joining another hotspot must re-home the link immediately.
