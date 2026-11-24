@@ -118,10 +118,16 @@ def annex_b_stream(width, height):
 
 
 class FakeMD:
-    def __init__(self, base, record, size):
+    def __init__(self, base, record, size, silent_video=False):
         self.base = base
         self.width, self.height = size
         self.record = record
+        # --silent-video: finish the handshake and answer the size request,
+        # then never send a frame and never close. That is exactly the state
+        # the real phone was caught in on the unit (frames=0 for 3.5 minutes
+        # until it dropped the socket itself), and the session watchdog has to
+        # notice it on its own.
+        self.silent_video = silent_video
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.serving = threading.Event()      # VIDEO_START seen: pump pictures
@@ -183,6 +189,12 @@ class FakeMD:
 
     # ---- the video channel ----
     def video_loop(self, conn):
+        if self.silent_video:
+            # Hold the socket open and send nothing: no close, no error, no
+            # frame. The link has to decide on its own that this is dead.
+            while not self.stop.is_set():
+                time.sleep(0.1)
+            return
         conn.settimeout(0.2)
         stream = annex_b_stream(self.width, self.height)
         frame = 0
@@ -267,11 +279,13 @@ def main():
     ap.add_argument('--record')
     ap.add_argument('--seconds', type=float, default=30)
     ap.add_argument('--size', default='1280x720')
+    ap.add_argument('--silent-video', action='store_true',
+                    help='handshake and answer the size request, then never send a frame')
     args = ap.parse_args()
     w, h = (int(x) for x in args.size.split('x'))
     if args.record:
         open(args.record, 'w', encoding='utf-8').close()
-    md = FakeMD(args.port, args.record, (w, h))
+    md = FakeMD(args.port, args.record, (w, h), silent_video=args.silent_video)
     md.start()
     try:
         time.sleep(args.seconds)

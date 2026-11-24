@@ -297,6 +297,9 @@ mgu.run({
             'looking for the phone': '正在查找手机',
             'no phone on the network': '找不到手机（确认热点已连、百度 CarLife 已打开）',
             'waiting for picture': '已连接，等待画面',
+            'reconnecting': '手机没有回画面，正在重新连接',
+            'phone closed cmd': '手机断开控制通道',
+            'phone closed video': '手机断开画面通道',
             'streaming': '正在接收画面'
         };
 
@@ -318,7 +321,12 @@ mgu.run({
                 const w = st.wifi || {};
                 wifiErr = w.error || '';
                 if (w.link === 'online') {
-                    lines.push('热点：已连接 ' + (w.ssid || '') + (w.ip ? ' · ' + w.ip : ''));
+                    /* w.ip is the CAR's own address on the phone's hotspot (the
+                     * lease DHCP gave us), not the phone's. Printed bare after
+                     * the SSID it read as "the phone is at 10.92.100.115",
+                     * which is the car itself - and the phone was at .136. */
+                    lines.push('热点：已连接 ' + (w.ssid || '') +
+                        (w.ip ? '（本机 ' + w.ip + '）' : ''));
                 } else if (w.link === 'connected') {
                     lines.push('热点：已关联 ' + (w.ssid || '') +
                         (lease && lease.router ? '' : '（尚未获取 IP 租约）'));
@@ -360,7 +368,12 @@ mgu.run({
                 }
             } else if (lr) {
                 const lstate = (lr.state || '').trim();
-                lines.push(LINK_STATE_ZH[lstate] || ('取流：' + lr.state));
+                /* The phone's address, straight from the link that dialled it -
+                 * the hotspot line above only knows the car's own address. */
+                const phone = lstate === 'streaming' || lstate === 'waiting for picture'
+                    ? (lr.host ? ' · 手机 ' + lr.host : '')
+                    : '';
+                lines.push((LINK_STATE_ZH[lstate] || ('取流：' + lr.state)) + phone);
                 /* While the link is re-homing after a hotspot change it is
                  * still holding the address it dialled a moment ago, and the
                  * dial error names exactly that address. Shown beside "正在

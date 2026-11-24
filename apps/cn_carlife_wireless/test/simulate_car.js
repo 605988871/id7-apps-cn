@@ -169,6 +169,26 @@ function check(name, cond) {
         Array.from({ length: MAX_ROWS }, (_, i) => 'NET_' + (i + 1)).join(','));
 })();
 
+/* D6: every Chinese character this app can put on the canvas must exist in the
+ * baked glyph atlas. The car has no font rasteriser, so a character that was
+ * never baked is drawn as '?' - which is how the title came out as
+ * "CarLife 无线?屏" and every 「连接热点」 as "?连接热点?". The atlas is baked
+ * from the kit's own locale strings, so an app's own words have to be listed in
+ * kit/localization/extra-zh-CN.txt and baked (kit/tools/bake_cjk.py). */
+(function () {
+    const fs = require('fs');
+    const path = require('path');
+    const atlas = JSON.parse(fs.readFileSync(
+        path.join(__dirname, '../../../kit/runtime/fonts/cjk.json'), 'utf8'));
+    const have = new Set(Object.keys(atlas.sizes[0].glyphs).map(Number));
+    const sources = ['main.js', 'wifi_page.js', 'app.json']
+        .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
+    const missing = [...new Set([...sources].filter((ch) =>
+        ch.codePointAt(0) > 0x2000 && !have.has(ch.codePointAt(0))))];
+    check('D6 every Chinese character the app draws is baked into the atlas',
+        missing.length === 0, missing.join(''));
+})();
+
 /* --------------------------------------------------------------------- A -- */
 /* The source itself must tag placeholder vs real frames. */
 (function () {
@@ -244,7 +264,19 @@ function check(name, cond) {
         put(statusFile, JSON.stringify({ wifi: { link: 'online', ssid: 'iQOO 12 Pro', ip: '192.168.43.55' } }));
         c = render();
         check('C2 online shows the car address',
-            c.texts.some((t) => t.includes('已连接 iQOO 12 Pro · 192.168.43.55')));
+            c.texts.some((t) => t.includes('已连接 iQOO 12 Pro（本机 192.168.43.55）')));
+
+        /* C2b: the phone's address is the one the link dialled, and it is not
+         * the car's own address from the lease. Printed bare after the SSID,
+         * the car address read as "the phone is at .115" while the phone was
+         * at .136 - which looked exactly like "the IP never switched". */
+        put(linkFile, 'state: streaming\nhost: 10.92.100.136\nerror: none\n');
+        c = render();
+        check('C2b the streaming line names the phone address from link.txt',
+            c.texts.some((t) => t.includes('正在接收画面') && t.includes('手机 10.92.100.136')),
+            c.texts.join(' | '));
+        check('C2c the hotspot address is labelled as the car\'s own',
+            c.texts.some((t) => t.includes('本机 192.168.43.55')), c.texts.join(' | '));
 
         put(linkFile, 'state: no phone on the network\nerror: none\n');
         c = render();

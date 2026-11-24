@@ -19,6 +19,7 @@ usage: python test/test_link.py        (zig must be on PATH or in ZIG=)
 """
 import json
 import os
+import re
 import shutil
 import socket
 import struct
@@ -190,6 +191,77 @@ def test_session(exe, tmp):
                     p.kill()
 
 
+def test_optional_channel_quiet():
+    """A closed audio channel is not a stream error.
+
+    The app prints the report's error: line verbatim under "取流错误", and the
+    phone opens and closes media/tts/vr on its own schedule during a perfectly
+    healthy session. The car therefore showed "取流错误：read on the vr channel
+    failed" while the picture was running. Only cmd and video may raise one.
+    """
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+    check('static int chan_required(int ci)' in src and 'CH_CMD || ci == CH_VIDEO' in src,
+          'only the two channels that carry the picture count as required')
+    start = src.find('static void read_channel')
+    body = src[start:start + 1800] if start >= 0 else ''
+    check(start > 0, 'read_channel is where a channel dies')
+    check(body.count('chan_required(ci)') >= 2,
+          'both the close and the read error are filtered through it', body.count('chan_required(ci)'))
+    check('not needed for the picture' in body,
+          'an optional channel still says so in the log, just not on the screen')
+
+
+def test_silent_session_watchdog(exe, tmp):
+    """A session that matches and then says nothing must be thrown away.
+
+    On the unit the phone opened all six channels, matched the version and even
+    answered "encoder init done", then sent no frame at all - and closed
+    nothing. The screen sat on "waiting for picture" with frames=0 for three
+    and a half minutes, until the phone dropped the video socket by itself.
+    Nothing in the read path can notice a socket that simply says nothing, so
+    the link times the session out on its own and dials again: fresh sockets
+    make the phone start a fresh session, which is what cleared it on the car.
+    """
+    record = tmp / 'silent.jsonl'
+    report = tmp / 'silent.txt'
+    py = sys.executable or 'python'
+    ctl = CTL + 3
+    md = subprocess.Popen([py, str(HERE / 'fake_md.py'), '--port', str(BASE),
+                           '--record', str(record), '--seconds', '26', '--silent-video'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    link = None
+    try:
+        if not wait_port(BASE) or not wait_port(BASE + 1000):
+            check(False, 'the silent phone came up on six ports')
+            return
+        started = time.time()
+        link = subprocess.Popen([str(exe), 'run', '--host', '127.0.0.1', '--port', str(BASE),
+                                 '--ctl', str(ctl), '--seconds', '15', '--report', str(report),
+                                 '--video', str(tmp / 'silent.h264')],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        link.wait(timeout=60)
+        took = time.time() - started
+        out, err = link.communicate()
+        text = report.read_text(encoding='utf-8', errors='replace') if report.exists() else ''
+        check('frames=0 ' in text or 'frames=0\n' in text, 'no picture ever arrived', text)
+        check(re.search(r'reset: [1-9]', text) is not None, 'the watchdog counted a reset', text)
+        check('watchdog:' in (err or ''), 'the log says the session was dropped', (err or '')[-300:])
+        rec = read_record(record)
+        versions = [r for r in rec if r['chan'] == 'cmd' and r['type'] == '0x00018001']
+        check(len(versions) >= 2,
+              'the session was dialled again after the timeout, not after minutes',
+              len(versions))
+        check(took < 17.0, 'it gave up in seconds, not minutes', round(took, 1))
+    finally:
+        for p in (link, md):
+            if p and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+
+
 def test_unreachable(exe, tmp):
     report = tmp / 'unreachable.txt'
     res = subprocess.run([str(exe), 'run', '--host', '127.0.0.1', '--port', '19240',
@@ -237,6 +309,10 @@ def test_find_without_phone(exe, tmp):
     check(any(s in text for s in ('looking for the phone', 'no phone on the network', 'no phone answered')),
           'the report says it is looking, not that it is connected', text)
     check('match=yes' not in text, 'nothing pretends to have matched', text)
+    # --host auto leaves the word "auto" in the host field until something is
+    # found; dialling it used to put "cannot resolve auto" on the screen as if
+    # the phone had refused. Our own argument is not a phone error.
+    check('cannot resolve' not in text, 'nothing dials the word "auto"', text)
     check(took < 60, 'the search does not hang', '%.1f s' % took)
 
 
@@ -527,6 +603,7 @@ def main():
     test_frame_rate_and_session_stability()
     test_shipped_binaries()
     test_network_change_rehomes()
+    test_optional_channel_quiet()
     zig = find_zig()
     if not zig:
         print('zig not found: set ZIG= or put it on PATH')
@@ -540,6 +617,7 @@ def main():
         return 1
 
     test_session(exe, tmp)
+    test_silent_session_watchdog(exe, tmp)
     test_unreachable(exe, tmp)
     test_probe(exe, tmp)
     test_find_without_phone(exe, tmp)

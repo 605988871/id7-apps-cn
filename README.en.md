@@ -815,7 +815,10 @@ and the g-meter glide to new values on their own; `G.smooth(key, value)` does th
 own drawings. Fonts: `label`, `bold`, `num`, `light`, `gear`. Large sizes contain digits and a
 few letters only; re-bake with `kit/tools/bake_fonts.py` (Ubuntu font family) if you need more.
 `bake_cjk.py` regenerates the Chinese atlas and `bake_cyrillic.py` the Russian one (both need
-Pillow); the committed atlases are sufficient for normal builds.
+Pillow); the committed atlases are sufficient for normal builds. The Chinese atlas is baked from
+the kit's own locale strings, so a character your app draws itself may be missing and is then
+drawn as `?` on the car screen: add it to `kit/localization/extra-zh-CN.txt` and re-bake with
+`python kit/tools/bake_cjk.py`.
 
 **`Car`** (`kit/runtime/car.js`): groups `rpm`, `speed`, `temps`, `accel`, `gear`, `torque`.
 `car.data()` returns `{ rpm, speed, gLong, gLat, coolant, oil, gear, torque, demo }` in real

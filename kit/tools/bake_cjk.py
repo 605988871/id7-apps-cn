@@ -64,7 +64,19 @@ def main():
     # Only the app's own translated glyphs, ASCII and its units/symbols: never the full CJK block.
     credit_file = ROOT / 'kit/localization' / ('credit.%s.json' % language)
     credit_source = credit_file.read_text(encoding='utf-8') if credit_file.exists() else ''
-    chars = ''.join(sorted(set(baker.TEXT + ''.join(words.values()) + credit_source)))
+    # Characters an app draws itself that no kit locale carries. The atlas is the
+    # only font a JS app can reach, and a character that was never baked is drawn
+    # as '?' on the car screen - which is how "CarLife 无线投屏" came out as
+    # "CarLife 无线?屏" and every 「连接热点」 as "?连接热点?". Keep this a short
+    # list of missing characters, not a place for sentences.
+    extra_file = ROOT / 'kit/localization' / ('extra-%s.txt' % language)
+    extra = ''
+    if extra_file.exists():
+        # '#' lines are the file's own explanation, not characters to bake.
+        lines = [ln for ln in extra_file.read_text(encoding='utf-8').splitlines()
+                 if not ln.lstrip().startswith('#')]
+        extra = ''.join(''.join(lines).split())
+    chars = ''.join(sorted(set(baker.TEXT + ''.join(words.values()) + credit_source + extra)))
     for size in (48, 44, 40, 36, 32):
         atlas = baker.bake(font.name, (500,), size, chars)
         if atlas['atlasH'] <= 2048:

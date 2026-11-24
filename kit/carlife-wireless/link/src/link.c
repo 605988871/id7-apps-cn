@@ -444,6 +444,22 @@ static sock_t tcp_connect(const char *host, int port, int timeout_ms, char *err,
  * minute to switch".) */
 #define HINT_ROUNDS 4
 
+/* How long a live session may go without a single byte from the phone before
+ * it is thrown away and dialled again.
+ *
+ * Measured on the unit: the phone can leave a session half-built - all six
+ * channels accept, the version matches, the encoder even reports "init done",
+ * and then not one frame arrives. Nothing closes, so nothing in the read path
+ * notices; the screen sat on "waiting for picture" with frames=0 for three and
+ * a half minutes until the phone itself dropped the video socket. Tearing the
+ * sockets down and reconnecting fixed it instantly (the phone starts a fresh
+ * session for a fresh connection).
+ *
+ * Ten seconds: long enough for the handshake plus the encoder's first frame on
+ * a loaded Atom (usual time to first frame is under two), short enough that a
+ * driver is not left looking at a dead screen. */
+#define WATCHDOG_MS 10000.0
+
 #ifndef _WIN32
 /* Virtual interfaces are never the phone's network, and every one of them
  * would cost a /24 sweep of its own: the unit runs dockerd, and a laptop's
@@ -827,6 +843,13 @@ typedef struct {
     double t_keepalive;  /* when the last periodic cmd message went out */
     int fail_rounds;     /* consecutive dials that reached no cmd channel */
 
+    /* The phone last proving the session alive: a cmd message or a frame.
+     * A session that matches and then goes silent is not healthy even though
+     * every socket says "open" - see the watchdog in the main loop. */
+    double t_progress;
+    int resets;
+    char reset_reason[80];
+
     /* The head unit's own IPv4 addresses, and when they were last read. A
      * change here means the car joined a different network, which is the one
      * event that must not wait for a dial to time out. */
@@ -999,6 +1022,7 @@ static void touch_key(link_t *l, unsigned code)
 static void on_cmd(link_t *l, uint32_t type, const uint8_t *body, size_t n)
 {
     l->cmd_rx++;
+    l->t_progress = now_ms();
     switch (type) {
     case MSG_MATCH_STATUS:
         if (!l->matched) {
@@ -1069,6 +1093,7 @@ static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, si
     (void)ts;
     if (type == MSG_VIDEO_BEAT || (type == MSG_VIDEO_DATA && n == 0)) {
         l->vid_keepalive++;
+        l->t_progress = now_ms();      /* the phone is alive, just no picture in this one */
         return;
     }
     if (type != MSG_VIDEO_DATA) {
@@ -1079,6 +1104,11 @@ static void on_video(link_t *l, uint32_t type, uint32_t ts, const uint8_t *p, si
     l->vid_frames++;
     l->vid_bytes += n;
     l->t_last_video = now_ms();
+    l->t_progress = l->t_last_video;
+    /* Whatever went wrong before this frame is history: the screen reads
+     * error: verbatim, and a stale "read on the video channel failed" beside
+     * a running picture is worse than no line at all. */
+    if (l->error[0]) l->error[0] = 0;
     sink_put(&l->sink, p, n);
     if (!strcmp(l->state, "waiting for picture")) snprintf(l->state, sizeof l->state, "streaming");
 }
@@ -1117,6 +1147,7 @@ static void write_report(link_t *l)
             (unsigned long long)l->ch[CH_VR].bytes, (double)l->audio_bytes / 1024.0);
     fprintf(f, "touch: ctl=%d %s sent=%lu dropped=%lu\n", l->ctl_port,
             l->ctl_client != NO_SOCK ? "app=yes" : "app=no", l->touch_sent, l->touch_drop);
+    fprintf(f, "reset: %d last: %s\n", l->resets, l->reset_reason[0] ? l->reset_reason : "none");
     fprintf(f, "error: %s\n", l->error[0] ? l->error : "none");
     fclose(f);
 #ifdef _WIN32
@@ -1246,26 +1277,37 @@ static void parse_audio(link_t *l, int ci)
     }
 }
 
+/* Only cmd and video carry the picture. The screen prints error: verbatim, and
+ * the phone opens and closes media/tts/vr on its own schedule during a healthy
+ * session, so a closed audio channel must never be shown as "取流错误". */
+static int chan_required(int ci) { return ci == CH_CMD || ci == CH_VIDEO; }
+
 static void read_channel(link_t *l, int ci, fd_set *rd)
 {
     chan_t *c = &l->ch[ci];
     int got;
     if (!c->open || !FD_ISSET(c->fd, rd)) return;
     if (c->len == c->cap) {              /* a frame nothing can ever complete */
-        fail(l, "inbox on the %s channel overflowed", c->name);
+        if (chan_required(ci)) fail(l, "inbox on the %s channel overflowed", c->name);
         c->len = 0;
     }
     got = (int)recv(c->fd, (char *)c->buf + c->len, (int)(c->cap - c->len), 0);
     if (got == 0) {
-        logline(l, "%s channel closed by the phone", c->name);
-        snprintf(l->state, sizeof l->state, "phone closed %s", c->name);
+        if (chan_required(ci)) {
+            logline(l, "%s channel closed by the phone", c->name);
+            snprintf(l->state, sizeof l->state, "phone closed %s", c->name);
+            fail(l, "%s channel closed by the phone", c->name);
+        } else {
+            logline(l, "%s channel closed by the phone (not needed for the picture)", c->name);
+        }
         chan_close(c);
         return;
     }
     if (got < 0) {
         int e = serr();
         if (!SWOULDBLOCK(e)) {
-            fail(l, "read on the %s channel failed", c->name);
+            if (chan_required(ci)) fail(l, "read on the %s channel failed", c->name);
+            else logline(l, "read on the %s channel failed (not needed for the picture)", c->name);
             chan_close(c);
         }
         return;
@@ -1315,6 +1357,10 @@ static int connect_all(link_t *l)
     int need = 0;
     int had_video = l->ch[CH_VIDEO].open;
     snprintf(l->state, sizeof l->state, "connecting");
+    /* The watchdog's clock starts with the dials, not with the first frame:
+     * a session that opens every channel and then says nothing has to be
+     * caught by the same ten seconds. */
+    l->t_progress = now_ms();
     for (i = 0; i < NCH; i++) {
         if (l->ch[i].open) {
             logline(l, "%s channel still up (port %d)", l->ch[i].name, l->base_port + l->ch[i].offset);
@@ -1488,6 +1534,7 @@ int main(int argc, char **argv)
 {
     const char *mode, *host = NULL;
     int i, rc = 0;
+    int host_known = 1;   /* --find: false until something answers on the network */
     double seconds = 0;
 #ifndef _WIN32
     int drop_uid = -1;   /* mgu-uplink's whitelist uid; root is never whitelisted */
@@ -1624,10 +1671,18 @@ int main(int argc, char **argv)
             snprintf(L.host, sizeof L.host, "%s", found);
             logline(&L, "found the phone at %s", L.host);
         } else {
+            /* Nothing was found, so there is nothing to dial: with --host auto
+             * the host field still holds the word "auto", and dialling it
+             * produced "cannot resolve auto" in the report - an error about
+             * our own argument, displayed as if the phone had refused. The
+             * retry loop looks again every few seconds. */
+            host_known = 0;
             logline(&L, "no phone answered on the local network yet");
+            snprintf(L.state, sizeof L.state,
+                     L.nself ? "no phone on the network" : "looking for the phone");
         }
     }
-    if (connect_all(&L) != 0) logline(&L, "first attempt failed, retrying");
+    if (host_known && connect_all(&L) != 0) logline(&L, "first attempt failed, retrying");
     write_report(&L);
 
     while (1) {
@@ -1698,6 +1753,27 @@ int main(int argc, char **argv)
         }
         if (now - L.t_reported >= 1000) {
             L.t_reported = now;
+            write_report(&L);
+        }
+        /* A session that opens, matches and then goes silent is what the phone
+         * leaves behind when an earlier session was never torn down: the
+         * encoder even reports "init done" and not one frame follows. No read
+         * returns an error, so nothing else here notices - measured on the
+         * unit, frames=0 for three and a half minutes until the phone dropped
+         * the video socket by itself. Fresh sockets clear it at once, because
+         * the phone starts a new session for a new connection. */
+        if ((L.ch[CH_CMD].open || L.ch[CH_VIDEO].open) && now - L.t_progress >= WATCHDOG_MS) {
+            int stale = L.vid_frames && L.t_last_video > 0 && now - L.t_last_video >= WATCHDOG_MS;
+            snprintf(L.reset_reason, sizeof L.reset_reason,
+                     stale ? "no picture for %d s" : "the phone accepted the session and sent nothing",
+                     (int)(WATCHDOG_MS / 1000));
+            logline(&L, "watchdog: %s - dropping the session and dialling again", L.reset_reason);
+            L.resets++;
+            channels_reset(&L);
+            snprintf(L.state, sizeof L.state, "reconnecting");
+            L.t_retry = now;
+            connect_all(&L);
+            L.t_progress = now;
             write_report(&L);
         }
         /* Keep the cmd channel talking. The phone drops a session whose cmd

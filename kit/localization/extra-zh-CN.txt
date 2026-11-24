@@ -1,0 +1,9 @@
+# Characters the apps draw themselves, in addition to the kit's own locale
+# strings. bake_cjk.py unions this file into the shared atlas; whitespace and
+# this comment are ignored, and every line is just characters.
+#
+# Why it exists: the CJK atlas is baked from kit/runtime/locales/zh-CN.json, so
+# a word an app puts on its own canvas that the kit never uses has no glyph and
+# the car screen draws '?' instead. cn_carlife_wireless hit exactly that with
+# "投屏", 地址, 密码, 附近 and the 「」 quotes around button names.
+「」住址密店弱投握摸無然理租稍線联获铺阶附频
