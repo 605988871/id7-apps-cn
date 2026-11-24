@@ -132,10 +132,15 @@ function putVideo(seq, w, h) {
 
 function clearVideo() { try { fs.rmSync(VIDEO_FILE); } catch (e) { /* absent */ } }
 
+/* The loop only draws on a state change: with a live picture it returns
+ * undefined and the renderer keeps the last frame. For the test, carry the
+ * last canvas forward so "no redraw" reads as "picture still on screen". */
+let lastCalls = null;
 function render() {
     currentCanvas = makeCanvas();
-    renderFn();
-    return currentCanvas.calls;
+    const out = renderFn();
+    if (out !== undefined) lastCalls = currentCanvas.calls;
+    return lastCalls || currentCanvas.calls;
 }
 
 let failed = 0;
@@ -404,6 +409,45 @@ function check(name, cond, detail) {
     c = render();
     check('B9 the picture goes when the decoder stops writing',
         c.video === 0 && c.texts.some((t) => t.includes('MGU 商店')));
+
+    /* B10: the real disconnect the car showed. The video file is STILL THERE
+     * with its last frame - the phone walked out of range, link.txt says so.
+     * A frozen picture is not acceptable: after the grace period the status
+     * page must come back, and a fresh stream must bring the picture back. */
+    putVideo(99);                                  /* last frame stays on disk */
+    put(linkFile, 'state: streaming\nerror: none\n');
+    c = render();
+    check('B10 a healthy link keeps the picture', c.video === 1, JSON.stringify(c));
+
+    put(linkFile, 'state: reconnecting\nerror: none\n');
+    /* Still inside the grace period: do not blank the picture on a hiccup. */
+    c = render();
+    check('B10 a brief hiccup keeps the picture', c.video === 1, JSON.stringify(c));
+
+    /* The app measures the outage from its own first sight of the bad state.
+     * Let the grace period elapse, then drive the loop again. */
+    await new Promise((r) => setTimeout(r, 3100));
+    c = render();
+    check('B10 a phone that left shows the status page, not the last frame',
+        c.video === 0 && c.texts.some((t) => t.includes('MGU 商店')), JSON.stringify(c));
+
+    /* A fresh stream reconnects and the picture returns. */
+    put(linkFile, 'state: streaming\nerror: none\n');
+    putVideo(100);
+    c = render();
+    check('B10 a reconnected phone brings the picture back', c.video === 1, JSON.stringify(c));
+
+    /* B11: the native half died. link.txt still says "streaming" from the
+     * moment before the crash, but the launcher already wrote "restarting" -
+     * that newer report must win, or the screen freezes on the last frame
+     * for as long as the service keeps failing. */
+    put(runFile, 'state: restarting\ndetail: carlife-link exited (rc 3)\n');
+    render();                                      /* the loop notices it now */
+    await new Promise((r) => setTimeout(r, 3100));
+    c = render();
+    check('B11 a crashed service drops the picture even if link.txt is stale',
+        c.video === 0 && c.texts.some((t) => t.includes('MGU 商店')), JSON.stringify(c));
+    put(runFile, 'state: starting\ndetail: launching\n');
 
     console.log(failed === 0 ? '\nALL PASS' : '\n' + failed + ' FAILED');
     process.exit(failed === 0 ? 0 : 1);

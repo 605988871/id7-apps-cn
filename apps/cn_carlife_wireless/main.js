@@ -118,6 +118,38 @@ mgu.run({
         const t0 = Date.now();
         function sinceStart() { return Date.now() - t0; }
 
+        /* ---------- is the phone still feeding us? ----------
+         * The video file keeps its last frame when the phone walks out of
+         * range, so the header alone cannot say the stream stopped - seq just
+         * stays where it was and the renderer keeps drawing that old picture.
+         * link.txt is rewritten every second with the state of the connection;
+         * decode.txt says "stream ended" when its input closes. Both are the
+         * native side's own words, not a guess from a stale frame count.
+         *
+         * The states listed here are the ones with no picture behind them:
+         * reconnecting / connecting / handshake / looking for the phone /
+         * a channel the phone closed / not reachable. "streaming" and the
+         * early "waiting for picture" / "matched" / "asked ..." still count as
+         * healthy, so a handshake hiccup does not blank a working picture. */
+        let linkLostAt = 0;
+        const GRACE_MS = 3000;             /* a short outage is not a disconnect */
+        function linkHealthy() {
+            /* The launcher says "restarting" when either native half exited.
+             * link.txt can still read "streaming" from a moment before the
+             * crash, so the launcher's newer report wins here. */
+            const rr = readKV(RUN_TXT);
+            if (rr && (rr.state || '').trim() === 'restarting') return false;
+            const lr = readKV(LINK_TXT);
+            if (!lr) return true;          /* no report yet: do not guess */
+            const st = (lr.state || '').trim();
+            if (lr.error && lr.error !== 'none') return false;
+            if (/^streaming$|^waiting for picture$|^matched$|^asked /.test(st)) return true;
+            if (/^reconnecting$|^connecting$|^handshake$|^looking for the phone$|^no phone on the network$|^phone not reachable$|^phone closed /.test(st)) return false;
+            const dr = readKV(DECODE_TXT);
+            if (dr && /stream ended/.test(dr.state || '')) return false;
+            return true;                   /* unknown states: keep the picture */
+        }
+
         /* ---------- touch back to the phone ---------- */
         /* link wants normalised points (0..10000) and scales them to the
          * encoded frame itself, so the exact display scale never matters here. */
@@ -434,7 +466,16 @@ mgu.run({
              * than reasoned about. */
             readVideo();
             readLag();
-            ready = vidSeq > 0 && !!ctx.video();
+            /* A phone that left the hotspot stops updating link.txt within a
+             * second. Hold the old picture through brief hiccups, then fall
+             * back to the status page instead of freezing on the last frame. */
+            if (!linkHealthy()) {
+                if (!linkLostAt) linkLostAt = Date.now();
+            } else {
+                linkLostAt = 0;
+            }
+            const disconnected = linkLostAt > 0 && Date.now() - linkLostAt >= GRACE_MS;
+            ready = vidSeq > 0 && !!ctx.video() && !disconnected;
             if (ready !== showing || (showing && lagShown !== lagLine)) {
                 showing = ready;
                 lagShown = lagLine;

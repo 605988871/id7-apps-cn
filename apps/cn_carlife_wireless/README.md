@@ -212,6 +212,23 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 本机任何 /24 的提示地址只等两轮拨号就被扫网替换——这正好覆盖"在设置里手填过旧热点 IP"
 的情况。`link.txt` 多了一行 `net:`，记录车机当前地址，用来确认换网真的生效。
 
+**0.8.3：手机断开后回到状态页，不再停在最后一帧**
+
+0.8.2 之前，手机离开热点或关闭 CarLife 后，解码器不再写新帧，但视频文件还在、
+`seq` 停在最后一帧上——渲染器据此一直画那张旧画面，看起来像卡死。应用只看文件头，
+没有"链路断了"这回事。
+
+现在应用的循环每秒读一次原生侧的报告：
+- `link.txt`：`state` 变成 `reconnecting` / `connecting` / `phone closed …` /
+  `phone not reachable` / `looking for the phone`，或 `error` 非 none；
+- `run.txt`：`state: restarting`——取流或解码任一进程退出、服务正在重启；
+  这条优先，因为进程崩掉时 `link.txt` 可能还残留崩前一刻的 `streaming`；
+- `decode.txt`：`state` 含 `stream ended`。
+
+判定为断开后等 **3 秒**宽限期（握手抖动、短暂重连不该闪一下黑屏），
+然后回到状态页，把断开原因（"手机没有回画面，正在重新连接"、"取流服务：反复重启"等）
+直接写在页面上。手机回来、新的帧落盘后自动回到画面，无需操作。
+
 **0.8.2：六七秒的延迟在 link 的 6 MB 输入队列**
 
 0.8.1 上车后颜色对了，但滑动/点击仍旧要六到七秒才有反应。这一处不在解码器、
