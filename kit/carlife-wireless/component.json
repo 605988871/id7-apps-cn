@@ -1,7 +1,7 @@
 {
   "id": "carlife-wireless",
   "kind": "tool",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "title": "CarLife 无线投屏取流与解码",
   "description": "车机连上手机热点后，通过 WiFi 接收百度 CarLife 的画面（H.264），在车机侧解码成完整画面供中控屏显示，并把触摸回传给手机。独立的无线链路，不触碰原车 CarLife 的 USB 进程。",
   "internet": true,

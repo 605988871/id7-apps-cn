@@ -360,6 +360,31 @@ def test_reconnect_latency():
           'select wakes often enough to pump the control socket')
 
 
+def test_nonblocking_connect_waits():
+    """A non-blocking connect() returns EINPROGRESS on Linux, not EWOULDBLOCK.
+
+    SWOULDBLOCK left EINPROGRESS out, so tcp_connect() called every dial a
+    failure the instant it started - "7240 failed (115)" - and never gave the
+    handshake the 500 ms it had asked for. The car said "phone not reachable"
+    while a three-line node script reached the same port in milliseconds.
+    Neither of the two harnesses here can catch it: Windows reports
+    WSAEWOULDBLOCK (handled), and a local test server accepts before connect()
+    even returns. Guarded at the source, like the drop-uid order above."""
+    src = SRC.read_text(encoding='utf-8', errors='replace')
+    posix = src[src.find('#  define serr() errno'):]
+    posix = posix[:posix.find('#endif')]
+    win = src[:src.find('#  define serr() errno')]
+    win = win[win.rfind('#ifdef _WIN32'):]
+    check('EINPROGRESS' in posix and 'EALREADY' in posix,
+          'a POSIX non-blocking connect is waited on, not failed',
+          posix.strip().splitlines()[-3:])
+    check('WSAEWOULDBLOCK' in win and 'EINPROGRESS' not in win,
+          'the Windows branch still keys on WSAEWOULDBLOCK')
+    # both places that start a connect must go through the same rule
+    check(src.count('SWOULDBLOCK(e)') >= 3,
+          'tcp_connect, tcp_start_v4 and the read path share one rule')
+
+
 def test_frame_rate_and_session_stability():
     """Three fixes that the car feels but a fake phone cannot reproduce.
 
@@ -453,6 +478,7 @@ def test_shipped_binaries():
 
 def main():
     test_drop_uid_order()
+    test_nonblocking_connect_waits()
     test_reconnect_latency()
     test_frame_rate_and_session_stability()
     test_shipped_binaries()

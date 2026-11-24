@@ -106,9 +106,14 @@ cat /run/mgu-uplink/lease.json      # router = 手机 IP（只有 online 时才�
 cat /proc/net/route                 # wlan0 的默认网关，lease 缺失时的备用手机地址
 cat /var/opt/mgu-uplink/uids.d/carlife-wireless   # 应为 65534（Store 安装的白名单）
 ```
-- 0.6.0 起 `find-phone.sh` 依次尝试：设置里手填地址 → `lease.json` 的 router →
-  `/proc/net/route` 默认网关 → `status.json` 的 `wifi.ip` 推算网关 → `auto` 局域网发现。
-  所以**「已关联但没有租约」时取流服务也会启动**，不再卡在"尚未启动"。
+- 0.7.4 起 `find-phone.sh` 依次尝试：设置里手填地址 → `lease.json` 的 router（**且该网关
+  仍在 `/proc/net/arp` 里，即它确实还是邻居**）→ `/proc/net/route` 默认网关 →
+  `status.json` 的 `wifi.ip` 推算网关（同样要 ARP 确认）→ `auto` 局域网发现。
+  租约会"过期"：mgu-uplink 在 DHCP 时写 `lease.json`，Wi-Fi 掉了并不删，所以换过热点的车
+  可能拿**上一个路由器**的地址去拨号（实测：车已在 10.92.100.115，却一直拨 192.168.88.1）。
+  校验不过就落到局域网发现；另外 `carlife-link` 对着一个拨不通的地址连续失败一分钟后，
+  也会自己扫一遍当前网络，把 host 换成真正回话的那台（`link.txt` 的 `scan:` 会记下扫了哪些 /24）。
+  所以**「已关联但没有租约」或「租约是旧的」时取流服务都能自己走回来**，不会再卡死在一个死地址上。
 - 在车机 UI 上：本应用中间的「连接热点」能看到手机热点、点它输密码、状态变「已连接」
 - `status.json` 的 `wifi.link` 若为 `unavailable`，看 `error`——通常是车的 Wi-Fi 被关掉或车自身占用 `wlan0`
 - 本项目不需要车机"能否做 STA"的额外前提：`mgu-uplink` 已经通过车的 `wlan0` 解决
@@ -132,6 +137,11 @@ cat /dev/shm/carlife-wireless-decode.txt        # 看 frames / in bytes / error
 
 - `link.txt`: `state: streaming`、`match: yes`、`frames` 增长 → 取流成功
 - `decode.txt`: `frames` 增长、`errors: 0` → 解码成功
+- `state: phone not reachable` 且 `error: <ip>:7240 failed (115)`：0.7.3 及更早的 link 把
+  Linux 非阻塞 `connect()` 的 `EINPROGRESS`（115，"还在握手"）当成失败，**连接刚开始就被判错**，
+  从没等过那 500 ms。本地测试服务器会立刻 accept 所以测不出来，Windows 上是 `WSAEWOULDBLOCK`
+  也测不出来；只有真手机在 Wi-Fi 上才暴露。0.7.4 起 115 被正确当作"等 select"，同一地址要么
+  连上，要么显示 `timed out`（真超时）或 `refused`（端口没人听）。
 - 应用主页面会把以上状态直接画出来，不用 SSH 也能定位卡在哪一步：
   「热点：已关联…（尚未获取 IP 租约）」= mgu-uplink 只关联成功；
   「取流服务：反复重启 · carlife-decode exited (rc N)」= 先退出的是解码器；

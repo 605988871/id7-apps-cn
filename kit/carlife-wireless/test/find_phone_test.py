@@ -41,6 +41,12 @@ def posix(p):
 
 ROUTE = ('Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n')
 
+ARP = 'IP address       HW type     Flags       HW address            Mask     Device\n'
+
+
+def arp_line(ip, iface='wlan0', flags='0x2', mac='aa:bb:cc:dd:ee:ff'):
+    return '%-15s 0x1         %-11s %-21s *        %s\n' % (ip, flags, mac, iface)
+
 
 def route_line(iface, gw_hex, dest='00000000'):
     return '%s\t%s\t%s\t0003\t0\t0\t0\t00000000\t0\t0\t0\n' % (iface, dest, gw_hex)
@@ -53,8 +59,13 @@ class Fixture:
         self.lease = os.path.join(self.dir, 'lease.json')
         self.route = os.path.join(self.dir, 'route')
         self.status = os.path.join(self.dir, 'status.json')
+        self.arp = os.path.join(self.dir, 'arp')
         self.allow_auto = '1'
         self.extra = {}
+        # An empty neighbour table by default, so a lease has to prove it is
+        # still current before the finder dials it. Writing the fixture
+        # explicitly also keeps the result the same on Windows and Linux.
+        self.write(self.arp, ARP)
 
     def write(self, path, data):
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
@@ -67,6 +78,7 @@ class Fixture:
             'CARLIFE_LEASE': posix(self.lease),
             'CARLIFE_ROUTE': posix(self.route),
             'CARLIFE_STATUS': posix(self.status),
+            'CARLIFE_ARP': posix(self.arp),
             'CARLIFE_WIFI_IF': 'wlan0',
             'CARLIFE_ALLOW_AUTO': self.allow_auto,
         })
@@ -109,10 +121,12 @@ def main():
     check('host file wins over lease', f.run(), '10.0.0.9|app setting')
     f.close()
 
-    # 4. lease.json is the normal path once mgu-uplink is "online"
+    # 4. lease.json is the normal path once mgu-uplink is "online", and the
+    #    router it names is confirmed by the neighbour table
     f = Fixture()
     f.write(f.lease, json.dumps({'ip': '192.168.43.55', 'router': '192.168.43.1',
                                  'prefix': 24, 'dns': []}))
+    f.write(f.arp, ARP + arp_line('192.168.43.1'))
     check('lease router', f.run(), '192.168.43.1|mgu-uplink lease')
     f.close()
 
@@ -147,6 +161,7 @@ def main():
     f.write(f.status, json.dumps({'state': 'online',
                                   'wifi': {'link': 'online', 'ssid': 'iQOO 12 Pro',
                                            'ip': '192.168.137.23'}}))
+    f.write(f.arp, ARP + arp_line('192.168.137.1'))
     check('estimated gateway from car IP', f.run(),
           '192.168.137.1|estimated gateway from car IP 192.168.137.23')
     f.close()
@@ -155,6 +170,7 @@ def main():
     f = Fixture()
     f.write(f.host, 'not-an-ip\n')
     f.write(f.lease, json.dumps({'router': '192.168.43.1'}))
+    f.write(f.arp, ARP + arp_line('192.168.43.1'))
     check('invalid host ignored', f.run(), '192.168.43.1|mgu-uplink lease')
     f.close()
 
@@ -163,7 +179,37 @@ def main():
     f.write(f.lease, json.dumps({'router': '192.168.43.1'}))
     f.write(f.route, ROUTE + route_line('wlan0', '0101A8C0'))
     f.write(f.status, json.dumps({'wifi': {'link': 'online', 'ip': '10.1.2.3'}}))
+    f.write(f.arp, ARP + arp_line('192.168.43.1'))
     check('lease beats route and status', f.run(), '192.168.43.1|mgu-uplink lease')
+    f.close()
+
+    # 12. a lease whose router is no longer a neighbour is a leftover from a
+    #     network the car left. Seen on the unit: lease said 192.168.88.1 while
+    #     the car sat at 10.92.100.115 on the phone's hotspot, and every dial
+    #     went to a router that was not on the link. It must not be dialled.
+    f = Fixture()
+    f.write(f.lease, json.dumps({'interface': 'wlan0', 'ip': '192.168.88.115',
+                                 'router': '192.168.88.1'}))
+    f.write(f.arp, ARP + arp_line('10.92.100.136'))
+    check('stale lease ignored -> auto discovery', f.run(), 'auto|auto discovery')
+    f.close()
+
+    # 13. same stale lease, but the kernel does have a live default route on
+    #     wlan0: fall through to it (88645C0A is little-endian 10.92.100.136)
+    f = Fixture()
+    f.write(f.lease, json.dumps({'interface': 'wlan0', 'ip': '192.168.88.115',
+                                 'router': '192.168.88.1'}))
+    f.write(f.route, ROUTE + route_line('wlan0', '88645C0A'))
+    f.write(f.arp, ARP + arp_line('10.92.100.136'))
+    check('stale lease falls through to the route', f.run(),
+          '10.92.100.136|default route on wlan0')
+    f.close()
+
+    # 14. an entry that exists but never resolved (flags 0x0) is not proof
+    f = Fixture()
+    f.write(f.lease, json.dumps({'interface': 'wlan0', 'router': '192.168.88.1'}))
+    f.write(f.arp, ARP + arp_line('192.168.88.1', flags='0x0'))
+    check('unresolved neighbour is not proof', f.run(), 'auto|auto discovery')
     f.close()
 
     print()

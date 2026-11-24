@@ -102,7 +102,15 @@ typedef socklen_t socklen_arg;
 #  define NO_SOCK (-1)
 #  define sclose close
 #  define serr() errno
-#  define SWOULDBLOCK(e) ((e) == EWOULDBLOCK || (e) == EAGAIN)
+/* A non-blocking connect() does not return EWOULDBLOCK on Linux, it returns
+ * EINPROGRESS, and the handshake is only finished later by select(). Leaving
+ * EINPROGRESS out meant every connect to a phone on Wi-Fi was called a failure
+ * the instant it started - "7240 failed (115)" - and never given the 500 ms it
+ * had asked for. It went unnoticed because connects to a local test server
+ * return 0 immediately, and because Windows (WSAEWOULDBLOCK) is the platform
+ * the desktop tests run on. */
+#  define SWOULDBLOCK(e) ((e) == EWOULDBLOCK || (e) == EAGAIN || \
+                          (e) == EINPROGRESS || (e) == EALREADY)
 #  define MKDIR(p) mkdir(p, 0777)
 static int net_init(void) { return 0; }
 static void net_done(void) {}
@@ -426,6 +434,12 @@ static sock_t tcp_connect(const char *host, int port, int timeout_ms, char *err,
 #define DISC_BATCH 48
 #define DISC_TIMEOUT_MS 400
 
+/* How many failed dials to a hinted address before looking for the phone on
+ * the network we are on now. At the 3 s retry interval this is a minute: long
+ * enough that a phone in Wi-Fi power save is not declared missing, short
+ * enough that a stale lease does not cost the whole drive. */
+#define HINT_ROUNDS 20
+
 #ifndef _WIN32
 /* Virtual interfaces are never the phone's network, and every one of them
  * would cost a /24 sweep of its own: the unit runs dockerd, and a laptop's
@@ -745,6 +759,7 @@ typedef struct {
     double t0, t_last_video, t_reported, t_retry;
     int retry_idx;   /* which critical channel the next reopen pass starts at */
     double t_keepalive;  /* when the last periodic cmd message went out */
+    int fail_rounds;     /* consecutive dials that reached no cmd channel */
 } link_t;
 
 static link_t L;
@@ -1565,10 +1580,28 @@ int main(int argc, char **argv)
                     snprintf(L.state, sizeof L.state, "no phone on the network");
                     logline(&L, "still no phone answering on this network");
                 }
+            } else if (++L.fail_rounds >= HINT_ROUNDS) {
+                /* The address was a hint (mgu-uplink's lease, the file the app
+                 * writes): a lease outlives the network it describes, so after
+                 * the car joins another hotspot it can name a router that is
+                 * not on this link at all, and dialling it recovers never.
+                 * Sweep the network we are on now and switch if the phone is
+                 * somewhere else on it. */
+                char found[64];
+                L.fail_rounds = 0;
+                if (discover(L.base_port, found, sizeof found, L.scan, sizeof L.scan) == 0) {
+                    if (strcmp(found, L.host))
+                        logline(&L, "%s is not answering; the phone is at %s", L.host, found);
+                    snprintf(L.host, sizeof L.host, "%s", found);
+                } else {
+                    logline(&L, "hint %s is not answering, nothing on %s has the port",
+                            L.host, L.scan[0] ? L.scan : "the network");
+                }
             }
             if (ready) {
                 logline(&L, "trying %s again", L.host);
                 connect_all(&L);
+                if (L.ch[CH_CMD].open) L.fail_rounds = 0;
             }
         } else if (L.ch[CH_CMD].open && (!L.ch[CH_VIDEO].open || !L.ch[CH_TOUCH].open) && now - L.t_retry >= 400) {
             /* A closed touch channel used to stay down for 3 s, dropping every
