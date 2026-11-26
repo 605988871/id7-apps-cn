@@ -2686,3 +2686,6 @@ Outside air with each run	每次测试记录车外空气
 Show (pressure from the engine unit)	显示（大气压力取自发动机控制单元）
 Show, times corrected to standard air (SAE J1349)	显示，时间修正至标准空气（SAE J1349）
 Off (no engine unit requests)	关闭（不查询发动机控制单元）
+Off by day (on when the car switches to night)	白天关闭（车辆转入夜间时自动开启）
+Turn glow and door red on both strips of a door line (G26: slower blink)	转向灯和车门红色同时亮在门灯条两侧（G26：闪烁较慢）
+Cold engine: rpm bar faded yellow from the cold limit to the redline	冷机：转速条从冷机上限到红线渐变为黄色

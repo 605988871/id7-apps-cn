@@ -7,7 +7,7 @@
       "title": "换挡转速"
     }
   },
-  "version": "2.0.49",
+  "version": "2.0.54",
   "vendor": "custom",
   "loggingId": "OA97",
   "iconGlyph": "rpm",
@@ -2043,5 +2043,6 @@
       },
       "group": "Advanced"
     }
-  ]
+  ],
+  "autostart": true
 }

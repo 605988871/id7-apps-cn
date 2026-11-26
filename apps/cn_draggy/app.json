@@ -2,7 +2,7 @@
   "id": "cn_draggy",
   "title": "Drag Timer",
   "description": "0-100、100-200 及 1/4 英里计时，记录最佳成绩",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "vendor": "custom",
   "loggingId": "OA94",
   "iconGlyph": "flag",

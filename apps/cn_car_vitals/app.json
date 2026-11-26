@@ -7,7 +7,7 @@
       "title": "M 车辆仪表"
     }
   },
-  "version": "2.27.12",
+  "version": "2.27.14",
   "vendor": "custom",
   "loggingId": "OA93",
   "iconGlyph": "gauge",
@@ -181,6 +181,12 @@
           "3.5 bar / 50 psi"
         ]
       ]
+    },
+    {
+      "key": "coldZone",
+      "label": "Cold engine: rpm bar faded yellow from the cold limit to the redline",
+      "type": "bool",
+      "default": true
     },
     {
       "key": "speedUnit",
