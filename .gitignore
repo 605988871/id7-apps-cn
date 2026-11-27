@@ -38,6 +38,10 @@ kit/tools/.font-cache/
 /backups/
 *.mgu
 *.tgz
+# Prebuilt app source packages from IterioDev/car-apps (no BMW SDK inside).
+# The head unit needs these committed tgz to install the localized apps.
+!/apps/cn_iteriodev_*/*.tgz
+!/apps/cn_oap-*/*.tgz
 *.pcap
 *.pcapng
 *.dlt
