@@ -2,18 +2,10 @@
   "id": "cn_dtc_scanner",
   "title": "Fault Scanner",
   "description": "读取并清除各控制单元的故障记录，以及当前 Check Control 提示信息",
-  "texts": {
-    "zh-CN": {
-      "title": "故障检测"
-    }
-  },
-  "version": "2.9.11",
+  "version": "2.15.1",
   "vendor": "custom",
   "loggingId": "OA95",
   "iconGlyph": "engine",
-  "buildOnly": [
-    "i18n"
-  ],
   "mguHmi": [
     "ID7",
     "ID8"
@@ -37,7 +29,26 @@
     },
     "de.bmw.infotainment.KombiInterface_2": {
       "ccList": "rs",
-      "newCCMessage": "rs"
+      "newCCMessage": "rs",
+      "cbsDataServiceList": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS": {
+      "_optional": "the health report's 12 V charge, oil and coolant, and the Plausibility tab's rpm and temperatures",
+      "statusBattery2": "rs",
+      "statusEngineSpeed2": "rs",
+      "statusEngineTemperature": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "_optional": "the Plausibility tab's speed",
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "_optional": "the Plausibility tab's forward g",
+      "statusLongitudinalAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infrastructure.EnvironmentalInformation": {
+      "_optional": "the Plausibility tab's outside temperature",
+      "ExteriorTemperature": "s"
     }
   },
   "screens": [
@@ -53,6 +64,10 @@
         [
           "BTN_CLEAR",
           "Clear all"
+        ],
+        [
+          "BTN_DETAIL",
+          "Fault details"
         ],
         [
           "BTN_PAGE",
@@ -91,6 +106,12 @@
     {
       "key": "autoScan",
       "label": "Scan when opened",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "plausibility",
+      "label": "Plausibility checks",
       "type": "bool",
       "default": true
     },
@@ -170,5 +191,13 @@
         ]
       ]
     }
+  ],
+  "texts": {
+    "zh-CN": {
+      "title": "故障检测"
+    }
+  },
+  "buildOnly": [
+    "i18n"
   ]
 }

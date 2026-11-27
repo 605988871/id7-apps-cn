@@ -2,12 +2,7 @@
   "id": "cn_live_adjustments",
   "title": "Engine Config",
   "description": "面向 BMW MGU ID7 的发动机配置。排气阀门：通过车辆自身诊断链路执行原厂/开/关，或随驾驶模式同步（运动模式开、Eco Pro 关）；可阻止 DME 超时保持，超过设定转速时交还车辆控制。在设置中选择 BM3 或 MHD 后：发动机地图切换、回火声、主动声音与最大冷却。实验功能：独立开关控制 xDrive 关闭至本次点火循环（DSC LMV_FUNKTION）",
-  "texts": {
-    "zh-CN": {
-      "title": "发动机配置"
-    }
-  },
-  "version": "0.9.14",
+  "version": "0.9.16",
   "vendor": "custom",
   "loggingId": "OAA0",
   "iconGlyph": "sliders",
@@ -305,5 +300,10 @@
   ],
   "config": {
     "bm3MarkerAddress": "807FFE50"
+  },
+  "texts": {
+    "zh-CN": {
+      "title": "发动机配置"
+    }
   }
 }

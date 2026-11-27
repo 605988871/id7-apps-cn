@@ -2,12 +2,7 @@
   "id": "cn_brake_test",
   "title": "Brake Test",
   "description": "100-0 与 200-0 制动距离、峰值减速度与热衰减记录",
-  "texts": {
-    "zh-CN": {
-      "title": "制动测试"
-    }
-  },
-  "version": "1.5.24",
+  "version": "1.5.26",
   "vendor": "custom",
   "loggingId": "OA99",
   "iconGlyph": "brake",
@@ -175,5 +170,10 @@
         ]
       ]
     }
-  ]
+  ],
+  "texts": {
+    "zh-CN": {
+      "title": "制动测试"
+    }
+  }
 }

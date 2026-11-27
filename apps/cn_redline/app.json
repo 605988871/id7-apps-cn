@@ -2,13 +2,9 @@
   "id": "cn_redline",
   "title": "Redline",
   "description": "全屏转速表，含换挡灯、挡位、换挡评分与冷车转速保护；HUD 由 @biscotit 提供",
-  "texts": {
-    "zh-CN": {
-      "title": "换挡转速"
-    }
-  },
-  "version": "2.0.54",
+  "version": "2.1.1",
   "vendor": "custom",
+  "autostart": true,
   "loggingId": "OA97",
   "iconGlyph": "rpm",
   "mguHmi": [
@@ -751,6 +747,21 @@
         60
       ],
       "group": "Engine"
+    },
+    {
+      "key": "labMinTorque",
+      "label": "Shift times: under load from",
+      "type": "number",
+      "unit": "Nm",
+      "default": 150,
+      "steps": [
+        80,
+        100,
+        150,
+        200,
+        300
+      ],
+      "group": "Shift point"
     },
     {
       "key": "learn",
@@ -2044,5 +2055,9 @@
       "group": "Advanced"
     }
   ],
-  "autostart": true
+  "texts": {
+    "zh-CN": {
+      "title": "换挡转速"
+    }
+  }
 }

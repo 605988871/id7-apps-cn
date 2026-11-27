@@ -2689,3 +2689,220 @@ Off (no engine unit requests)	关闭（不查询发动机控制单元）
 Off by day (on when the car switches to night)	白天关闭（车辆转入夜间时自动开启）
 Turn glow and door red on both strips of a door line (G26: slower blink)	转向灯和车门红色同时亮在门灯条两侧（G26：闪烁较慢）
 Cold engine: rpm bar faded yellow from the cold limit to the redline	冷机：转速条从冷机上限到红线渐变为黄色
+ACCEL 	加速 
+AFTER A HARD DRIVE	激烈驾驶之后
+ALSO CHECK	同时检查
+AT THIS MOMENT	此刻
+AVERAGE	平均
+AVG 	平均 
+After each swap you are reminded to check the wheel bolts	每次更换后都会提醒你检查车轮螺栓
+Air filter	空气滤芯
+Air filter every	空气滤芯周期
+All drives	全部行程
+All-season tyres tread	四季胎胎纹
+Another station	另一个加油站
+BASELINE 	基准 
+BEST 	最佳 
+BRAKE 	制动 
+Back in 	回到 
+Back to start	回到起点
+Battery: read the 12 V voltage	电池：读取 12 V 电压
+Before / After compares	前 / 后 对比
+Before and after: 	之前与之后：
+Brake discs	刹车盘
+Brake fluid every	刹车油周期
+Brake hard from above 	急刹来自高于 
+Brake pads	刹车片
+Brake pads front every	前刹车片周期
+Brake pads rear every	后刹车片周期
+CHANGES	变化
+COMBINED  	综合  
+Cabin filter	空调滤芯
+Cabin filter every	空调滤芯周期
+Care (wash, wax, ...)	养护（洗车、打蜡……）
+Change to mark	改为标记
+Changing 	变化中 
+Climate	空调
+Compare a drive with	将行程与以下内容对比
+Counted from the next engine start	从下次发动机启动时开始计数
+Counted: upshifts under load (over 	已计数：负载下的升挡（超过 
+Door	车门
+Drives of a similar average speed	平均车速相近的行程
+Drives of a similar length	里程相近的行程
+Drives view	行程视图
+Drives view: 	行程视图：
+E85 at the pump: 	加油站的 E85：
+ENGINE START	发动机启动
+Ends at 	结束于 
+Engine oil every	机油周期
+Ethanol in the pump fuel	加油燃料中的乙醇
+Ethanol in the station's E85	加油站 E85 中的乙醇
+Ethanol in the tank now	当前油箱中的乙醇
+Exhaust	排气
+Fault details	故障详情
+Fault details: the next fault.  Next page: back	故障详情：下一页看下一个故障。返回：回到上一页
+Flash length (tap to change)	闪烁时长（点击切换）
+Fuel brand	燃油品牌
+Fuel mix page: E85 blend calculator	混合燃油页：E85 配比计算器
+Fuel station (next refuel)	加油站（下次加油）
+Fuel tank size	油箱容量
+GEAR	挡位
+Gearbox oil every	变速箱油周期
+General guidance for a 12 V battery,	12 V 电池的一般参考，
+HEADLIGHTS DARK	大灯熄灭
+Hard stop from	急刹自
+ID 	编号 
+Intake	进气
+It shows whenever 	它会在以下情况显示：
+KM PER DRIVE	每次行程公里数
+Light	灯光
+Mark a change	标记一次变化
+Milestones are noted as the odometer passes them.	里程表经过时记录里程碑。
+Mode	模式
+Most power seen	见过的最大功率
+My usual station	我常去的加油站
+NEWEST: 	最新：
+NEXT MILESTONE	下一个里程碑
+NEXT SWAP	下次更换
+NOW	当前
+Needs two drives: 	需要两次行程：
+New part	新零件
+Next window picks another	下一个窗口会另选一个
+No changes in the last 30 s	过去 30 秒无变化
+No interval set: choose them in Settings	未设置周期：请在设置中选择
+No item with a driving factor is followed: Settings	没有关注带驾驶系数的项目：请到设置
+No shifts measured yet: pull through the gears.	尚未测得换挡：请全油门拉转各挡。
+No swap marked yet	尚未标记更换
+None (E0)	无（E0）
+Not enough driving recorded since the last service yet (	自上次保养以来行驶记录不足（
+Not noted	未记录
+Not now: 	暂不：
+Noted in Garage (a part or care)	在车库记录（零件或养护）
+Nothing found yet: every pair has agreed so far.	尚未发现：目前每对数值都一致。
+Nothing is sent to the car.  Tap here to resume	不会向车辆发送任何数据。点击此处继续
+ODOMETER	里程表
+Octane (next refuel)	辛烷值（下次加油）
+Oil and filter	机油与滤芯
+Other	其他
+Outside 	外部 
+PEAK 	峰值 
+PER STATION	每座加油站
+PUMP FUEL	加油燃料
+Plausibility checks	合理性检查
+Play / Pause	播放 / 暂停
+Play, Speed and Back to start: in the menu. Now at 	播放、速度和回到起点：在菜单中。当前 
+Police: flashes a burst · flash · order (tap to change)	警灯：连闪 · 闪烁 · 顺序（点击切换）
+Press Mark before, then do one thing in the car	先按“标记之前”，然后在车里做一个动作
+Put the E85 in first, it mixes as you fill the rest.	先加 E85，随后加油时会自动混合。
+QUIET FOR	安静时长
+READY IN ABOUT 	约需 
+REDLINE	红线
+REFUEL SEEN	已记录加油
+RPM DROP AT EACH CHANGE	每次换挡的转速落差
+Record 	记录 
+Record a CSV of each drive	为每次行程记录 CSV
+Record every Sport stretch	记录每段运动驾驶
+Recording is off until you switch it on	录制关闭中，需手动开启
+Recordings kept	保留的录制
+Replay speed	回放速度
+SAVED FOR THIS	已为此保存
+SAVED HERE	已保存在此
+SAVING NOW: 	正在保存：
+SIDEWAYS 	侧滑 
+SPEED 	速度 
+SPOT ON  (	完全吻合  (
+STOPPED BY STOP ALL	已被“全部停止”终止
+Save at full power	全功率时保存
+Save on a hard stop	急刹时保存
+Save the last minute	保存最后一分钟
+Saved as 	保存为 
+Saved: the 60 s before, and 15 s after	已保存：之前 60 秒，之后 15 秒
+Saving: 	保存中：
+Service counts every drive in the background, also with this screen closed.	保养会在后台统计每次行程，即使本页关闭也是如此。
+Setting change	设置变更
+Settings > Save the last minute. Until then nothing is read or saved.	设置 > 保存最后一分钟。在此之前不读取也不保存任何数据。
+Shift points need full-throttle pulls up to the redline (	换挡点需要全油门拉至红线（
+Shift times: under load from	换挡时间：负载下自
+Signal Hunter tab (developer)	信号猎手页（开发者）
+Signal Hunter: label	信号猎手：标签
+Signal Hunter: play speed	信号猎手：播放速度
+Signal Hunter: show noisy values	信号猎手：显示抖动值
+Signal Hunter: window length	信号猎手：窗口长度
+Spark plugs	火花塞
+Spark plugs every	火花塞周期
+Stealth minutes	隐身分钟数
+Stealth: headlights dark while parked (only for use on private property)	隐身：驻车时大灯熄灭（仅限私人场所使用）
+Summer and winter	夏季与冬季
+Summer tyres tread	夏季胎胎纹
+Summer, winter and all-season	夏季、冬季与四季
+Suspension	悬挂
+THIS WAKE, LAST 10 MINUTES	本次唤醒，最近 10 分钟
+TREAD DEPTH	胎纹深度
+TRY	试播
+Tap a cell to switch that light in that beat. Saved by itself.	点击格子切换该节拍下的灯，自动保存。
+Target ethanol	目标乙醇比例
+The average of the 10 before it	之前 10 次的平均值
+The chosen one is shown here: why it was saved, its top speed and g, as charts.	所选录制显示于此：保存原因、最高车速与 G 值，以图表呈现。
+The drive before	上一次行程
+The values at the cursor show here while it plays.	播放时，光标处的数值显示在此。
+They carry on when you leave the Strobe tab.	离开爆闪页后它们仍会继续。
+This drive (	本次行程（
+This one could not be saved: 	这一条无法保存：
+Tune / map	调校 / 程序
+Two or more services of 	两项或更多保养项目
+Wheel sets	轮组
+Wheels	车轮
+Window	窗口
+Winter tyres tread	冬季胎胎纹
+Wiper	雨刮
+YOUR OWN	自定义
+a full bar: quiet 5 times longer than usual (at least 2 s)	满格：安静时长为平常的 5 倍（至少 2 秒）
+and the pressures between 50 and 100 km.	以及 50 至 100 公里之间的胎压。
+average	平均
+best (fastest 10 %)	最佳（最快 10%）
+changes a second, last minute	每秒变化次数，最近一分钟
+charge the car reports 	车辆报告的电量 
+chosen in Settings > Noted in Garage	在 设置 > 车库记录 中选择
+dashed line: the trend	虚线：趋势
+done today	今日已完成
+dots: the last second	点：最近一秒
+drives it (bigger = shorter gear)	决定它（值越大 = 齿比越短）
+estimate from rpm and power	由转速和功率估算
+every 	每 
+from speed	由车速
+full: average   faded: best (fastest 10 %)	实线：平均   淡色：最佳（最快 10%）
+gear 	挡位 
+green line: average while moving, 	绿线：行驶中的平均值，
+green: calmer or cooler, red: harder on the car. Settings > Compare with	绿色：更平稳或更凉爽，红色：对车辆负荷更大。设置 > 对比对象
+how far you drove between them, against your interval.	两次之间你行驶的距离，与你的周期对比。
+in all	总计
+no fuel figure for 	无燃油数据：
+oil 	机油 
+on since 	开启自 
+pressures for these tyres. The note goes after 100 km.	这些轮胎的胎压。备注在 100 公里后记录。
+record 	记录 
+rpm (red: hard, green: gentle), power in amber	转速（红：激烈，绿：温和），功率为琥珀色
+rpm (up to 	转速（最高 
+sent	已发送
+sets "in it now" to 	将“当前使用”设为 
+sideways	侧滑
+since 	自 
+since Mark before at 	自“标记之前”于 
+slowest	最慢
+something happens	有情况发生
+step 	步进 
+target 	目标 
+the 75 s become one file	这 75 秒成为一个文件
+the label Label it uses now: 	当前使用的标签：
+the last 8 s, newest on top; a row lights up as it changes	最近 8 秒，最新在最上；变化时该行高亮
+the plain interval is the whole story for it.	对它而言，普通周期就是全部依据。
+this season	本季节
+white line: average 	白线：平均 
+your interval 	你的周期 
+60 s ago	60 秒前
+60 seconds always kept in memory, overwritten as you drive	始终在内存中保留 60 秒，随行驶覆盖
+100-0 / 200-0 km/h	100-0 / 200-0 km/h
+2.0 bar / 30 psi	2.0 bar / 30 psi
+2.5 bar / 36 psi	2.5 bar / 36 psi
+3.0 bar / 44 psi	3.0 bar / 44 psi
+3.5 bar / 50 psi	3.5 bar / 50 psi
