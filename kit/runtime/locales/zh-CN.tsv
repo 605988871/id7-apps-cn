@@ -2906,3 +2906,540 @@ your interval 	你的周期
 2.5 bar / 36 psi	2.5 bar / 36 psi
 3.0 bar / 44 psi	3.0 bar / 44 psi
 3.5 bar / 50 psi	3.5 bar / 50 psi
+% of RAM	内存占比
++0.09 bar	+0.09 bar
++0.18 bar	+0.18 bar
++0.31 bar	+0.31 bar
+-0.06 bar	-0.06 bar
+-0.12 bar	-0.12 bar
+0x12 · 2 active, 1 stored	0x12 · 2 个当前，1 个已存储
+0x12 · DME86T0 · 3 fault codes	0x12 · DME86T0 · 3 个故障码
+0x29 · 1 active, 1 stored	0x29 · 1 个当前，1 个已存储
+0x40 · stored	0x40 · 已存储
+0x63 · stored	0x63 · 已存储
+1 light	1 个灯
+1 → 2 → 3 → off	1 → 2 → 3 → 关闭
+10 m ahead	前方 10 米
+10 m in front of the car	车辆前方 10 米
+12.0 kWh	12.0 kWh
+15 s · front + rear	15 秒 · 前 + 后
+18 s · front + rear	18 秒 · 前 + 后
+2 active messages	2 条当前消息
+2 lights	2 个灯
+20 m ahead	前方 20 米
+20 m in front of the car	车辆前方 20 米
+20 s before the tap · 10 s after · changing it restarts the recording	点击前 20 秒 · 后 10 秒 · 修改后重新开始录制
+28 s · all cameras	28 秒 · 全部摄像头
+28 s · all cameras · 152 MB	28 秒 · 全部摄像头 · 152 MB
+28 → 97 % · 3 h ago	28 → 97 % · 3 小时前
+29 Oct 17:02	10 月 29 日 17:02
+29 Oct 21:40	10 月 29 日 21:40
+3 colors	3 种颜色
+3 lights	3 个灯
+3 lights · its own color	3 个灯 · 各自颜色
+3 lights · own color	3 个灯 · 各自颜色
+30 Oct 2026	2026 年 10 月 30 日
+30 s · all cameras	30 秒 · 全部摄像头
+30 s · all cameras · 160 MB	30 秒 · 全部摄像头 · 160 MB
+300 m · roundabout · exit 2	300 米 · 环岛 · 第 2 出口
+31 - 34 km · the engine starts at 8 %	31 - 34 公里 · 发动机在 8 % 时启动
+3500 - 5800 rpm · +15 Nm	3500 - 5800 转 · +15 牛米
+4 cores · Intel Apollo Lake	4 核 · Intel Apollo Lake
+48 V BATTERY · POWER NOW	48 V 电池 · 实时功率
+5 m ahead	前方 5 米
+5 m in front of the car	车辆前方 5 米
+6 clips · 610 MB of 4 GB · newest first	6 段视频 · 4 GB 中已用 610 MB · 最新在前
+8 lights · no faults	8 个灯 · 无故障
+8 lights · our color	8 个灯 · 我们的颜色
+8 lights · ours	8 个灯 · 我们的
+A color for each drive mode, switched with it	每种驾驶模式一种颜色，随模式切换
+A connection to the head unit's tailnet address goes to its own port: SSH (22) reaches the head unit's sshd. Who may connect is set in your tailnet's access controls.	连接到车机的 tailnet 地址会转到对应端口：SSH(22)  connects 到车机的 sshd。谁可以连接由你的 tailnet 访问控制设置。
+A run needs one gear from 2500 rpm to the limiter: it ended with a shift.	一次测试需要在同一挡位从 2500 转拉到断油：它以换挡结束。
+APPS ON THIS CAR	此车上的应用
+Above its speed (an M car's HUD has its own)	高于其车速（M 车的 HUD 有自己的）
+Accepted by the DME	已被发动机电脑接受
+Active	当前
+Air drag · a saloon is Coupe, a hatch Touring	空气阻力 · 三厢为 Coupe，两厢为 Touring
+All apps	所有应用
+All cameras	全部摄像头
+All flash at	全部同时闪烁
+All four cameras · each 640 × 480	四个摄像头 · 每个 640 × 480
+All zones	所有区域
+Also in the head-up display	也在抬头显示中
+Ambient Light	氛围灯
+Ambient light flash	氛围灯闪烁
+Any screen works too: open it, then hold the shortcut in the climate bar for 1 s.	任意页面也可以：打开它，然后长按空调栏里的快捷方式 1 秒。
+Any speed: kerbs, gaps, turns	任何车速：路肩、缝隙、转弯
+As the cluster has them · read-only	与仪表盘一致 · 只读
+As the navigation says it	按导航显示
+Auto: found on this car	自动：在此车上找到
+Auto: found, the battery unit answers	自动：已找到，电池单元有响应
+Available	可用
+BAR ENDS · PERFORMANCE	bar 末端 · 性能
+BAR ENDS · TEMPERATURES	bar 末端 · 温度
+BATTERY AND COST	电池与费用
+BATTERY HEALTH	电池健康
+BATTERY UNIT (SME 0X07) · FIRST 8	电池单元(SME 0X07) · 前 8 项
+BMW Maps, CarPlay or Android Auto	BMW 地图、CarPlay 或 Android Auto
+BMW SCREENS	BMW 屏幕
+BMW screen	BMW 屏幕
+BURBLES	回火声
+Back to this one	回到此页
+Backrest	靠背
+Backrest: reclining	靠背：后倾中
+Bar ends and trip costs · saved on the head unit, used at once	bar 末端与行程费用 · 保存在车机上，立即生效
+Battery size when new	新车时电池容量
+Battery unit answers and values read · for support	电池单元响应并读取数值 · 供支持用
+Body	车身
+Body domain controller	车身域控制器
+Boost · peak 1.31	增压 · 峰值 1.31
+Brightness as on the Color page	亮度与颜色页一致
+Brightness: the Color page's	亮度：颜色页的
+By drive mode	按驾驶模式
+CAMERA	摄像头
+CLUTCH A	离合器 A
+CLUTCH ADAPTATIONS	离合器自适应
+CLUTCH B	离合器 B
+CLUTCH C	离合器 C
+CLUTCH D	离合器 D
+CLUTCH E	离合器 E
+CONSUMPTION	能耗
+Calibrate	校准
+Calibrate once.	校准一次。
+Calibrate once: the turn sign then sits on the road.	校准一次：转向标志就会落在路面上。
+Camera	摄像头
+Camera height	摄像头高度
+Camera navigation view in the cluster centre	仪表中央的摄像头导航视图
+Camera navigation view in the cluster widget	仪表小组件中的摄像头导航视图
+Cameras switch to recording at every start	每次启动时摄像头切换到录制
+Cancel	取消
+Car Data	车辆数据
+CarPlay	CarPlay
+Cell voltages · 96 cells	电芯电压 · 96 个电芯
+Check cameras	检查摄像头
+Check the tyre pressures · id 139	检查胎压 · id 139
+Clear	清除
+Clear all codes	清除所有故障码
+Clear fault codes	清除故障码
+Clear this unit	清除此单元
+Clearing removes the stored codes of this unit. A code comes back if its fault is still there.	清除会删除此单元的已存储故障码。如果故障仍存在，故障码会再次出现。
+Clip length	视频长度
+Clips	视频
+Clock	时钟
+Cluster and head-up display, as the M Mode button	仪表与抬头显示，与 M 模式按钮一致
+Color	颜色
+Color by drive mode	按驾驶模式的颜色
+Color, Drive modes	颜色、驾驶模式
+Connected	已连接
+Console	控制台
+Control units, Check Control|2	控制单元、检查控制信息|2
+Copy to USB	复制到 U 盘
+Copying…	复制中…
+Core 1	核心 1
+Core 2	核心 2
+Core 3	核心 3
+Core 4	核心 4
+Counted while Car Data runs, also with its screen closed	车辆数据运行时统计，页面关闭时也统计
+DASH	仪表
+DATA LINKS	数据链接
+DC/DC CONVERTER	DC/DC 转换器
+DISTANCE	距离
+DME TORQUE	DME 扭矩
+DPF	DPF 颗粒捕捉器
+DRIVE MODES	驾驶模式
+DRIVER SEAT	驾驶员座椅
+Dash	仪表
+Default icon	默认图标
+Delete this clip?	删除此视频？
+Differential pressure	压差
+Dimmer at night, as the car	夜间调暗，与车辆一致
+Distance as the navigation says it	距离按导航显示
+Door open: out of the way · door shut: back	开门：让开 · 关门：复位
+Doors	车门
+Drive Recorder	行车记录仪
+Drive mode now	当前驾驶模式
+Drive modes	驾驶模式
+Driver seat heating	驾驶员座椅加热
+Driver seat ventilation	驾驶员座椅通风
+Dynamic stability control	动态稳定控制
+Dyno Mode	马力机模式
+ENGINE MAP	发动机程序
+ENGINE OIL	机油
+ENGINE SPEED	发动机转速
+ENGINE UNIT HISTORY	发动机单元历史
+EUR	EUR
+EXHAUST FLAP	排气阀门
+Each keeps every zone's color	各自保留每个区域的颜色
+Easy exit	便捷下车
+Easy exit, each seat: Save, then Easy exit. Door open, car standing: out of the way; shut: back (driver: car on, passenger: seated).	便捷下车，每个座椅：先保存，再便捷下车。开门、车辆静止时让开；关门后复位（驾驶员：车辆通电；乘客：有人乘坐）。
+Engine electronics	发动机电脑
+Engine electronics (DME)	发动机电脑(DME)
+Engine electronics · from a fault code · id 30	发动机电脑 · 来自故障码 · id 30
+Engine malfunction	发动机故障
+Engine map, exhaust flap and max cooling	发动机程序、排气阀门与最大冷却
+Engine speed against your rpm · an M car's own win	发动机转速与你的转速对比 · M 车有自己的判定
+Engine speed · peak 5600	发动机转速 · 峰值 5600
+Engine speed, rpm	发动机转速，rpm
+Engine to wheels · 5 - 25 %	发动机到车轮 · 5 - 25 %
+Engine unit values in groups · 46 of 76 values read	发动机单元数值分组 · 已读取 76 项中的 46 项
+Engine, Fuel & air, Trips, Transmission, DPF, Details, Settings	发动机、燃油与进气、行程、变速箱、DPF、详情、设置
+Every charge, with its cost at 0.25 EUR/kWh	每次充电，按 0.25 EUR/kWh 计费
+Exhaust temperature	排气温度
+Export	导出
+FAULT CODES	故障码
+FUEL	燃油
+FUEL USED	燃油消耗
+Fans and pump at full, engine above 500 rpm	风扇与水泵全速，发动机转速高于 500
+Fault Codes	故障码
+Fault codes	故障码
+Field of view	视野范围
+Fill pressure offset per clutch, against the factory value	每个离合器的充气压力偏差，与出厂值对比
+Follow the car	跟随车辆
+Footwell	脚部空间
+For 18 s more, then the DME decides	再保持 18 秒，之后由 DME 决定
+For 5 s when heating or ventilation goes on	加热或通风开启时持续 5 秒
+For Battery health · the gross sizes BMW fits	用于电池健康 · BMW 装配的总容量
+For support	供支持用
+For the electricity price and the costs	用于电价与费用
+For the fuel price and the costs · tap for the next	用于油价与费用 · 点击切换下一个
+For the power run · saved on the head unit	用于动力测试 · 保存在车机上
+Fore / aft	前后
+From 2500	从 2500
+From the DME · each with its last 5 minutes	来自 DME · 各带最近 5 分钟
+From the diesel engine unit · nothing is written	来自柴油发动机单元 · 不写入
+Front camera	前摄像头
+Front camera request	前摄像头请求
+Front view on	前视开启
+Fuel & air	燃油与进气
+Fuel tank leak diagnosis: small leak	油箱泄漏诊断：小泄漏
+Full throttle in one gear, from 2500 rpm to the limiter	同一挡位全油门，从 2500 转拉到断油
+Full: 45 km	满油：45 公里
+GEARBOX OIL	变速箱油
+GETTING OUT	下车中
+Gear changed	已换挡
+Group processes by app	按应用分组进程
+Guidance from the car	来自车辆的引导
+HOW IT WORKS	工作原理
+HOW THE BUTTONS WORK	按钮说明
+HV battery live from the battery unit, every second	高压电池实时数据来自电池单元，每秒刷新
+Headrest	头枕
+Heating colour	加热颜色
+Height	高度
+Hold a control: the seat moves while you hold it	按住控件：座椅会随之移动
+Hold a control: the seat moves while you hold it and stops when you let go.	按住控件：座椅随之移动，松开即停。
+Hold a shortcut 1 s: it opens the screen you are on next time	长按快捷方式 1 秒：下次打开当前页面
+Hold to save	长按保存
+Home	主页
+How far the camera looks down	摄像头向下看多远
+How often the numbers are read	数值读取频率
+IGNITION AND KNOCK	点火与爆震
+IN THE CLIMATE BAR	在空调栏中
+IN THE CLUSTER	在仪表盘中
+INJECTOR CORRECTIONS	喷油嘴修正
+Icon	图标
+Icon 1	图标 1
+Icon 2	图标 2
+Icon 3	图标 3
+Icon 4	图标 4
+Icon 5	图标 5
+Icon 6	图标 6
+Icon 7	图标 7
+Icon 8	图标 8
+Icon 9	图标 9
+If it has one, set Hybrid system to Yes on Settings.	如果有混动系统，在设置中将其设为“是”。
+In the climate bar · tap one to change it	在空调栏中 · 点击一个即可更改
+Individual	个性化
+It usually comes a few seconds after the ignition is on.	通常在点火后几秒出现。
+Its color	其颜色
+Its color on	其颜色开启
+Its color on · every zone	其颜色开启 · 所有区域
+Its number in the ambient light menu	其在氛围灯菜单中的编号
+Its values show here once this variant is added.	添加此变体后，其数值显示在此。
+KINGSTON	KINGSTON
+Keeps every zone's color	保留每个区域的颜色
+LAST 14 DAYS · KWH PER DAY	最近 14 天 · 每日 kWh
+LAST CLIP	最后一段视频
+LAST TRIP · 30 OCT, 10:31 - 10:48	上次行程 · 10 月 30 日 10:31 - 10:48
+LOG IN NEEDED	需要登录
+Lambda control, bank 1: mixture too lean	氧传感器控制，第 1 排：混合气过稀
+Last 2 min	最近 2 分钟
+Last 3 min	最近 3 分钟
+Last 3 minutes · memory	最近 3 分钟 · 内存
+Last answer: 0x30 · EPS steering	最后响应：0x30 · EPS 转向
+Last scan 2 min ago	上次扫描 2 分钟前
+Learned from how this car is driven	根据此车驾驶习惯学习
+Left / right aim	左右瞄准
+Left / right offset	左右偏移
+Lights start at	灯起始于
+Line the marks up with the road: 5 m, 10 m, 20 m	将标记与路面对齐：5 米、10 米、20 米
+Live Adjustments	实时调整
+Live from the DME	来自 DME 的实时数据
+Load	负载
+Lock	锁定
+Log in and approve the device	登录并批准此设备
+Log out	退出登录
+M MODE PER BUTTON	按钮对应的 M 模式
+M Mode	M 模式
+M1 - M3 are this app's own memories, three per seat: tap Save, then M1, M2 or M3 to keep the seat as it is.	M1 - M3 是本应用自带的记忆，每个座椅三个：点击保存，再点 M1、M2 或 M3 即可记住当前座椅位置。
+M1 / M2 off	M1 / M2 关闭
+M1 / M2 on the steering wheel	方向盘上的 M1 / M2
+MAP 2	程序 2
+MAX COOLING	最大冷却
+MENU	菜单
+MESSAGES	消息
+MGU Store app · uid 12218 · 1 process	MGU 商店应用 · uid 12218 · 1 个进程
+MHD	MHD
+MHD, MG Flasher	MHD、MG Flasher
+MP4 · front camera	MP4 · 前摄像头
+MP4 · left camera	MP4 · 左摄像头
+MP4 · rear camera	MP4 · 后摄像头
+MP4 · right camera	MP4 · 右摄像头
+Make room	让出空间
+Make room moves the passenger seat out of the way; Move back puts it where it was.	让出空间会移动副驾座椅腾出位置；复位会回到原位。
+Map 1 to 5 are MG Flasher's slots 0 to 4	程序 1 至 5 对应 MG Flasher 的槽位 0 至 4
+Media	媒体
+Memory in use	记忆使用中
+Memory · last 3 minutes	内存 · 最近 3 分钟
+Memory: each one's own, without shared files · tap a heading to sort, a row for details	内存：各自独立，无共享文件 · 点击标题排序，点击行查看详情
+More items · 1 / 2	更多项目 · 1 / 2
+Move the sliders until each line sits on its mark.	移动滑块，直到每条线对齐标记。
+Move the sliders until each line sits on its mark. The cluster shows each move.	移动滑块，直到每条线对齐标记。仪表盘会显示每次移动。
+Moves the marks left or right	左右移动标记
+Moving to M2 · tap M2 to stop	正在移动到 M2 · 点击 M2 停止
+NEXT SERVICE · ENGINE OIL	下次保养 · 机油
+NEXT TURN	下一个转弯
+NOT SHOWN: NO CLUSTER RENDERER	未显示：无仪表渲染器
+Name	名称
+Name on your tailnet	在你的 tailnet 上的名称
+Navigation	导航
+Navigation from	导航来自
+Navigation · BMW screen	导航 · BMW 屏幕
+New login link	新登录链接
+Next turn	下一个转弯
+Night Vision	夜视
+No: the app asks the battery unit nothing and shows only the 12 V battery.	否：本应用不查询电池单元，只显示 12 V 电池。
+None: no change	无：无变化
+None: the Color page's	无：颜色页的
+OIL TEMPERATURE HISTORY	机油温度历史
+ON THIS CAR	在此车上
+OR OPEN	或打开
+Of the car's	车辆的
+Of the car's own	车辆自身的
+Off at every car start · Central display area: Map view	每次启动车辆时关闭 · 中央显示区域：地图视图
+Off: only the seat controls	关闭：仅座椅控制
+Off: the Color page's	关闭：颜色页的
+Off: the Color page's colors	关闭：颜色页的颜色
+Off: the car's	关闭：车辆的
+Off: the car's own color	关闭：车辆自身颜色
+Oil change with filter. Due after 12 300 km or by 09/2027, whichever comes first.	更换机油及滤芯。行驶 12 300 公里后或 2027 年 9 月前到期，以先到者为准。
+On a flat, straight road: cones or road marks 5, 10, 20 m ahead.	在平坦直路上：前方 5 米、10 米、20 米处放置锥桶或路面标记。
+On a flat, straight road: put cones (or use road marks) 5, 10 and 20 m ahead.	在平坦直路上：在前方 5 米、10 米和 20 米处放置锥桶（或使用路面标记）。
+On the cluster, over the map	在仪表盘上，覆盖地图
+Once the cluster is up after a start	启动后仪表盘启动时
+One row per app, its processes added up	每个应用一行，累加其进程
+Open for 18 s more, then the DME decides	再开启 18 秒，之后由 DME 决定
+Other programs	其他程序
+Our color	我们的颜色
+Our color on	我们的颜色开启
+Over 4 GB the oldest unlocked clips are replaced	超过 4 GB 时，最旧的未锁定视频会被替换
+Overlays	悬浮层
+Overview	概览
+Overview, Processor, Processes, Settings	概览、处理器、进程、设置
+Own	自定义
+Oxygen sensor before catalytic converter: signal implausible	三元催化器前氧传感器：信号不可信
+PASSENGER SEAT	副驾座椅
+PICTURE ON	画面开启
+POWER AND TORQUE OVER RPM	功率与扭矩随转速
+PRESETS	预设
+Part of the name, e.g. music	名称的一部分，例如 music
+Passenger seat heating	副驾座椅加热
+Passenger seat ventilation	副驾座椅通风
+Per kWh · for the cost on Charge log	每 kWh · 用于充电记录的费用
+Per litre · for the cost on Trips	每升 · 用于行程的费用
+Pick "Turn View AR" in the cluster's widget menu	在仪表的组件菜单中选择“转向视图 AR”
+Pick its picture in the climate bar	在空调栏中选择其画面
+Pick what it opens	选择它打开的内容
+Pin as baseline	固定为基准
+Plus	加号
+Power run	动力测试
+Power sign	功率符号
+Processes	进程
+Processor	处理器
+Provisioning, buffer, camera ECU, player · for support	配置、缓冲、摄像头电脑、播放器 · 供支持用
+REAL ELECTRIC RANGE	真实纯电续航
+REAR	后
+RECORDING	录制中
+RUN ABORTED	测试中止
+RUN TIME	测试时间
+Rear camera	后摄像头
+Record, Clips, Settings	录制、视频、设置
+Red zone from 2.25 bar	红线从 2.25 bar 开始
+Red zone from 450 hp	红线从 450 马力开始
+Red zone from 630 Nm	红线从 630 牛米开始
+Red zone from 7200 rpm	红线从 7200 转开始
+Remote access	远程访问
+Rename	重命名
+Reset it in the cluster's own menu or at a workshop.	在仪表盘菜单中或到维修店重置。
+Restore defaults	恢复默认
+Reversed if charging shows as driving	如果充电显示为行驶则反转
+Right · CarPlay	右 · CarPlay
+Right: the driver's buttons on the right	右：驾驶员按钮在右侧
+Right: the driver's seat in the right half	右：驾驶员座椅在右半边
+Roof	车顶
+Route	路线
+Run, Power run, Best times	测试、动力测试、最佳成绩
+SAVED	已保存
+SCAN TO LOG IN	扫码登录
+SHIFT LIGHTS ON THE CLUSTER	仪表盘上的换挡提示灯
+SLOT 3	槽位 3
+SPORT PLUS	运动增强
+STEERING WHEEL	方向盘
+STEERING WHEEL BUTTONS	方向盘按钮
+SYSTEM	系统
+Save	保存
+Save clip	保存视频
+Save clip writes the last 20 s and the next 10 s to the head unit.	保存视频会将前 20 秒和后 10 秒写入车机。
+Save keeps them. Leaving without Save puts the saved values back.	保存会保留设置。不保存直接离开会恢复已保存的值。
+Save keeps them; leaving without Save puts them back.	保存会保留；不保存离开则恢复。
+Save preset	保存预设
+Saved on the head unit	保存在车机上
+Saved on the head unit, used at once	保存在车机上，立即生效
+Saving clip…	保存视频中…
+Scale from -20 °C	刻度从 -20 °C
+Scale from 40 °C	刻度从 40 °C
+Scan all units	扫描所有单元
+Scan the code with your phone and approve this head unit in your tailnet.	用手机扫描二维码，并在你的 tailnet 中批准此车机。
+Scan with your phone camera	用手机相机扫描
+Search	搜索
+Search 1033 icons from this car	搜索此车上的 1033 个图标
+Seat and steering wheel controls in the climate bar	空调栏中的座椅与方向盘控制
+Seat tilt	座椅倾斜
+Seats	座椅
+Seats, Settings	座椅、设置
+Shortcut	快捷方式
+Shortcuts	快捷方式
+Shortcuts in the climate bar	空调栏中的快捷方式
+Shortcuts, Climate, Shift lights, M Mode	快捷方式、空调、换挡提示灯、M 模式
+Slot 1 · left	槽位 1 · 左
+Slot 2	槽位 2
+Slot 2 · icon	槽位 2 · 图标
+Slot 2 · left	槽位 2 · 左
+Slot 2 · search	槽位 2 · 搜索
+Slot 3 · right	槽位 3 · 右
+Slot 4 · right	槽位 4 · 右
+Soot · regeneration at ~24 g (typical)	碳烟 · 约 24 g 时再生（典型）
+Spotify	Spotify
+Start in M SPORT	以 M 运动模式启动
+Start with the car	随车启动
+Steering wheel heating	方向盘加热
+Steering wheel on the	方向盘在
+Stop, then launch: the timer arms itself	停稳后起步：计时器自动待命
+Storage	存储
+Suggest a new item	建议新项目
+Suggested · 1 / 45	建议 · 1 / 45
+Switch the M Mode with M1 / M2	用 M1 / M2 切换 M 模式
+System Monitor	系统监控
+TAP A UNIT TO SEE ITS CODES	点击单元查看其故障码
+TEMPERATURES	温度
+THE CAMERA	摄像头
+THE CAR'S COLORS	车辆的颜色
+THE MARKS IN THE CLUSTER	仪表盘中的标记
+THIS UNIT	此单元
+TIME	时间
+TRACK only where the car allows it: standing still, as the M Mode button asks.	仅在车辆允许时使用赛道模式：车辆静止时，按 M 模式按钮要求。
+TRIPS	行程
+Tailscale	Tailscale
+Tap a camera to enlarge it · plays only while the car stands still	点击摄像头放大 · 仅车辆静止时播放
+Tap a zone to give it its own color · All zones colors every zone	点击区域为其设置单独颜色 · 所有区域会给每个区域上色
+Tap order	点击顺序
+The M Mode while M1 is active	M1 激活时的 M 模式
+The M Mode while M2 is active	M2 激活时的 M 模式
+The burble slots set up in MG Flasher	在 MG Flasher 中设置的回火槽位
+The engine light may flash while the map changes, that is normal	切换程序时发动机故障灯可能闪烁，这是正常的
+The front camera in the cluster	仪表盘中的前摄像头
+The front camera on this screen, at any speed	此页面上的前摄像头，任何车速均可
+The last 30 s are kept in memory	最近 30 秒保存在内存中
+The lens above the road	道路上方的镜头
+The picture's height as an angle	画面高度以角度表示
+The red zone is the last 10 % of each bar.	红线是每根 bar 的最后 10 %。
+The same messages the cluster shows, read from the car now.	与仪表盘显示相同的消息，现在从车辆读取。
+The seats move while you drive too, as with their own switches (which always win); Make room only while parked.	行驶中座椅也可以移动，与座椅本身开关一样（开关始终优先）；让出空间仅在驻车时可用。
+The shift point, rpm	换挡点，rpm
+This app asks for it when no other app does	当没有其他应用请求时，本应用会请求
+This car has M1 / M2	此车有 M1 / M2
+This screen turns to Connected	此页面变为已连接
+Threads	线程
+Tilt down	下倾
+To the head unit over your tailnet	通过你的 tailnet 连接到车机
+Today 11:03	今天 11:03
+Today 13:42	今天 13:42
+Top centre of the cluster, over the map	仪表盘顶部中央，覆盖地图
+Transmission	变速箱
+Try again	重试
+Turn View	转向视图
+Turns the marks left or right	左右转动标记
+Type part of the name, then Show	输入名称的一部分，然后显示
+Tyre pressure	胎压
+UNITS	单元
+UNITS WITH FAULTS	有故障的单元
+USB stick · 28.4 GB free · about 160 MB will be copied	U 盘 · 28.4 GB 可用 · 将复制约 160 MB
+Update every	更新频率
+Use mgu	使用 mgu
+VANOS	VANOS
+VARIANT READ FROM THE GEARBOX UNIT	从变速箱单元读取的变体
+Ventilation colour	通风颜色
+WHAT TO COPY	要复制的内容
+Weight	重量
+Weight, body and loss count from the next run; the units change at once.	重量、车身与损失从下次测试开始计入；单位立即变化。
+What each tap on heat / ventilation does	每次点击加热/通风的作用
+What the battery unit answered · for support	电池单元的响应 · 供支持用
+What uses the head unit's memory and processor · read only	查看车机内存与处理器的使用情况 · 只读
+When no other app asks for it	当没有其他应用请求时
+Where the steering wheel is, easy exit, and how the Seats app works	方向盘位置、便捷下车，以及座椅应用的工作方式
+While a seat moves to a memory or makes room, tap its lit button or any control to stop it.	座椅移动到记忆位置或让出空间时，点击其亮起的按钮或任意控件即可停止。
+Whole clip as recorded	完整视频，按原样录制
+With driver and fuel · 1200 - 2500 kg	含驾驶员与燃油 · 1200 - 2500 公斤
+Yesterday 08:12	昨天 08:12
+Yesterday 18:05	昨天 18:05
+Yesterday 18:05 · 30 s · 160 MB	昨天 18:05 · 30 秒 · 160 MB
+YouTube	YouTube
+Your fastest run per split	每段的最快成绩
+Your rpm	你的转速
+ZF 8HP · read from the gearbox unit, nothing is written	ZF 8HP · 从变速箱单元读取，不写入
+ZONES	区域
+a full charge holds 11.0 of 12.0 kWh	满电可容纳 12.0 kWh 中的 11.0 kWh
+a-z, 0-9 and -, up to 63	a-z、0-9 和 -，最多 63 个字符
+at 6250 rpm · +12 hp to baseline	在 6250 转 · 比基准高 12 马力
+bmw-m3	bmw-m3
+charging · 48.50 V · 12.5 A	充电中 · 48.50 V · 12.5 A
+driving · 342 V · 68 A	行驶中 · 342 V · 68 A
+estimate quality 95 %	估算准确度 95 %
+iDrive apps	iDrive 应用
+idrive-apps, 0.5.10 or newer	idrive-apps，0.5.10 或更高
+login.tailscale.com/a/1b2c3d4e5f6a7b	login.tailscale.com/a/1b2c3d4e5f6a7b
+mgu	mgu
+of 42 control units answered	42 个控制单元中有响应
+or ssh root@100.101.12.34	或 ssh root@100.101.12.34
+robertnisipeanu/idrive-apps, 0.3.6 or newer	robertnisipeanu/idrive-apps，0.3.6 或更高
+robertnisipeanu/idrive-apps, 0.5.10 or newer	robertnisipeanu/idrive-apps，0.5.10 或更高
+ssh root@bmw-mgu	ssh root@bmw-mgu
+standing 0.08 l · top speed 74 km/h · odometer 12137 - 12147 km · tank 37 - 36 l	静止 0.08 升 · 最高车速 74 km/h · 里程 12137 - 12147 公里 · 油箱 37 - 36 升
+the mode the converter reports	转换器报告的模式
+Icon 10	图标 10
+Icon 11	图标 11
+Icon 12	图标 12
+Icon 13	图标 13
+Icon 14	图标 14
+Icon 15	图标 15
+Icon 16	图标 16
+Icon 17	图标 17
+Icon 18	图标 18
+Icon 19	图标 19
+Icon 20	图标 20
+Icon 21	图标 21
+Icon 22	图标 22
+Icon 23	图标 23
+Icon 24	图标 24
+Range, Battery, Charge log, Settings	续航、电池、充电记录、设置
+Reading control units	正在读取控制单元
+Reading the engine unit	正在读取发动机单元

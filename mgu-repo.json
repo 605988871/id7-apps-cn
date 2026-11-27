@@ -55,6 +55,42 @@
         "ID7",
         "ID8"
       ]
+    },
+    {
+      "id": "iteriodev-comfort",
+      "path": "tools/cn_iteriodev_comfort",
+      "title": "舒适服务",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
+    },
+    {
+      "id": "iteriodev-drplay",
+      "path": "tools/cn_iteriodev_drplay",
+      "title": "行车记录仪播放器",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
+    },
+    {
+      "id": "iteriodev-overlays",
+      "path": "tools/cn_iteriodev_overlays",
+      "title": "悬浮快捷栏",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
+    },
+    {
+      "id": "iteriodev-screencast",
+      "path": "tools/cn_iteriodev_screencast",
+      "title": "屏幕共享",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
+    },
+    {
+      "id": "iteriodev-tailscale",
+      "path": "tools/cn_iteriodev_tailscale",
+      "title": "Tailscale 远程访问",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
+    },
+    {
+      "id": "iteriodev-turnview",
+      "path": "tools/cn_iteriodev_turnview",
+      "title": "转向视图",
+      "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、CarPlay 或 Android Auto；无路线时仅显示摄像头。也可改为在车机上显示（0.9.0，转向视图应用的摄像头页面：画面显示在车机），任何车速均可：摄像头的完整画面配上同样的卡片与标志，作为路肩停车辅助。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。0.11.0：iDrive 7 使用 IterioDev 仪表设计版时，用该设计中 widgets 中央的 BC 按钮选择 Turn View（在仪表设计应用中启用）并在其应用中开启转向视图，摄像头即显示在该组件中。仪表盘上不可与 Waze on cluster 同时使用：将 Waze on cluster 设为仅 HUD（仪表盘与 HUD 最多显示 2 路视频）。0.10.0：配备 BMW 夜视的车辆，改为显示夜视画面而非前摄像头（转向视图应用的摄像头页面：夜视摄像头），从车机自身的视频输入读取——BMW 的夜视屏幕此时保持黑屏。在转向视图应用中设置与校准。由 Cluster renderer（robertnisipeanu/idrive-apps）0.5.10 或更高绘制。无需刷码。"
     }
   ]
 }

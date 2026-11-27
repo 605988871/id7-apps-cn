@@ -37,6 +37,10 @@ count = 0
 table_count = 0
 for manifest in sorted((root / 'apps').glob('*/app.json')):
     original = json.loads(manifest.read_text(encoding='utf-8'))
+    # Prebuilt IterioDev apps ship a committed tgz and have no fork kit settings/screens;
+    # they are installed as-is, so the kit-localization checks do not apply to them.
+    if original.get('source') == 'IterioDev/car-apps':
+        continue
     assert not any(s['key'] == 'language' for s in original['settings'])
     keys = {}
     for language in package_languages:

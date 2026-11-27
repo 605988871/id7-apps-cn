@@ -594,9 +594,6 @@ def resolve_app(app_id):
 
 def build(app_id, language='en', preview_only=False):
     language = normalize_language(language)
-    if not preview_only and not all(os.path.isfile(os.path.join(SDK, name)) for name in ('index.js', 'package.json')):
-        raise SystemExit('BMW oap-sdk is missing. Extract it from your own head unit with kit/tools/extract_sdk.js, '
-                         'or use --preview-only for an offline preview (no installable package).')
     app_id = resolve_app(app_id)
     adir = os.path.join(APPS, app_id)
     spec = json.load(open(os.path.join(adir, 'app.json'), encoding='utf-8'))
@@ -606,6 +603,22 @@ def build(app_id, language='en', preview_only=False):
     stage = os.path.join(DIST, app_id)
     # The source folder may use display casing; keep the installed identity stable.
     app_id = spec['id']
+    # Prebuilt apps (the IterioDev car-apps family): the localized package is committed in the
+    # app folder. The MGU Store builds every app through this script, so copy the ready tgz
+    # instead of trying to build a kit app from sources that are not here. No SDK needed.
+    prebuilt = os.path.join(adir, spec.get('prebuilt') or ('%s@%s.tgz' % (app_id, ver)))
+    if os.path.isfile(prebuilt):
+        os.makedirs(DIST, exist_ok=True)
+        out_tgz = os.path.join(DIST, '%s@%s.tgz' % (app_id, ver))
+        shutil.copyfile(prebuilt, out_tgz)
+        out_mgu = os.path.join(DIST, '%s@%s.mgu' % (app_id, ver))
+        shutil.copyfile(prebuilt, out_mgu)
+        print('%s %s: prebuilt %s (%d KiB)' % (app_id, ver, os.path.relpath(out_tgz, ROOT),
+                                               os.path.getsize(out_tgz) // 1024))
+        return
+    if not preview_only and not all(os.path.isfile(os.path.join(SDK, name)) for name in ('index.js', 'package.json')):
+        raise SystemExit('BMW oap-sdk is missing. Extract it from your own head unit with kit/tools/extract_sdk.js, '
+                         'or use --preview-only for an offline preview (no installable package).')
     shutil.rmtree(stage, ignore_errors=True)
     src = os.path.join(stage, 'source')
     os.makedirs(os.path.join(src, 'javascript', 'kit'))

@@ -1,0 +1,22 @@
+{
+  "id": "cn_iteriodev_overlays",
+  "version": "1.5.1",
+  "title": "悬浮层",
+  "description": "Set up the Overlays strip in the climate bar: what each of the four shortcuts opens (BMW screens or apps) and its icon (any of the head unit's own, with a search), the seat heating / ventilation and steering wheel buttons, the tap order, shift lights on the instrument cluster for cars without their own, not M cars (needs Cluster renderer from robertnisipeanu/idrive-apps), and on M cars which M Mode M1 / M2 switch to. Needs the Overlays tool from the same source.",
+  "mguHmi": [
+    "ID8"
+  ],
+  "needs": [
+    "renderer"
+  ],
+  "requires": {
+    "iteriodev-overlays": "0.6.0",
+    "mgu-deploy": "0.7.5"
+  },
+  "texts": {
+    "zh-CN": {
+      "title": "悬浮层"
+    }
+  },
+  "source": "IterioDev/car-apps"
+}

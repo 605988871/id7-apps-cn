@@ -1,5 +1,23 @@
 {
   "url": "https://github.com/cauliflowermossgrape/idrive7-apps.git",
   "branch": "main",
-  "baseline": "71253d0424609c8fb1a47503fdaef4cd88ae403a"
+  "baseline": "f54fc279d309ca12eba129b676d755c6f02f5a06",
+  "upstreams": [
+    {
+      "name": "idrive7-apps",
+      "url": "https://github.com/cauliflowermossgrape/idrive7-apps.git",
+      "branch": "main",
+      "baseline": "f54fc279d309ca12eba129b676d755c6f02f5a06",
+      "kind": "source",
+      "note": "源码上游：用 tools/upstream-sync/upstream.py 合并；app 映射为 apps/cn_<name>，汉化在 locales 与 app.json"
+    },
+    {
+      "name": "car-apps",
+      "url": "https://github.com/IterioDev/car-apps.git",
+      "branch": "main",
+      "baseline": "f6e2b75",
+      "kind": "prebuilt",
+      "note": "预编译上游：tgz 已提交，无源码。同步时解包 tgz、翻译 screens.json 显示文本、注入 cjk 字体、重打包为 apps/cn_iteriodev_*；工具复制到 tools/cn_iteriodev_* 并登记 mgu-repo.json。工具 id 保持原样。"
+    }
+  ]
 }

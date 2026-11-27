@@ -14,6 +14,43 @@ cp D:/id7-apps-cn/tools/upstream-sync/SYNC_PROMPT.md "C:/Users/60598/Desktop/id7
 
 ---
 
+## 双上游（2026-11-27 起）
+
+本仓库现在有**两个上游**，都记在 `.upstream/config.json` 的 `upstreams[]` 里；顶层的
+`url`/`branch`/`baseline` 仍是 idrive7-apps，给 `upstream.py` 用（向后兼容）。
+
+| 上游 | 类型 | 同步方式 |
+|---|---|---|
+| `cauliflowermossgrape/idrive7-apps` | 源码（main） | 本文下面的流程：`upstream.py status/merge`，源码合并 + 增量汉化。应用目录 `apps/cn_<name>` |
+| `IterioDev/car-apps` | 预编译 tgz（main） | 见下方「car-apps 同步」：**不能**用 upstream.py 合并源码（仓库里只有 tgz），要解包→翻译→重打包 |
+
+两者同步后都要：更新 `.upstream/config.json` 里对应上游的 `baseline`、跑测试、提交推送。
+
+### car-apps 同步（预编译 app）
+
+1. 克隆/更新 `IterioDev/car-apps`（网络不稳时要重试多次），基线记在 `upstreams[].baseline`。
+2. 每个 app 在 `apps/<id>/` 只有 `app.json` + `<id>@<ver>.tgz` + 图标，没有源码。tgz 里的
+   `renderer/screens.json` 是主要 UI（显示文本在 `opts.text/title/sub/tabs`），
+   `src/*.js` 是应用逻辑，`renderer/kit/fonts/` 是字体图集。
+3. 汉化流程：解包 tgz → 用 `kit/runtime/locales/zh-CN.json` 的现成译法 + 增量翻译
+   翻译 screens.json 的显示字段 → **不要翻译 `src/*.js` 的字符串字面量**
+   （里面有 `op:'stop'`、`'error'`、`typeof === 'number'`、`'driver'` 等协议/标识符，翻译会破坏功能）
+   → 注入本仓库的 `kit/runtime/fonts/cjk.json` 并把 tgz 内的 `renderer/kit/fonts.js`
+   换成 `kit/runtime/fonts.js`（支持中文自动选图集）→ 重打包为 `cn_iteriodev_<name>@<ver>.tgz`。
+4. app.json：id 改为 `cn_iteriodev_<name>`，title/description 中文，`texts.zh-CN.title`，
+   加 `"source": "IterioDev/car-apps"` 标记（build.py 与 test_zh.py 据此识别预构建 app）。
+   `requires` 里的工具 id（如 `iteriodev-comfort`）**保持原样**。
+5. 工具：复制到 `tools/cn_iteriodev_<name>/`，component.json **原样不动**
+   （systemd/socket 依赖原 id），在 `mgu-repo.json` 的 `tools[]` 登记，
+   id 用原名、path 指向新目录、title/description 写中文。
+6. `build.py` 有预构建分支：看到 app 目录里的 `<id>@<ver>.tgz` 就直接复制到 dist，
+   不需要 SDK、不走 kit 构建。`test_zh.py` 会跳过带 `source` 标记的 app。
+7. 新增翻译补进 `kit/runtime/locales/zh-CN.tsv`（繁体由 OpenCC s2twp 生成），
+   并重烘 cjk 图集（`kit/tools/bake_cjk.py`，本仓库用系统 Noto Sans SC VF +
+   临时绕过 SHA 校验，因为网络下载官方字体不通）。
+
+---
+
 ## 0. 任务
 
 把上游 `cauliflowermossgrape/idrive7-apps` 的 `main` 分支上的新提交，同步进本地仓库 `id7-apps-cn`（本机 `D:\id7-apps-cn`，`origin` = `605988871/id7-apps-cn`），并且满足三条硬要求：

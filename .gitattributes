@@ -4,6 +4,7 @@
 *.png binary
 *.gif binary
 *.mgu binary
+*.tgz binary
 kit/renderd/prebuilt/mgu-renderd binary
 *.pack binary
 *.json.gz binary
