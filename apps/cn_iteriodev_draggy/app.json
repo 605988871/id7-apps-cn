@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_draggy",
   "version": "1.2.1",
   "title": "加速计时",
-  "description": "Acceleration timer: stand still, launch, and it times the run with splits and a speed-over-time chart, timed from the launch. Power run: floor it in one gear for power and torque over rpm, with a baseline to compare. Keeps your best times; km/h or mph.",
+  "description": "加速计时：静止起步后自动计时，显示分段成绩与速度-时间曲线，从起步开始计时。动力测试：在同一挡位全油门，查看功率与扭矩随转速的变化，并可对照基准。保留最佳成绩；支持 km/h 或 mph。",
   "mguHmi": [
     "ID8"
   ],

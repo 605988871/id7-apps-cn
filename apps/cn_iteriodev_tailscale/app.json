@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_tailscale",
   "version": "1.2.1",
   "title": "Tailscale",
-  "description": "Log the head unit in to your tailnet without a computer: shows Tailscale's state, the login link as a QR code to scan with your phone, the head unit's tailnet name and address, Rename (default mgu), Disconnect / Connect (switched off, still logged in) and Log out. Works with the iDrive controller too. Needs the Tailscale tool from the same source.",
+  "description": "无需电脑即可将车机登录到你的 tailnet：显示 Tailscale 状态、可用手机扫描的登录链接二维码、车机的 tailnet 名称与地址、重命名（默认 mgu）、断开或连接（断开后仍保持登录）以及退出登录。也支持 iDrive 旋钮操作。需要同一来源的 Tailscale 工具。",
   "mguHmi": [
     "ID7",
     "ID8"

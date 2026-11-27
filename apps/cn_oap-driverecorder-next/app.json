@@ -2,7 +2,7 @@
   "id": "cn_oap-driverecorder-next",
   "version": "2.5.2",
   "title": "行车记录仪",
-  "description": "Keeps the car's cameras recording and saves a clip when you ask; watch, lock, delete and copy clips to a USB stick while the car stands still. Works by touch or with the iDrive controller. Over 4 GB the oldest unlocked clips are replaced. The Store installs the Drive Recorder player with it. The car must be coded for the Drive Recorder.",
+  "description": "让车辆摄像头持续录像，并在你要求时保存片段；车辆静止时可观看、锁定、删除片段并复制到 U 盘。支持触控或 iDrive 旋钮操作。超过 4 GB 时替换最旧的未锁定片段。商店会同时安装行车记录仪播放器。车辆必须对行车记录仪功能进行编码激活。",
   "mguHmi": [
     "ID7",
     "ID8"

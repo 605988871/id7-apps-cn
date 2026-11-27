@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_edrive",
   "version": "1.1.1",
   "title": "eDrive",
-  "description": "For plug-in hybrids: the real electric range, learned from how the car is driven, the charge level and the battery's health, live power and cell voltages, and a log of the charges with their cost. Read-only. On a car without a high-voltage battery it says so and shows the 12 V battery; on a 48 V mild hybrid also its 48 V battery (charge, health, power) and DC/DC converter. Not tested on a car yet. iDrive 8.",
+  "description": "适用于插电式混合动力车：根据实际驾驶习惯学习的真实纯电续航、电量与电池健康度、实时功率与电芯电压，以及带费用的充电记录。只读。无高压电池的车辆会明确提示并显示 12 V 蓄电池；48 V 轻混车还会显示 48 V 电池（电量、健康度、功率）与 DC/DC 转换器。尚未在实车测试。iDrive 8。",
   "mguHmi": [
     "ID8"
   ],

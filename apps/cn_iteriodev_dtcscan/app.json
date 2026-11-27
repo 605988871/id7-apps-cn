@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_dtcscan",
   "version": "1.2.1",
   "title": "故障码",
-  "description": "Reads the fault memory of every control unit in the car and shows each fault with its text; clears it when you ask. Also lists the car's Check Control messages.",
+  "description": "读取车内每个控制单元的故障记忆，逐条显示故障及其说明，并可按要求清除。同时列出车辆的 Check Control 提示信息。",
   "mguHmi": [
     "ID8"
   ],

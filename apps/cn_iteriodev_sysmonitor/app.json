@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_sysmonitor",
   "version": "1.0.0",
   "title": "系统监控",
-  "description": "What uses your head unit's memory and processor, like a computer's activity monitor: memory in use, every app and program with its own memory and how much it grew in the last 3 minutes (leaks stand out), processor use per core, load, temperature and clock. Tap a heading to sort, a row for its details. Read-only, only while it is on screen; no car signals, no internet. iDrive 8. Original app by hexlay - ID8 Variant by IterioDev.",
+  "description": "查看车机内存与处理器的占用，类似电脑的活动监视器：内存使用量、每个应用与程序各自的内存及最近 3 分钟增长量（泄漏一目了然）、各核心处理器占用、负载、温度与频率。点击标题排序，点击一行查看详情。只读，仅在显示于屏幕上时工作；不读取车辆信号，不联网。iDrive 8。原始应用作者 hexlay，iDrive 8 版本由 IterioDev 制作。",
   "mguHmi": [
     "ID8"
   ],

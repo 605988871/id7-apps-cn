@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_seats",
   "version": "1.6.4",
   "title": "座椅",
-  "description": "Move the driver and passenger seats from the central display, also while driving, both on one page: each seat seen from the side with its controls round it (fore / aft, height, backrest, tilt and headrest, while you hold them), three memories per seat under it, the Gentleman button (parked only) that moves the passenger seat out of the way and back, and easy exit for both front seats: save each one's getting-out position and it moves there when its door opens with the car standing and someone in the seat (never with a child seat on it), and back once the door is shut (the driver with the car o",
+  "description": "在中控屏上移动主驾与副驾座椅，行驶中也可操作，两席同页：每个座椅以侧视图显示，周围是各项控制（前后、高低、靠背、坐垫倾角与头枕，按住时生效），下方各有三组记忆位；绅士功能按钮（仅驻车）让副驾座椅让开再复位；两个前排座椅的便捷下车：分别保存下车位置，车辆静止、座位有人时打开对应车门即移动到该位置（装有儿童安全座椅时绝不动作），关门后复位（驾驶员需车辆通电、副驾需有人乘坐）。",
   "mguHmi": [
     "ID7",
     "ID8"

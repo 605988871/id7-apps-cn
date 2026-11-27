@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_overlays",
   "version": "1.5.1",
   "title": "悬浮层",
-  "description": "Set up the Overlays strip in the climate bar: what each of the four shortcuts opens (BMW screens or apps) and its icon (any of the head unit's own, with a search), the seat heating / ventilation and steering wheel buttons, the tap order, shift lights on the instrument cluster for cars without their own, not M cars (needs Cluster renderer from robertnisipeanu/idrive-apps), and on M cars which M Mode M1 / M2 switch to. Needs the Overlays tool from the same source.",
+  "description": "设置空调栏中的悬浮层快捷条：四个快捷方式分别打开什么（BMW 界面或应用）及其图标（可从车机自带图标中搜索选择）、座椅加热/通风与方向盘加热按钮、点击顺序，为没有原生换挡灯的车型（非 M 车）在仪表盘显示换挡灯（需要 robertnisipeanu/idrive-apps 的 Cluster renderer），以及 M 车型上 M1/M2 切换到哪种 M 模式。需要同一来源的悬浮层工具。",
   "mguHmi": [
     "ID8"
   ],

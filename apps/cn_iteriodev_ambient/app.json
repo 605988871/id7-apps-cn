@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_ambient",
   "version": "1.4.4",
   "title": "氛围灯",
-  "description": "Any color on the interior ambient light. Your car's zones in a list (the ones your car has): give each the main color, its own or the car's, or pick All zones. Color bars for any shade, brightness (or follow the car's), the car's nine colors, and six presets that keep the whole look. Drive modes: a color for each drive mode (Sport, Comfort, Eco Pro, their Plus and Individual, Adaptive) that the light switches to with the mode, on or off. Works while the car's own ambient light is on. Needs the Comfort tool from the same source. Works with the touchscreen or the iDrive controller. iDrive 7 and ",
+  "description": "车内氛围灯任意颜色。车辆各分区以列表显示（仅列出本车具备的分区）：可为每个分区选择主色、独立颜色或车辆原色，也可选择全部分区。色条可选任意色调、亮度（或跟随车辆），另有车辆自带的九种颜色与六套保持整体效果的预设。驾驶模式：可为每种驾驶模式（运动、舒适、Eco Pro，及其 Plus 与 Individual、自适应）设定随模式切换的颜色，可开关。需车辆自身氛围灯开启。需要同一来源的舒适服务工具。支持触控屏或 iDrive 旋钮操作。支持 iDrive 7 和 8。",
   "mguHmi": [
     "ID7",
     "ID8"

@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_cardash",
   "version": "1.5.0",
   "title": "车辆数据",
-  "description": "Live engine data on your iDrive 8 screen: engine speed, boost, power and torque with their peaks, oil, coolant and intake temperatures, battery voltage; fuel and air values with their last 5 minutes; a trip computer with costs; gearbox data (ZF 8HP, read-only, experimental); the engine unit's values in groups; on diesel cars a DPF page (soot load, regenerations, exhaust temperatures, read-only, experimental). Bar ends, fuel price and currency are set on the Settings page. Every value shows in the units your car is set to: °C or °F, km or miles, l/100 km, mpg or km/l, litres or gallons, bar, kP",
+  "description": "在 iDrive 8 屏幕上显示发动机实时数据：转速、增压、功率与扭矩及其峰值，机油、冷却液与进气温度，蓄电池电压；燃油与进气数值及最近 5 分钟曲线；带费用的行车电脑；变速箱数据（ZF 8HP，只读，实验性）；发动机电脑的数值按组显示；柴油车另有 DPF 页面（碳烟负载、再生次数、排气温度，只读，实验性）。量程端点、燃油价格与货币在设置页设定。所有数值按车辆设定单位显示：°C 或 °F、km 或 miles、l/100 km、mpg 或 km/l、升或加仑、bar、kPa。",
   "mguHmi": [
     "ID8"
   ],

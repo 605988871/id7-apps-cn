@@ -2,7 +2,7 @@
   "id": "cn_iteriodev_turnview",
   "version": "1.7.1",
   "title": "转向视图",
-  "description": "The front camera in the instrument cluster with a turn card and, near each turn, a blue turn sign (three chevrons pointing the way), from BMW Maps, Apple CarPlay or Android Auto; the camera shows with or without a route. Or on the head unit instead: the Camera button opens the camera's whole picture with the same card and sign, at any speed (Picture on: Head unit), for kerbs and tight gaps. Cars with BMW Night Vision (1.7.0): Camera Night Vision shows its picture instead, in the cluster or here (read from the head unit's own video input; BMW's Night Vision screen then stays black). iDrive 8: p",
+  "description": "仪表盘中的前摄像头，配合转向卡片与每个转弯附近的蓝色转向标志（三个箭头指向行驶方向），来自 BMW 导航、Apple CarPlay 或 Android Auto；有无路线时都会显示摄像头。也可改为在车机上显示：点击摄像头按钮打开完整画面并带有同样的卡片与标志，任何车速均可（画面显示：车机），便于观察路肩与狭窄缝隙。配备 BMW 夜视的车辆（1.7.0）：夜视摄像头画面会取而代之，可显示在仪表盘或此处（从车机自身的视频输入读取；BMW 夜视屏幕此时保持黑屏）。iDrive 8：在仪表组件菜单中选择“转向视图 AR”（安装后下次启动车辆生效）。iDrive 7：每次启动车辆时关闭，在转向视图应用中开启，并将“仪表盘 > 中央显示区域”设为地图视图，摄像头会占用该区域的地图位置。",
   "mguHmi": [
     "ID7",
     "ID8"
