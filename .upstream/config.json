@@ -1,13 +1,13 @@
 {
   "url": "https://github.com/cauliflowermossgrape/idrive7-apps.git",
   "branch": "main",
-  "baseline": "f54fc279d309ca12eba129b676d755c6f02f5a06",
+  "baseline": "23e128fc4c92d7803ba6daf32ef7c543de31a1d7",
   "upstreams": [
     {
       "name": "idrive7-apps",
       "url": "https://github.com/cauliflowermossgrape/idrive7-apps.git",
       "branch": "main",
-      "baseline": "f54fc279d309ca12eba129b676d755c6f02f5a06",
+      "baseline": "23e128fc4c92d7803ba6daf32ef7c543de31a1d7",
       "kind": "source",
       "note": "源码上游：用 tools/upstream-sync/upstream.py 合并；app 映射为 apps/cn_<name>，汉化在 locales 与 app.json"
     },

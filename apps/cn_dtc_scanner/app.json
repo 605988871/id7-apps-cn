@@ -2,7 +2,7 @@
   "id": "cn_dtc_scanner",
   "title": "Fault Scanner",
   "description": "读取并清除各控制单元的故障记录，以及当前 Check Control 提示信息",
-  "version": "2.15.1",
+  "version": "2.15.3",
   "vendor": "custom",
   "loggingId": "OA95",
   "iconGlyph": "engine",

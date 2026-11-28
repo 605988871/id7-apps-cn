@@ -2,7 +2,7 @@
   "id": "cn_gforce",
   "title": "G-Force",
   "description": "摩擦圆与摩擦力包络、各方向峰值 G 值及本次会话记录",
-  "version": "1.7.1",
+  "version": "1.7.3",
   "vendor": "custom",
   "loggingId": "OA9B",
   "iconGlyph": "gforce",
